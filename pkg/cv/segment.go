@@ -52,7 +52,7 @@ func SegmentPiece(rawImg image.Image, threshold uint8, invertBg bool) (*Processe
 	bMask := ThresholdImage(rawImg, threshold, invertBg)
 
 	// 2. Trace largest boundary contour
-	rawContour := TraceLargestContour(bMask)
+	rawContour := TraceLargestContourWithFilter(bMask)
 	if len(rawContour) < 30 {
 		return nil, errors.New("no clear piece contour found in frame")
 	}

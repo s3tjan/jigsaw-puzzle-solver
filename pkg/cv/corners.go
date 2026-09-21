@@ -21,132 +21,136 @@ func ComputeCentroid(pts []puzzle.Point2D) puzzle.Point2D {
 	return puzzle.Point2D{X: sumX / n, Y: sumY / n}
 }
 
-// DetectCorners finds the 4 corner indices of a puzzle piece contour.
-// In puzzle pieces, corners are local distance maxima relative to center of mass,
-// spaced approximately ~90 degrees apart (quarter-perimeter steps).
+// DetectCorners finds the 4 true physical corners separating the 4 edges of a puzzle piece.
+// Combines centroid distance with angular curvature to reliably separate corners from round tabs.
 func DetectCorners(contour []puzzle.Point2D) ([4]int, error) {
 	n := len(contour)
-	if n < 20 {
+	if n < 30 {
 		return [4]int{}, errors.New("contour has too few points for corner detection")
 	}
 
 	center := ComputeCentroid(contour)
 
-	// Compute Euclidean distance from centroid for each point
-	dists := make([]float64, n)
-	for i, p := range contour {
-		dists[i] = p.DistanceTo(center)
+	// In puzzle pieces, true corners have two key properties:
+	// 1. High corner sharpness: angle between incoming and outgoing tangent vectors is ~90° (60° to 125°)
+	// 2. High distance from centroid compared to adjacent boundary indentations
+	k := n / 14
+	if k < 4 {
+		k = 4
 	}
 
-	// Smooth distances with moving average
-	smoothedDists := make([]float64, n)
-	w := 7
-	for i := 0; i < n; i++ {
-		sum := 0.0
-		for j := -w; j <= w; j++ {
-			idx := (i + j + n) % n
-			sum += dists[idx]
-		}
-		smoothedDists[i] = sum / float64(2*w+1)
-	}
-
-	// Find local maxima with minimum prominence
-	type Peak struct {
+	type CornerScore struct {
 		Index int
+		Score float64
+		Angle float64
 		Dist  float64
 	}
-	var peaks []Peak
-	minDistBetweenPeaks := n / 8 // At least 1/8th of perimeter apart
+	var cands []CornerScore
 
 	for i := 0; i < n; i++ {
-		prev := (i - 1 + n) % n
-		next := (i + 1) % n
-		if smoothedDists[i] >= smoothedDists[prev] && smoothedDists[i] >= smoothedDists[next] {
-			// Check prominence over window
-			isMax := true
-			for j := -w; j <= w; j++ {
-				idx := (i + j + n) % n
-				if smoothedDists[idx] > smoothedDists[i] {
-					isMax = false
-					break
-				}
-			}
-			if isMax {
-				peaks = append(peaks, Peak{Index: i, Dist: smoothedDists[i]})
-			}
+		pPrev := contour[(i-k+n)%n]
+		pCurr := contour[i]
+		pNext := contour[(i+k)%n]
+
+		v1 := puzzle.Point2D{X: pPrev.X - pCurr.X, Y: pPrev.Y - pCurr.Y}
+		v2 := puzzle.Point2D{X: pNext.X - pCurr.X, Y: pNext.Y - pCurr.Y}
+
+		l1 := math.Hypot(v1.X, v1.Y)
+		l2 := math.Hypot(v2.X, v2.Y)
+		if l1 == 0 || l2 == 0 {
+			continue
+		}
+
+		dot := (v1.X*v2.X + v1.Y*v2.Y) / (l1 * l2)
+		cross := v1.X*v2.Y - v1.Y*v2.X
+		angleDeg := math.Acos(math.Max(-1.0, math.Min(1.0, dot))) * 180.0 / math.Pi
+
+		// Convex turn (cross > 0) with angle near 90°
+		if angleDeg >= 55.0 && angleDeg <= 135.0 && cross > 0 {
+			dist := pCurr.DistanceTo(center)
+			// Score favors angles closest to 90° and points further from center (corners are extremities)
+			angleDiff := math.Abs(angleDeg - 90.0)
+			score := dist / (1.0 + angleDiff*0.05)
+			cands = append(cands, CornerScore{
+				Index: i,
+				Score: score,
+				Angle: angleDeg,
+				Dist:  dist,
+			})
 		}
 	}
 
-	// If fewer than 4 peaks, sample 4 equidistant perimeter points starting at global max
-	if len(peaks) < 4 {
-		maxIdx := 0
-		maxD := 0.0
-		for i, d := range smoothedDists {
-			if d > maxD {
-				maxD = d
-				maxIdx = i
-			}
-		}
+	// If curvature didn't yield enough candidates, fallback to centroid distance maxima
+	if len(cands) < 4 {
 		step := n / 4
-		return [4]int{
-			maxIdx,
-			(maxIdx + step) % n,
-			(maxIdx + 2*step) % n,
-			(maxIdx + 3*step) % n,
-		}, nil
+		return [4]int{0, step, 2 * step, 3 * step}, nil
 	}
 
-	// Sort peaks by distance descending and select 4 best separated by ~quarter perimeter
-	sort.Slice(peaks, func(i, j int) bool {
-		return peaks[i].Dist > peaks[j].Dist
+	// Cluster nearby candidates (within k points of each other)
+	sort.Slice(cands, func(i, j int) bool {
+		return cands[i].Score > cands[j].Score
 	})
 
-	// Best 4 peaks optimization: find 4 peaks that maximize perimeter separation (~n/4 apart)
-	var selected [4]int
-	selected[0] = peaks[0].Index
+	var clustered []CornerScore
+	minSeparation := n / 10
 
-	for k := 1; k < 4; k++ {
-		bestIdx := -1
-		bestScore := -1.0
-		targetIdx := (selected[0] + k*n/4) % n
-
-		for _, p := range peaks {
-			// Circular distance to target index
-			circDiff := math.Abs(float64(p.Index - targetIdx))
-			if circDiff > float64(n)/2 {
-				circDiff = float64(n) - circDiff
+	for _, c := range cands {
+		tooClose := false
+		for _, existing := range clustered {
+			diff := math.Abs(float64(c.Index - existing.Index))
+			if diff > float64(n)/2 {
+				diff = float64(n) - diff
 			}
-			score := p.Dist / (1.0 + circDiff*0.1)
-			if score > bestScore {
-				// Also verify separation from already selected corners
-				tooClose := false
-				for s := 0; s < k; s++ {
-					diff := math.Abs(float64(p.Index - selected[s]))
-					if diff > float64(n)/2 {
-						diff = float64(n) - diff
-					}
-					if diff < float64(minDistBetweenPeaks) {
-						tooClose = true
-						break
-					}
-				}
-				if !tooClose {
-					bestScore = score
-					bestIdx = p.Index
-				}
+			if diff < float64(minSeparation) {
+				tooClose = true
+				break
 			}
 		}
-
-		if bestIdx == -1 {
-			selected[k] = (selected[0] + k*n/4) % n
-		} else {
-			selected[k] = bestIdx
+		if !tooClose {
+			clustered = append(clustered, c)
 		}
 	}
 
-	// Sort selected corner indices in ascending clockwise perimeter order
-	sort.Ints(selected[:])
-	return selected, nil
+	if len(clustered) < 4 {
+		step := n / 4
+		return [4]int{0, step, 2 * step, 3 * step}, nil
+	}
+
+	// Pick 4 corners that form the most balanced quadrilateral (approx ~quarter-perimeter steps)
+	bestQuad := [4]int{clustered[0].Index, clustered[1].Index, clustered[2].Index, clustered[3].Index}
+	bestCost := math.MaxFloat64
+
+	numTest := len(clustered)
+	if numTest > 8 {
+		numTest = 8
+	}
+
+	for i0 := 0; i0 < numTest; i0++ {
+		for i1 := i0 + 1; i1 < numTest; i1++ {
+			for i2 := i1 + 1; i2 < numTest; i2++ {
+				for i3 := i2 + 1; i3 < numTest; i3++ {
+					quad := []int{clustered[i0].Index, clustered[i1].Index, clustered[i2].Index, clustered[i3].Index}
+					sort.Ints(quad)
+
+					// Desired step is n/4
+					idealStep := float64(n) / 4.0
+					cost := 0.0
+					for s := 0; s < 4; s++ {
+						step := float64((quad[(s+1)%4] - quad[s] + n) % n)
+						cost += math.Pow(step-idealStep, 2)
+					}
+
+					if cost < bestCost {
+						bestCost = cost
+						bestQuad = [4]int{quad[0], quad[1], quad[2], quad[3]}
+					}
+				}
+			}
+		}
+	}
+
+	sort.Ints(bestQuad[:])
+	return bestQuad, nil
 }
 
 // SplitContourIntoEdges partitions the closed contour into 4 sequential edges using the 4 corner indices.
@@ -163,7 +167,6 @@ func SplitContourIntoEdges(contour []puzzle.Point2D, corners [4]int) [4][]puzzle
 			edgePts = make([]puzzle.Point2D, endIdx-startIdx+1)
 			copy(edgePts, contour[startIdx:endIdx+1])
 		} else {
-			// Wraps around boundary end
 			edgePts = append(edgePts, contour[startIdx:n]...)
 			edgePts = append(edgePts, contour[0:endIdx+1]...)
 		}
@@ -174,7 +177,6 @@ func SplitContourIntoEdges(contour []puzzle.Point2D, corners [4]int) [4][]puzzle
 }
 
 // ClassifyEdgeShape determines if an edge is Flat, Tab (convex), or Blank (concave).
-// Measures maximum deviation from the chord line connecting the two corner endpoints.
 func ClassifyEdgeShape(edgePts []puzzle.Point2D) puzzle.EdgeType {
 	n := len(edgePts)
 	if n < 3 {
@@ -191,34 +193,35 @@ func ClassifyEdgeShape(edgePts []puzzle.Point2D) puzzle.EdgeType {
 		return puzzle.Flat
 	}
 
-	// Unit normal vector pointing outwards (to the right of tangent vector)
-	// Tangent is (dx/len, dy/len). Clockwise outer normal is (dy/len, -dx/len).
+	// Unit outward normal
 	nx := dy / chordLen
 	ny := -dx / chordLen
 
-	maxDeviation := 0.0
+	maxDev := 0.0
+	minDev := 0.0
+
 	for _, p := range edgePts {
-		// Vector from start to point
 		vx := p.X - pStart.X
 		vy := p.Y - pStart.Y
-		// Project onto outward normal
 		proj := vx*nx + vy*ny
-		if math.Abs(proj) > math.Abs(maxDeviation) {
-			maxDeviation = proj
+		if proj > maxDev {
+			maxDev = proj
+		}
+		if proj < minDev {
+			minDev = proj
 		}
 	}
 
-	relDeviation := maxDeviation / chordLen
+	relMax := maxDev / chordLen
+	relMin := minDev / chordLen
 
-	// Thresholds:
-	// Flat: relative deviation < 0.08
-	// Tab: positive protrusion outward > 0.08
-	// Blank: negative indentation inward < -0.08
-	if math.Abs(relDeviation) < 0.08 {
-		return puzzle.Flat
-	} else if relDeviation > 0 {
+	// If protrusion outward is dominant -> Tab
+	// If indentation inward is dominant -> Blank
+	// Otherwise -> Flat
+	if relMax > 0.12 && relMax > math.Abs(relMin) {
 		return puzzle.Tab
-	} else {
+	} else if math.Abs(relMin) > 0.12 && math.Abs(relMin) > relMax {
 		return puzzle.Blank
 	}
+	return puzzle.Flat
 }
