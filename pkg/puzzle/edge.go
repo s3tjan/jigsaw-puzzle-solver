@@ -86,3 +86,9 @@ func (e Edge) IsComplementary(other Edge) bool {
 	}
 	return (e.Type == Tab && other.Type == Blank) || (e.Type == Blank && other.Type == Tab)
 }
+
+// Rectangle defines float min and max points for bounding boxes.
+type Rectangle struct {
+	Min Point2D `json:"min"`
+	Max Point2D `json:"max"`
+}

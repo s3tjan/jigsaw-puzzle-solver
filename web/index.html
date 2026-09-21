@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JigSolve - Interactive Jigsaw Puzzle Solver Workbench</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar Controls -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-icon">🧩</div>
+        <div class="brand-text">
+          <h1>JigSolve</h1>
+          <span class="badge">Go Core v1.0</span>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Artwork & Grid</h2>
+        <div class="control-group">
+          <label for="presetSelect">Preset Artwork</label>
+          <select id="presetSelect">
+            <option value="starry_night" selected>Starry Night (Van Gogh)</option>
+            <option value="gradient">Color Spectrum Gradient</option>
+          </select>
+        </div>
+
+        <div class="grid-controls">
+          <div class="control-group">
+            <label for="rowsInput">Rows: <span id="rowsVal" class="mono-val">4</span></label>
+            <input type="range" id="rowsInput" min="2" max="10" value="4">
+          </div>
+          <div class="control-group">
+            <label for="colsInput">Columns: <span id="colsVal" class="mono-val">5</span></label>
+            <input type="range" id="colsInput" min="2" max="10" value="5">
+          </div>
+        </div>
+
+        <div class="preset-pills">
+          <button class="pill-btn" data-r="3" data-c="3">3×3 (9 pcs)</button>
+          <button class="pill-btn active" data-r="4" data-c="5">4×5 (20 pcs)</button>
+          <button class="pill-btn" data-r="6" data-c="6">6×6 (36 pcs)</button>
+          <button class="pill-btn" data-r="8" data-c="10">8×10 (80 pcs)</button>
+        </div>
+
+        <button id="generateBtn" class="action-btn primary-btn">
+          <span>⚡ Generate & Cut</span>
+        </button>
+      </div>
+
+      <div class="panel-section">
+        <h2>Solver Engine</h2>
+        <div class="control-group">
+          <label for="speedInput">Playback Speed: <span id="speedVal" class="mono-val">100ms</span></label>
+          <input type="range" id="speedInput" min="10" max="500" value="100" step="10">
+        </div>
+
+        <div class="solver-actions">
+          <button id="scrambleBtn" class="action-btn secondary-btn" title="Randomly shuffle and rotate pieces">
+            🔀 Scramble
+          </button>
+          <button id="stepBtn" class="action-btn secondary-btn" title="Step one placement">
+            ⏯️ Step
+          </button>
+          <button id="solveBtn" class="action-btn glow-btn" title="Auto solve">
+            ✨ Auto Solve
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-section stats-section">
+        <h2>Live Telemetry</h2>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <span class="stat-label">Pieces</span>
+            <span id="statPieces" class="stat-val">20</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Placed</span>
+            <span id="statPlaced" class="stat-val">0</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Solve Time</span>
+            <span id="statTime" class="stat-val">-</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Accuracy</span>
+            <span id="statAccuracy" class="stat-val">-</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section inspector-section">
+        <h2>Piece Inspector</h2>
+        <div id="inspectorContent" class="inspector-card empty">
+          Hover or click any piece to inspect its geometry, polarity, and rotation.
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Visual Canvas Workbench -->
+    <main class="workbench">
+      <header class="topbar">
+        <div class="view-toggles">
+          <button id="viewBoardBtn" class="toggle-tab active">Board & Tray</button>
+          <button id="viewSolvedBtn" class="toggle-tab">Original Reference</button>
+        </div>
+        <div class="status-indicator">
+          <span class="status-dot ready"></span>
+          <span id="statusText">Ready</span>
+        </div>
+      </header>
+
+      <div class="canvas-container" id="canvasContainer">
+        <canvas id="puzzleCanvas"></canvas>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
