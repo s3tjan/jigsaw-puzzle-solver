@@ -16,6 +16,8 @@ import (
 
 	"jig/pkg/generator"
 	"jig/pkg/puzzle"
+	"jig/pkg/cv"
+	"jig/pkg/registration"
 	"jig/pkg/solver"
 )
 
@@ -131,6 +133,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/puzzle/generate", s.handleGenerate)
 	mux.HandleFunc("/api/puzzle/scramble", s.handleScramble)
 	mux.HandleFunc("/api/puzzle/solve", s.handleSolve)
+	mux.HandleFunc("/api/cv/process-piece", s.handleProcessPiece)
 	return mux
 }
 
@@ -165,6 +168,23 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	var img image.Image
 	switch req.Preset {
+	case "custom":
+		if req.Image != "" {
+			dataURL := req.Image
+			if idx := bytes.Index([]byte(dataURL), []byte(",")); idx != -1 {
+				dataURL = dataURL[idx+1:]
+			}
+			rawBytes, err := base64.StdEncoding.DecodeString(dataURL)
+			if err == nil {
+				decImg, _, err := image.Decode(bytes.NewReader(rawBytes))
+				if err == nil {
+					img = decImg
+				}
+			}
+		}
+		if img == nil {
+			img = CreateStarryNightArtwork(800, 600)
+		}
 	case "gradient":
 		gImg := image.NewRGBA(image.Rect(0, 0, 800, 600))
 		for y := 0; y < 600; y++ {
@@ -298,6 +318,9 @@ func (s *Server) handleSolve(w http.ResponseWriter, r *http.Request) {
 	if req.GeomWeight > 0 {
 		cfg.GeomWeight = req.GeomWeight
 	}
+	if s.currentImg != nil {
+		cfg.ReferenceMap = registration.NewReferenceMap(s.currentImg, s.currentResult.Grid)
+	}
 
 	solveEngine := solver.NewSolver(s.currentResult.Grid, s.currentResult.Pieces, cfg)
 
@@ -344,4 +367,96 @@ func (s *Server) handleSolve(w http.ResponseWriter, r *http.Request) {
 
 func suppressJpegImport() {
 	_ = jpeg.DefaultQuality
+}
+
+// ProcessPieceRequest payload for /api/cv/process-piece
+type ProcessPieceRequest struct {
+	ImageData string `json:"image_data"` // Base64 data URL
+	Threshold uint8  `json:"threshold"`
+	InvertBg  bool   `json:"invert_bg"`
+}
+
+// ProcessPieceResponse returns extracted contour, corners, edge types, and candidate artwork locations
+type ProcessPieceResponse struct {
+	Success       bool                              `json:"success"`
+	Error         string                            `json:"error,omitempty"`
+	CornerPoints  [4]puzzle.Point2D                 `json:"corner_points"`
+	Contour       []puzzle.Point2D                  `json:"contour"`
+	EdgeTypes     [4]string                         `json:"edge_types"`
+	PieceImage    string                            `json:"piece_image"` // Base64 PNG
+	TopCandidates []registration.GridLocationCandidate `json:"top_candidates"`
+}
+
+func (s *Server) handleProcessPiece(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ProcessPieceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Decode base64 image data URL
+	dataURL := req.ImageData
+	idx := bytes.Index([]byte(dataURL), []byte(","))
+	if idx != -1 {
+		dataURL = dataURL[idx+1:]
+	}
+	rawBytes, err := base64.StdEncoding.DecodeString(dataURL)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ProcessPieceResponse{Success: false, Error: "invalid base64 image"})
+		return
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(rawBytes))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ProcessPieceResponse{Success: false, Error: "failed to decode image"})
+		return
+	}
+
+	if req.Threshold == 0 {
+		req.Threshold = 70
+	}
+
+	proc, err := cv.SegmentPiece(img, req.Threshold, req.InvertBg)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ProcessPieceResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	var imgBuf bytes.Buffer
+	if proc.Piece.Image != nil {
+		_ = png.Encode(&imgBuf, proc.Piece.Image)
+	}
+	pieceBase64 := base64.StdEncoding.EncodeToString(imgBuf.Bytes())
+
+	s.mu.RLock()
+	var topCandidates []registration.GridLocationCandidate
+	if s.currentImg != nil && s.currentResult != nil {
+		refMap := registration.NewReferenceMap(s.currentImg, s.currentResult.Grid)
+		desc := registration.ExtractDescriptor(proc.Piece.Image, proc.Piece.Mask)
+		topCandidates = refMap.LocateCandidates(desc, 3)
+	}
+	s.mu.RUnlock()
+
+	var edgeNames [4]string
+	for i := 0; i < 4; i++ {
+		edgeNames[i] = proc.EdgeTypes[i].String()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(ProcessPieceResponse{
+		Success:       true,
+		CornerPoints:  proc.CornerPoints,
+		Contour:       proc.FullContour,
+		EdgeTypes:     edgeNames,
+		PieceImage:    pieceBase64,
+		TopCandidates: topCandidates,
+	})
 }

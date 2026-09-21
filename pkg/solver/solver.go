@@ -4,6 +4,7 @@ import (
 	"errors"
 	"jig/pkg/matcher"
 	"jig/pkg/puzzle"
+	"jig/pkg/registration"
 	"math"
 	"math/rand"
 	"sort"
@@ -14,6 +15,8 @@ type SolverConfig struct {
 	MaxBacktracks int
 	ColorWeight   float64
 	GeomWeight    float64
+	RefWeight     float64 // Weight for reference image matching prior
+	ReferenceMap  *registration.ReferenceMap
 }
 
 // DefaultSolverConfig returns sensible defaults.
@@ -22,15 +25,17 @@ func DefaultSolverConfig() SolverConfig {
 		MaxBacktracks: 10000,
 		ColorWeight:   2.0,
 		GeomWeight:    1.0,
+		RefWeight:     1.5,
 	}
 }
 
 // Solver assembles pieces onto a board.
 type Solver struct {
-	grid    puzzle.Grid
-	pieces  []*puzzle.Piece
-	matcher *matcher.EdgeMatcher
-	cfg     SolverConfig
+	grid       puzzle.Grid
+	pieces     []*puzzle.Piece
+	matcher    *matcher.EdgeMatcher
+	cfg        SolverConfig
+	pieceDescs map[int]registration.FeatureDescriptor
 }
 
 // NewSolver creates a new jigsaw puzzle solver.
@@ -38,11 +43,23 @@ func NewSolver(grid puzzle.Grid, pieces []*puzzle.Piece, cfg SolverConfig) *Solv
 	m := matcher.NewDefaultMatcher()
 	m.ColorWeight = cfg.ColorWeight
 	m.GeomWeight = cfg.GeomWeight
+
+	// Precompute descriptors for pieces if reference map is provided
+	descs := make(map[int]registration.FeatureDescriptor)
+	if cfg.ReferenceMap != nil {
+		for _, p := range pieces {
+			if p.Image != nil {
+				descs[p.ID] = registration.ExtractDescriptor(p.Image, p.Mask)
+			}
+		}
+	}
+
 	return &Solver{
-		grid:    grid,
-		pieces:  pieces,
-		matcher: m,
-		cfg:     cfg,
+		grid:       grid,
+		pieces:     pieces,
+		matcher:    m,
+		cfg:        cfg,
+		pieceDescs: descs,
 	}
 }
 
@@ -68,13 +85,26 @@ type SolveResult struct {
 	TotalPlacements int
 }
 
-// EvaluateSlotPieceScore evaluates how well candidate piece P (in its current rotation)
-// fits into cell (r, c) on the board against the boundary and already placed neighbors.
+// EvaluateSlotPieceScore evaluates how well candidate piece P fits into cell (r, c).
+// Enforces boundary constraints, neighbor edge compatibility, and reference image priors.
 func (s *Solver) EvaluateSlotPieceScore(b *Board, r, c int, p *puzzle.Piece) (float64, bool) {
 	totalScore := 0.0
 	matchedEdges := 0
 
-	// 1. TOP EDGE
+	// 1. Check visual reference prior if available
+	if s.cfg.ReferenceMap != nil {
+		desc, hasDesc := s.pieceDescs[p.ID]
+		if hasDesc {
+			refDist := s.cfg.ReferenceMap.CellDistance(desc, r, c)
+			// If reference distance is very high, piece definitely doesn't belong in this region of painting
+			if refDist > 0.65 {
+				return math.MaxFloat64, false
+			}
+			totalScore += s.cfg.RefWeight * refDist
+		}
+	}
+
+	// 2. TOP EDGE
 	if r == 0 {
 		if p.Edges[puzzle.Top].Type != puzzle.Flat {
 			return math.MaxFloat64, false
@@ -94,7 +124,7 @@ func (s *Solver) EvaluateSlotPieceScore(b *Board, r, c int, p *puzzle.Piece) (fl
 		}
 	}
 
-	// 2. BOTTOM EDGE
+	// 3. BOTTOM EDGE
 	if r == s.grid.Rows-1 {
 		if p.Edges[puzzle.Bottom].Type != puzzle.Flat {
 			return math.MaxFloat64, false
@@ -114,7 +144,7 @@ func (s *Solver) EvaluateSlotPieceScore(b *Board, r, c int, p *puzzle.Piece) (fl
 		}
 	}
 
-	// 3. LEFT EDGE
+	// 4. LEFT EDGE
 	if c == 0 {
 		if p.Edges[puzzle.Left].Type != puzzle.Flat {
 			return math.MaxFloat64, false
@@ -134,7 +164,7 @@ func (s *Solver) EvaluateSlotPieceScore(b *Board, r, c int, p *puzzle.Piece) (fl
 		}
 	}
 
-	// 4. RIGHT EDGE
+	// 5. RIGHT EDGE
 	if c == s.grid.Cols-1 {
 		if p.Edges[puzzle.Right].Type != puzzle.Flat {
 			return math.MaxFloat64, false
@@ -203,7 +233,6 @@ func (s *Solver) FindSlotCandidates(b *Board, r, c int) []CandidatePlacement {
 		}
 	}
 
-	// Sort candidates by score (best match first)
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].Score < candidates[j].Score
 	})
@@ -211,7 +240,7 @@ func (s *Solver) FindSlotCandidates(b *Board, r, c int) []CandidatePlacement {
 	return candidates
 }
 
-// CalculateAccuracy evaluates board correctness against ground truth considering possible global puzzle rotations.
+// CalculateAccuracy evaluates board correctness against ground truth.
 func (s *Solver) CalculateAccuracy(b *Board) (float64, int) {
 	total := s.grid.TotalPieces()
 	bestAccuracy := 0.0
@@ -298,7 +327,7 @@ func (s *Solver) backtrack(b *Board, depth int) bool {
 			if neighbors > maxNeighbors {
 				candidates := s.FindSlotCandidates(b, r, c)
 				if len(candidates) == 0 && (r == 0 && c == 0 && len(b.Placed) == 0) {
-					// Starting corner
+					// Empty board starting
 				} else if len(candidates) == 0 && len(b.Placed) > 0 {
 					return false // Dead end
 				}

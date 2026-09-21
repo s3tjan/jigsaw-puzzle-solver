@@ -28,7 +28,15 @@
           <select id="presetSelect">
             <option value="starry_night" selected>Starry Night (Van Gogh)</option>
             <option value="gradient">Color Spectrum Gradient</option>
+            <option value="custom">📁 Custom Uploaded Image</option>
           </select>
+          <div id="uploadGroup" style="display:none; margin-top:8px;">
+            <label for="customFileInput" class="action-btn secondary-btn" style="cursor:pointer; font-size:12px; padding:6px 10px;">
+              📁 Choose Master Image (JPG/PNG)
+            </label>
+            <input type="file" id="customFileInput" accept="image/*" style="display:none;">
+            <div id="uploadedFileName" class="mono-val" style="font-size:11px; margin-top:4px; word-break:break-all;"></div>
+          </div>
         </div>
 
         <div class="grid-controls">
@@ -110,6 +118,7 @@
         <div class="view-toggles">
           <button id="viewBoardBtn" class="toggle-tab active">Board & Tray</button>
           <button id="viewSolvedBtn" class="toggle-tab">Original Reference</button>
+          <button id="viewScannerBtn" class="toggle-tab">📷 Camera Scanner</button>
         </div>
         <div class="status-indicator">
           <span class="status-dot ready"></span>
@@ -117,8 +126,49 @@
         </div>
       </header>
 
+      <!-- Main Puzzle Canvas View -->
       <div class="canvas-container" id="canvasContainer">
         <canvas id="puzzleCanvas"></canvas>
+      </div>
+
+      <!-- Live Webcam Scanner View -->
+      <div class="scanner-container" id="scannerContainer" style="display: none;">
+        <div class="scanner-split">
+          <div class="camera-card">
+            <div class="camera-viewport">
+              <video id="webcamVideo" autoplay playsinline muted></video>
+              <div class="camera-reticle">
+                <span class="reticle-hint">Place puzzle piece inside target</span>
+              </div>
+            </div>
+            <div class="camera-controls">
+              <button id="startCamBtn" class="action-btn secondary-btn">📹 Start Camera</button>
+              <button id="capturePieceBtn" class="action-btn primary-btn">📸 Capture & Segment</button>
+            </div>
+          </div>
+
+          <div class="analysis-card">
+            <h3>Piece Extraction & Classification</h3>
+            <div class="scanner-settings">
+              <div class="control-group">
+                <label for="threshSlider">Luminance Threshold: <span id="threshVal" class="mono-val">70</span></label>
+                <input type="range" id="threshSlider" min="10" max="240" value="70">
+              </div>
+              <div class="control-group" style="flex-direction:row; align-items:center; gap:8px;">
+                <input type="checkbox" id="invertBgCheck">
+                <label for="invertBgCheck" style="cursor:pointer;">Invert Background (Light Surface)</label>
+              </div>
+            </div>
+
+            <div class="piece-preview-box">
+              <canvas id="cvCanvas" width="300" height="300"></canvas>
+            </div>
+
+            <div id="cvResults" class="cv-results-card empty">
+              Capture a piece to analyze its 4 physical corners, tabs/blanks, and predict its location on the master painting.
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   </div>

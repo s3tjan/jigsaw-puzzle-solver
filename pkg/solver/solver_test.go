@@ -3,6 +3,7 @@ package solver_test
 import (
 	"image"
 	"jig/pkg/generator"
+	"jig/pkg/registration"
 	"jig/pkg/solver"
 	"image/color"
 	"math/rand"
@@ -90,5 +91,31 @@ func TestSolvePuzzle6x6(t *testing.T) {
 
 	if result.Accuracy != 100.0 {
 		t.Fatalf("expected 100%% accuracy on 6x6, got %.1f%%", result.Accuracy)
+	}
+}
+
+func TestSolverWithReferencePrior(t *testing.T) {
+	img := createTestImage(400, 400)
+	res, err := generator.CutPuzzle(img, generator.DefaultCutterConfig(4, 4))
+	if err != nil {
+		t.Fatalf("failed to cut puzzle: %v", err)
+	}
+
+	rng := rand.New(rand.NewSource(999))
+	solver.ShuffleAndRotate(res.Pieces, rng)
+
+	refMap := registration.NewReferenceMap(img, res.Grid)
+	cfg := solver.DefaultSolverConfig()
+	cfg.ReferenceMap = refMap
+	cfg.RefWeight = 2.0
+
+	s := solver.NewSolver(res.Grid, res.Pieces, cfg)
+	result, err := s.Solve()
+	if err != nil {
+		t.Fatalf("solver failed with reference prior: %v", err)
+	}
+
+	if result.Accuracy != 100.0 {
+		t.Fatalf("expected 100%% accuracy with reference prior, got %.1f%%", result.Accuracy)
 	}
 }

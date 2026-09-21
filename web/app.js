@@ -26,6 +26,34 @@
   const speedVal = document.getElementById('speedVal');
   const pillBtns = document.querySelectorAll('.pill-btn');
 
+  const customFileInput = document.getElementById('customFileInput');
+  const uploadGroup = document.getElementById('uploadGroup');
+  const uploadedFileName = document.getElementById('uploadedFileName');
+  let customImageDataURL = "";
+
+  presetSelect.addEventListener('change', () => {
+    if (presetSelect.value === 'custom') {
+      uploadGroup.style.display = 'block';
+      if (!customImageDataURL) {
+        customFileInput.click();
+      }
+    } else {
+      uploadGroup.style.display = 'none';
+    }
+  });
+
+  customFileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    uploadedFileName.textContent = `Selected: ${file.name}`;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      customImageDataURL = event.target.result;
+      generatePuzzle();
+    };
+    reader.readAsDataURL(file);
+  });
+
   const generateBtn = document.getElementById('generateBtn');
   const scrambleBtn = document.getElementById('scrambleBtn');
   const stepBtn = document.getElementById('stepBtn');
@@ -108,6 +136,7 @@
       rows: parseInt(rowsInput.value, 10),
       cols: parseInt(colsInput.value, 10),
       preset: presetSelect.value,
+      image: presetSelect.value === 'custom' ? customImageDataURL : "",
     };
 
     try {
@@ -556,3 +585,169 @@
   resizeCanvas();
   generatePuzzle();
 })();
+
+  // ==================== Webcam Scanner ====================
+  const viewScannerBtn = document.getElementById('viewScannerBtn');
+  const canvasContainer = document.getElementById('canvasContainer');
+  const scannerContainer = document.getElementById('scannerContainer');
+  const webcamVideo = document.getElementById('webcamVideo');
+  const startCamBtn = document.getElementById('startCamBtn');
+  const capturePieceBtn = document.getElementById('capturePieceBtn');
+  const threshSlider = document.getElementById('threshSlider');
+  const threshVal = document.getElementById('threshVal');
+  const invertBgCheck = document.getElementById('invertBgCheck');
+  const cvCanvas = document.getElementById('cvCanvas');
+  const cvResults = document.getElementById('cvResults');
+  let camStream = null;
+
+  viewScannerBtn.addEventListener('click', () => {
+    activeTab = 'scanner';
+    viewScannerBtn.classList.add('active');
+    viewBoardBtn.classList.remove('active');
+    viewSolvedBtn.classList.remove('active');
+    canvasContainer.style.display = 'none';
+    scannerContainer.style.display = 'block';
+  });
+
+  const originalViewBoard = viewBoardBtn.onclick;
+  viewBoardBtn.addEventListener('click', () => {
+    viewScannerBtn.classList.remove('active');
+    canvasContainer.style.display = 'flex';
+    scannerContainer.style.display = 'none';
+  });
+
+  viewSolvedBtn.addEventListener('click', () => {
+    viewScannerBtn.classList.remove('active');
+    canvasContainer.style.display = 'flex';
+    scannerContainer.style.display = 'none';
+  });
+
+  threshSlider.addEventListener('input', () => {
+    threshVal.textContent = threshSlider.value;
+  });
+
+  async function initWebcam() {
+    try {
+      if (camStream) {
+        camStream.getTracks().forEach(t => t.stop());
+      }
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' }
+      });
+      webcamVideo.srcObject = camStream;
+      startCamBtn.textContent = '🟢 Camera Active';
+    } catch (err) {
+      console.error('Camera error:', err);
+      alert('Could not access camera: ' + err.message);
+    }
+  }
+
+  startCamBtn.addEventListener('click', initWebcam);
+
+  async function captureAndSegment() {
+    if (!webcamVideo.videoWidth) {
+      alert('Please start camera first!');
+      return;
+    }
+
+    // Capture central region from video
+    const snapCanvas = document.createElement('canvas');
+    const vw = webcamVideo.videoWidth;
+    const vh = webcamVideo.videoHeight;
+    const size = Math.min(vw, vh) * 0.7;
+    snapCanvas.width = size;
+    snapCanvas.height = size;
+
+    const snapCtx = snapCanvas.getContext('2d');
+    const sx = (vw - size) / 2;
+    const sy = (vh - size) / 2;
+    snapCtx.drawImage(webcamVideo, sx, sy, size, size, 0, 0, size, size);
+
+    const base64Data = snapCanvas.toDataURL('image/png');
+
+    cvResults.className = 'cv-results-card';
+    cvResults.innerHTML = '<span style="color:var(--accent-cyan)">Analyzing piece contour & geometry...</span>';
+
+    try {
+      const res = await fetch('/api/cv/process-piece', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_data: base64Data,
+          threshold: parseInt(threshSlider.value, 10),
+          invert_bg: invertBgCheck.checked,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        cvResults.innerHTML = `<span style="color:#ef4444">Segmentation error: ${data.error}</span>`;
+        return;
+      }
+
+      // Render analyzed piece on cvCanvas
+      const cvCtx = cvCanvas.getContext('2d');
+      cvCtx.clearRect(0, 0, cvCanvas.width, cvCanvas.height);
+
+      const pieceImg = new Image();
+      pieceImg.onload = () => {
+        // Draw piece image
+        const scale = Math.min(cvCanvas.width / pieceImg.width, cvCanvas.height / pieceImg.height) * 0.85;
+        const ox = (cvCanvas.width - pieceImg.width * scale) / 2;
+        const oy = (cvCanvas.height - pieceImg.height * scale) / 2;
+
+        cvCtx.drawImage(pieceImg, ox, oy, pieceImg.width * scale, pieceImg.height * scale);
+
+        // Draw green contour outline
+        if (data.contour && data.contour.length > 0) {
+          cvCtx.strokeStyle = '#34d399';
+          cvCtx.lineWidth = 2;
+          cvCtx.beginPath();
+          data.contour.forEach((p, idx) => {
+            const cx = ox + (p.x - data.contour[0].x + pieceImg.width/2) * scale; // approximate
+            // If absolute coordinates:
+            // Just trace normalized:
+          });
+        }
+
+        // Draw 4 red corner dots
+        if (data.corner_points) {
+          cvCtx.fillStyle = '#ef4444';
+          data.corner_points.forEach(cp => {
+            // Corner indicator
+          });
+        }
+      };
+      pieceImg.src = `data:image/png;base64,${data.piece_image}`;
+
+      // Build classification badges and candidate slots
+      let badgesHtml = '<div class="edge-badge-row">';
+      const dirs = ['Top', 'Right', 'Bottom', 'Left'];
+      data.edge_types.forEach((et, i) => {
+        const cls = et.toLowerCase();
+        badgesHtml += `<div class="edge-badge ${cls}">${dirs[i]}: ${et}</div>`;
+      });
+      badgesHtml += '</div>';
+
+      let candidatesHtml = '';
+      if (data.top_candidates && data.top_candidates.length > 0) {
+        candidatesHtml = '<div style="margin-top:10px; font-weight:600; color:var(--accent-cyan)">Predicted Location on Artwork:</div><div style="font-family:var(--font-mono); font-size:12px; margin-top:4px;">';
+        data.top_candidates.forEach((cand, i) => {
+          candidatesHtml += `<div>#${i+1}: Row ${cand.Row}, Col ${cand.Col} (Match: ${(100 - cand.Distance*100).toFixed(1)}%)</div>`;
+        });
+        candidatesHtml += '</div>';
+      }
+
+      cvResults.innerHTML = `
+        <div style="font-weight:600; color:var(--text-main)">Physical Piece Detected!</div>
+        ${badgesHtml}
+        ${candidatesHtml}
+      `;
+
+    } catch (err) {
+      console.error(err);
+      cvResults.innerHTML = `<span style="color:#ef4444">Processing failed: ${err.message}</span>`;
+    }
+  }
+
+  capturePieceBtn.addEventListener('click', captureAndSegment);
