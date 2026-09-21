@@ -155,11 +155,11 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if req.Cols < 2 {
 		req.Cols = 3
 	}
-	if req.Rows > 12 {
-		req.Rows = 12
+	if req.Rows > 40 {
+		req.Rows = 40
 	}
-	if req.Cols > 15 {
-		req.Cols = 15
+	if req.Cols > 50 {
+		req.Cols = 50
 	}
 	if req.Seed == 0 {
 		req.Seed = time.Now().UnixNano()

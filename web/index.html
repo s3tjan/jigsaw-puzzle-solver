@@ -41,20 +41,20 @@
 
         <div class="grid-controls">
           <div class="control-group">
-            <label for="rowsInput">Rows: <span id="rowsVal" class="mono-val">4</span></label>
-            <input type="range" id="rowsInput" min="2" max="10" value="4">
+            <label for="rowsInput">Rows: <span id="rowsVal" class="mono-val">25</span></label>
+            <input type="number" id="rowsInput" min="2" max="40" value="25" style="background:var(--card-bg); color:var(--text-main); border:1px solid var(--panel-border); border-radius:var(--radius-sm); padding:6px 10px; font-family:var(--font-mono); font-size:13px;">
           </div>
           <div class="control-group">
-            <label for="colsInput">Columns: <span id="colsVal" class="mono-val">5</span></label>
-            <input type="range" id="colsInput" min="2" max="10" value="5">
+            <label for="colsInput">Columns: <span id="colsVal" class="mono-val">40</span></label>
+            <input type="number" id="colsInput" min="2" max="50" value="40" style="background:var(--card-bg); color:var(--text-main); border:1px solid var(--panel-border); border-radius:var(--radius-sm); padding:6px 10px; font-family:var(--font-mono); font-size:13px;">
           </div>
         </div>
 
         <div class="preset-pills">
-          <button class="pill-btn" data-r="3" data-c="3">3×3 (9 pcs)</button>
-          <button class="pill-btn active" data-r="4" data-c="5">4×5 (20 pcs)</button>
-          <button class="pill-btn" data-r="6" data-c="6">6×6 (36 pcs)</button>
-          <button class="pill-btn" data-r="8" data-c="10">8×10 (80 pcs)</button>
+          <button class="pill-btn" data-r="4" data-c="5">4×5 (20 pcs)</button>
+          <button class="pill-btn" data-r="10" data-c="10">10×10 (100 pcs)</button>
+          <button class="pill-btn" data-r="20" data-c="25">20×25 (500 pcs)</button>
+          <button class="pill-btn active" data-r="25" data-c="40">25×40 (1000 pcs)</button>
         </div>
 
         <button id="generateBtn" class="action-btn primary-btn">
