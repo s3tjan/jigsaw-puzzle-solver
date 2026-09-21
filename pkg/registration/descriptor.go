@@ -5,123 +5,174 @@ import (
 	"math"
 )
 
-// FeatureDescriptor holds compact statistical color and texture features for a puzzle piece or reference tile.
+// FeatureDescriptor holds illuminant-invariant chromaticity and gradient features.
 type FeatureDescriptor struct {
-	// Color moments (Mean and Standard Deviation for R, G, B in [0, 1])
-	MeanR float64
-	MeanG float64
-	MeanB float64
-	StdR  float64
-	StdG  float64
-	StdB  float64
+	MeanChromaA float64
+	MeanChromaB float64
+	StdChromaA  float64
+	StdChromaB  float64
 
-	// 4x4x4 bin normalized color histogram (64 bins total)
-	ColorHist [64]float64
+	// Hue angle distribution (16 bins in [0, 2*pi])
+	HueHist [16]float64
+
+	// 8-bin Histogram of Oriented Gradients (HOG)
+	GradientHist [8]float64
+	HasGradients bool
 }
 
-// ExtractDescriptor calculates color moments and 3D color histogram for an image,
-// masking out transparent pixels if an alpha mask is provided.
+// ExtractDescriptor calculates illuminant-invariant chromaticity and gradient orientation histograms.
 func ExtractDescriptor(img image.Image, mask *image.Alpha) FeatureDescriptor {
 	if img == nil {
 		return FeatureDescriptor{}
 	}
 
 	b := img.Bounds()
-	var rVals, gVals, bVals []float64
-	var hist [64]float64
+	w := b.Dx()
+	h := b.Dy()
 
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
+	lumGrid := make([][]float64, h)
+	for y := 0; y < h; y++ {
+		lumGrid[y] = make([]float64, w)
+	}
+
+	var caVals, cbVals []float64
+	var hueHist [16]float64
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
 			if mask != nil {
-				// Translate image coordinates to mask's coordinate system if necessary
 				mBounds := mask.Bounds()
-				maskX := mBounds.Min.X + (x - b.Min.X)
-				maskY := mBounds.Min.Y + (y - b.Min.Y)
+				maskX := mBounds.Min.X + x
+				maskY := mBounds.Min.Y + y
 				if mask.AlphaAt(maskX, maskY).A == 0 {
+					lumGrid[y][x] = -1.0
 					continue
 				}
 			}
 
-			r, g, b, a := img.At(x, y).RGBA()
+			r, g, bVal, a := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
 			if a == 0 {
+				lumGrid[y][x] = -1.0
 				continue
 			}
 
-			rf := float64(r>>8) / 255.0
-			gf := float64(g>>8) / 255.0
-			bf := float64(b>>8) / 255.0
+			L, aLab, bLab := RGBToLab(uint8(r>>8), uint8(g>>8), uint8(bVal>>8))
+			lumGrid[y][x] = L
 
-			rVals = append(rVals, rf)
-			gVals = append(gVals, gf)
-			bVals = append(bVals, bf)
+			scale := math.Max(L, 10.0)
+			ca := aLab / scale
+			cb := bLab / scale
 
-			rBin := int(rf * 3.999)
-			gBin := int(gf * 3.999)
-			bBin := int(bf * 3.999)
-			idx := rBin*16 + gBin*4 + bBin
-			hist[idx]++
+			caVals = append(caVals, ca)
+			cbVals = append(cbVals, cb)
+
+			hue := math.Atan2(bLab, aLab)
+			if hue < 0 {
+				hue += 2.0 * math.Pi
+			}
+			bin := int(hue / (2.0 * math.Pi) * 15.999)
+			if bin < 0 {
+				bin = 0
+			} else if bin > 15 {
+				bin = 15
+			}
+			hueHist[bin]++
 		}
 	}
 
-	totalPixels := float64(len(rVals))
+	totalPixels := float64(len(caVals))
 	if totalPixels == 0 {
 		return FeatureDescriptor{}
 	}
 
-	for i := 0; i < 64; i++ {
-		hist[i] /= totalPixels
+	for i := 0; i < 16; i++ {
+		hueHist[i] /= totalPixels
 	}
 
-	var sumR, sumG, sumB float64
-	for i := 0; i < len(rVals); i++ {
-		sumR += rVals[i]
-		sumG += gVals[i]
-		sumB += bVals[i]
+	// 2. Compute 8-bin Histogram of Oriented Gradients (Sobel filter)
+	var gradHist [8]float64
+	gradTotal := 0.0
+
+	for y := 1; y < h-1; y++ {
+		for x := 1; x < w-1; x++ {
+			if lumGrid[y][x] < 0 || lumGrid[y-1][x] < 0 || lumGrid[y+1][x] < 0 ||
+				lumGrid[y][x-1] < 0 || lumGrid[y][x+1] < 0 {
+				continue
+			}
+
+			dx := lumGrid[y][x+1] - lumGrid[y][x-1]
+			dy := lumGrid[y+1][x] - lumGrid[y-1][x]
+			mag := math.Hypot(dx, dy)
+			if mag > 3.0 {
+				angle := math.Atan2(dy, dx)
+				if angle < 0 {
+					angle += math.Pi
+				}
+				bin := int(angle / math.Pi * 7.999)
+				if bin < 0 {
+					bin = 0
+				} else if bin > 7 {
+					bin = 7
+				}
+				gradHist[bin] += mag
+				gradTotal += mag
+			}
+		}
 	}
-	meanR := sumR / totalPixels
-	meanG := sumG / totalPixels
+
+	hasGrads := gradTotal > 0
+	if hasGrads {
+		for i := 0; i < 8; i++ {
+			gradHist[i] /= gradTotal
+		}
+	}
+
+	var sumA, sumB float64
+	for i := 0; i < len(caVals); i++ {
+		sumA += caVals[i]
+		sumB += cbVals[i]
+	}
+	meanA := sumA / totalPixels
 	meanB := sumB / totalPixels
 
-	var varR, varG, varB float64
-	for i := 0; i < len(rVals); i++ {
-		dr := rVals[i] - meanR
-		dg := gVals[i] - meanG
-		db := bVals[i] - meanB
-		varR += dr * dr
-		varG += dg * dg
-		varB += db * db
+	var varA, varB float64
+	for i := 0; i < len(caVals); i++ {
+		dA := caVals[i] - meanA
+		dB := cbVals[i] - meanB
+		varA += dA * dA
+		varB += dB * dB
 	}
 
 	return FeatureDescriptor{
-		MeanR:     meanR,
-		MeanG:     meanG,
-		MeanB:     meanB,
-		StdR:      math.Sqrt(varR / totalPixels),
-		StdG:      math.Sqrt(varG / totalPixels),
-		StdB:      math.Sqrt(varB / totalPixels),
-		ColorHist: hist,
+		MeanChromaA:  meanA,
+		MeanChromaB:  meanB,
+		StdChromaA:   math.Sqrt(varA / totalPixels),
+		StdChromaB:   math.Sqrt(varB / totalPixels),
+		HueHist:      hueHist,
+		GradientHist: gradHist,
+		HasGradients: hasGrads,
 	}
 }
 
-// DescriptorDistance computes a normalized visual distance between two descriptors in [0, 1].
+// DescriptorDistance computes illuminant-invariant visual distance between two descriptors.
 func DescriptorDistance(d1, d2 FeatureDescriptor) float64 {
-	dMean := math.Sqrt(
-		math.Pow(d1.MeanR-d2.MeanR, 2) +
-			math.Pow(d1.MeanG-d2.MeanG, 2) +
-			math.Pow(d1.MeanB-d2.MeanB, 2),
-	) / math.Sqrt(3.0)
+	dChromaMean := math.Hypot(d1.MeanChromaA-d2.MeanChromaA, d1.MeanChromaB-d2.MeanChromaB)
 
-	dStd := math.Sqrt(
-		math.Pow(d1.StdR-d2.StdR, 2) +
-			math.Pow(d1.StdG-d2.StdG, 2) +
-			math.Pow(d1.StdB-d2.StdB, 2),
-	) / math.Sqrt(3.0)
-
-	intersection := 0.0
-	for i := 0; i < 64; i++ {
-		intersection += math.Min(d1.ColorHist[i], d2.ColorHist[i])
+	hueIntersection := 0.0
+	for i := 0; i < 16; i++ {
+		hueIntersection += math.Min(d1.HueHist[i], d2.HueHist[i])
 	}
-	histDist := 1.0 - intersection
+	dHue := 1.0 - hueIntersection
 
-	return 0.5*dMean + 0.2*dStd + 0.3*histDist
+	if d1.HasGradients && d2.HasGradients {
+		gradIntersection := 0.0
+		for i := 0; i < 8; i++ {
+			gradIntersection += math.Min(d1.GradientHist[i], d2.GradientHist[i])
+		}
+		dGrad := 1.0 - gradIntersection
+		return 0.55*dHue + 0.25*dChromaMean + 0.20*dGrad
+	}
+
+	// For flat color regions with no gradients
+	return 0.70*dHue + 0.30*dChromaMean
 }

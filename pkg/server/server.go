@@ -441,7 +441,8 @@ func (s *Server) handleProcessPiece(w http.ResponseWriter, r *http.Request) {
 	if s.currentImg != nil && s.currentResult != nil {
 		refMap := registration.NewReferenceMap(s.currentImg, s.currentResult.Grid)
 		desc := registration.ExtractDescriptor(proc.Piece.Image, proc.Piece.Mask)
-		topCandidates = refMap.LocateCandidates(desc, 3)
+		flatCount := proc.Piece.FlatEdgeCount()
+		topCandidates = refMap.LocateCandidatesWithTopology(desc, flatCount, 3)
 	}
 	s.mu.RUnlock()
 

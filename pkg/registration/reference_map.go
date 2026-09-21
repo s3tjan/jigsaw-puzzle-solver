@@ -8,15 +8,15 @@ import (
 
 // GridLocationCandidate ranks a potential (row, col) match on the reference image.
 type GridLocationCandidate struct {
-	Row      int
-	Col      int
-	Distance float64 // [0, 1], lower is closer visual match
+	Row      int     `json:"row"`
+	Col      int     `json:"col"`
+	Distance float64 `json:"distance"` // [0, 1], lower is closer visual match
 }
 
 // ReferenceMap indexes a master reference image (e.g. Starry Night) into an R x C grid of descriptors.
 type ReferenceMap struct {
 	Grid        puzzle.Grid
-	Tiles       [][][]FeatureDescriptor // [row][col][rotationIndex: 0=0, 1=90, 2=180, 3=270]
+	Tiles       [][][]FeatureDescriptor // [row][col][rotationIndex: 0..3]
 	TileWidth   float64
 	TileHeight  float64
 	MasterImage image.Image
@@ -43,11 +43,8 @@ func NewReferenceMap(masterImg image.Image, grid puzzle.Grid) *ReferenceMap {
 			rect := image.Rect(x0, y0, x1, y1)
 			sub := subImage(masterImg, rect)
 
-			// Rotations: 0, 90, 180, 270
 			tiles[r][c] = make([]FeatureDescriptor, 4)
 			tiles[r][c][0] = ExtractDescriptor(sub, nil)
-			// For color moments and histograms, 90-degree rotations have identical color distribution!
-			// We can share or replicate for orientation consistency:
 			tiles[r][c][1] = tiles[r][c][0]
 			tiles[r][c][2] = tiles[r][c][0]
 			tiles[r][c][3] = tiles[r][c][0]
@@ -65,10 +62,35 @@ func NewReferenceMap(masterImg image.Image, grid puzzle.Grid) *ReferenceMap {
 
 // LocateCandidates finds the top-K grid cells on the reference image that best match the given piece descriptor.
 func (rm *ReferenceMap) LocateCandidates(desc FeatureDescriptor, topK int) []GridLocationCandidate {
+	return rm.LocateCandidatesWithTopology(desc, -1, topK)
+}
+
+// LocateCandidatesWithTopology filters candidate slots by physical edge topology:
+// flatCount == 2 -> Corners only
+// flatCount == 1 -> Borders only (excluding corners)
+// flatCount == 0 -> Interior only
+// flatCount < 0  -> No topological filter (searches everywhere)
+func (rm *ReferenceMap) LocateCandidatesWithTopology(desc FeatureDescriptor, flatCount int, topK int) []GridLocationCandidate {
 	var candidates []GridLocationCandidate
 
 	for r := 0; r < rm.Grid.Rows; r++ {
 		for c := 0; c < rm.Grid.Cols; c++ {
+			// Apply topology constraints if known
+			if flatCount >= 0 {
+				isCorner := rm.Grid.IsCorner(r, c)
+				isBorder := rm.Grid.IsBorder(r, c)
+
+				if flatCount == 2 && !isCorner {
+					continue // Corner piece must go to corner
+				}
+				if flatCount == 1 && (!isBorder || isCorner) {
+					continue // Border piece must go to non-corner border
+				}
+				if flatCount == 0 && isBorder {
+					continue // Interior piece cannot go to border/corner
+				}
+			}
+
 			d := DescriptorDistance(desc, rm.Tiles[r][c][0])
 			candidates = append(candidates, GridLocationCandidate{
 				Row:      r,
@@ -88,7 +110,7 @@ func (rm *ReferenceMap) LocateCandidates(desc FeatureDescriptor, topK int) []Gri
 	return candidates[:topK]
 }
 
-// CellDistance returns the visual descriptor distance between a piece descriptor and grid tile (r, c).
+// CellDistance returns visual distance between piece descriptor and grid tile (r, c).
 func (rm *ReferenceMap) CellDistance(desc FeatureDescriptor, r, c int) float64 {
 	if r < 0 || r >= rm.Grid.Rows || c < 0 || c >= rm.Grid.Cols {
 		return 1.0
@@ -96,7 +118,6 @@ func (rm *ReferenceMap) CellDistance(desc FeatureDescriptor, r, c int) float64 {
 	return DescriptorDistance(desc, rm.Tiles[r][c][0])
 }
 
-// Helper: subImage safely crops a rectangular region from an image.Image.
 func subImage(src image.Image, rect image.Rectangle) image.Image {
 	type subImager interface {
 		SubImage(r image.Rectangle) image.Image
@@ -105,7 +126,6 @@ func subImage(src image.Image, rect image.Rectangle) image.Image {
 		return si.SubImage(rect)
 	}
 
-	// Fallback copy
 	dst := image.NewRGBA(image.Rect(0, 0, rect.Dx(), rect.Dy()))
 	for y := rect.Min.Y; y < rect.Max.Y; y++ {
 		for x := rect.Min.X; x < rect.Max.X; x++ {
