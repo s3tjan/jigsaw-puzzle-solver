@@ -733,7 +733,11 @@
       if (data.top_candidates && data.top_candidates.length > 0) {
         candidatesHtml = '<div style="margin-top:10px; font-weight:600; color:var(--accent-cyan)">Predicted Location on Artwork:</div><div style="font-family:var(--font-mono); font-size:12px; margin-top:4px;">';
         data.top_candidates.forEach((cand, i) => {
-          candidatesHtml += `<div>#${i+1}: Row ${cand.Row}, Col ${cand.Col} (Match: ${(100 - cand.Distance*100).toFixed(1)}%)</div>`;
+          const row = cand.row !== undefined ? cand.row : cand.Row;
+          const col = cand.col !== undefined ? cand.col : cand.Col;
+          const dist = cand.distance !== undefined ? cand.distance : cand.Distance;
+          const matchPercent = Math.max(0, Math.min(100, (1.0 - dist) * 100));
+          candidatesHtml += `<div>#${i+1}: Row ${row}, Col ${col} (Confidence: ${matchPercent.toFixed(1)}%)</div>`;
         });
         candidatesHtml += '</div>';
       }

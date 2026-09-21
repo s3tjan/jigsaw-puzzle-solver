@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"os"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -428,6 +430,17 @@ func (s *Server) handleProcessPiece(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(ProcessPieceResponse{Success: false, Error: err.Error()})
 		return
+	}
+
+	// Save scan to disk for inspection and feedback loop
+	scanTime := time.Now().Format("20060102_150405")
+	_ = os.WriteFile(fmt.Sprintf("scans/scan_%s_raw.png", scanTime), rawBytes, 0644)
+	if proc.Piece.Image != nil {
+		fPiece, _ := os.Create(fmt.Sprintf("scans/scan_%s_piece.png", scanTime))
+		if fPiece != nil {
+			_ = png.Encode(fPiece, proc.Piece.Image)
+			fPiece.Close()
+		}
 	}
 
 	var imgBuf bytes.Buffer
