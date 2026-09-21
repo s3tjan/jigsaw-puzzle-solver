@@ -3,6 +3,7 @@ package generator
 import (
 	"image"
 	"jig/pkg/curve"
+	"jig/pkg/matcher"
 	"jig/pkg/puzzle"
 	"math/rand"
 )
@@ -48,9 +49,6 @@ func CutPuzzle(img image.Image, cfg CutterConfig) (*CutResult, error) {
 	rng := rand.New(rand.NewSource(cfg.Seed))
 
 	// Pre-generate horizontal edges: (Rows-1) x Cols edges
-	// horizEdges[r][c] represents the boundary between cell (r, c) and (r+1, c)
-	// Points run Left -> Right.
-	// Tab sign: +1 means tab points down into (r+1, c), -1 means tab points up into (r, c).
 	type CutEdge struct {
 		Points  []puzzle.Point2D
 		TabSign int // +1 or -1
@@ -71,7 +69,6 @@ func CutPuzzle(img image.Image, cfg CutterConfig) (*CutResult, error) {
 				sign = -1
 			}
 
-			// flipNormal determines which side of the boundary the tab protrudes
 			flip := sign < 0
 			worldPts := curve.Transform(normPts, pStart, pEnd, flip)
 
@@ -83,9 +80,6 @@ func CutPuzzle(img image.Image, cfg CutterConfig) (*CutResult, error) {
 	}
 
 	// Pre-generate vertical edges: Rows x (Cols-1) edges
-	// vertEdges[r][c] represents boundary between cell (r, c) and (r, c+1)
-	// Points run Top -> Bottom.
-	// Tab sign: +1 means tab points right into (r, c+1), -1 means tab points left into (r, c).
 	vertEdges := make([][]CutEdge, cfg.Rows)
 	for r := 0; r < cfg.Rows; r++ {
 		vertEdges[r] = make([]CutEdge, cfg.Cols-1)
@@ -124,25 +118,22 @@ func CutPuzzle(img image.Image, cfg CutterConfig) (*CutResult, error) {
 			var topPts, rightPts, bottomPts, leftPts []puzzle.Point2D
 			var topType, rightType, bottomType, leftType puzzle.EdgeType
 
-			// 1. TOP EDGE (Left -> Right)
+			// 1. TOP EDGE
 			if r == 0 {
 				topType = puzzle.Flat
 				topPts = curve.GenerateStraightEdge(pTopLeft, pTopRight, cfg.PointsPerEdge)
 			} else {
-				// Shares horizEdges[r-1][c] which was defined Left -> Right
 				e := horizEdges[r-1][c]
 				topPts = make([]puzzle.Point2D, len(e.Points))
 				copy(topPts, e.Points)
 				if e.TabSign > 0 {
-					// Tab pointed down into this piece: female pocket (Blank)
 					topType = puzzle.Blank
 				} else {
-					// Tab pointed up away from (r, c): male protrusion (Tab)
 					topType = puzzle.Tab
 				}
 			}
 
-			// 2. RIGHT EDGE (Top -> Bottom)
+			// 2. RIGHT EDGE
 			if c == cfg.Cols-1 {
 				rightType = puzzle.Flat
 				rightPts = curve.GenerateStraightEdge(pTopRight, pBottomRight, cfg.PointsPerEdge)
@@ -151,40 +142,34 @@ func CutPuzzle(img image.Image, cfg CutterConfig) (*CutResult, error) {
 				rightPts = make([]puzzle.Point2D, len(e.Points))
 				copy(rightPts, e.Points)
 				if e.TabSign > 0 {
-					// Tab pointed right out of (r, c): male protrusion (Tab)
 					rightType = puzzle.Tab
 				} else {
-					// Tab pointed left into (r, c): female pocket (Blank)
 					rightType = puzzle.Blank
 				}
 			}
 
-			// 3. BOTTOM EDGE (Right -> Left for clockwise boundary loop)
+			// 3. BOTTOM EDGE
 			if r == cfg.Rows-1 {
 				bottomType = puzzle.Flat
 				bottomPts = curve.GenerateStraightEdge(pBottomRight, pBottomLeft, cfg.PointsPerEdge)
 			} else {
-				e := horizEdges[r][c] // Defined Left -> Right
-				// Reverse it so bottom runs Right -> Left
+				e := horizEdges[r][c]
 				bottomPts = curve.Reverse(e.Points)
 				if e.TabSign > 0 {
-					// Tab pointed down out of (r, c): male protrusion (Tab)
 					bottomType = puzzle.Tab
 				} else {
 					bottomType = puzzle.Blank
 				}
 			}
 
-			// 4. LEFT EDGE (Bottom -> Top for clockwise boundary loop)
+			// 4. LEFT EDGE
 			if c == 0 {
 				leftType = puzzle.Flat
 				leftPts = curve.GenerateStraightEdge(pBottomLeft, pTopLeft, cfg.PointsPerEdge)
 			} else {
-				e := vertEdges[r][c-1] // Defined Top -> Bottom
-				// Reverse so left runs Bottom -> Top
+				e := vertEdges[r][c-1]
 				leftPts = curve.Reverse(e.Points)
 				if e.TabSign > 0 {
-					// Tab pointed right into (r, c): female pocket (Blank)
 					leftType = puzzle.Blank
 				} else {
 					leftType = puzzle.Tab
@@ -196,10 +181,10 @@ func CutPuzzle(img image.Image, cfg CutterConfig) (*CutResult, error) {
 				OriginalRow: r,
 				OriginalCol: c,
 				Edges: [4]puzzle.Edge{
-					{Dir: puzzle.Top, Type: topType, Points: topPts},
-					{Dir: puzzle.Right, Type: rightType, Points: rightPts},
-					{Dir: puzzle.Bottom, Type: bottomType, Points: bottomPts},
-					{Dir: puzzle.Left, Type: leftType, Points: leftPts},
+					{Dir: puzzle.Top, Type: topType, Points: topPts, Colors: matcher.ExtractEdgeBoundaryColors(img, topPts)},
+					{Dir: puzzle.Right, Type: rightType, Points: rightPts, Colors: matcher.ExtractEdgeBoundaryColors(img, rightPts)},
+					{Dir: puzzle.Bottom, Type: bottomType, Points: bottomPts, Colors: matcher.ExtractEdgeBoundaryColors(img, bottomPts)},
+					{Dir: puzzle.Left, Type: leftType, Points: leftPts, Colors: matcher.ExtractEdgeBoundaryColors(img, leftPts)},
 				},
 				Rotation: 0,
 			}
