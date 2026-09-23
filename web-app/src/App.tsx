@@ -361,14 +361,21 @@ function App() {
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               Rust 3x3 Homography DLT Unwarping. Drag green corners on video to correct optical angle!
             </p>
-            <div style={{ marginBottom: '8px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
               <a
-                href="/calibration_mat.html"
+                href="/calibration_mat_letter.pdf"
+                download="calibration_mat_letter.pdf"
+                style={{ color: '#3fb950', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'underline' }}
+              >
+                📥 Download Calibration Mat (PDF - US Letter)
+              </a>
+              <a
+                href="/calibration_mat_letter.html"
                 target="_blank"
                 rel="noreferrer"
                 style={{ color: 'var(--accent-cyan)', fontSize: '0.8rem', textDecoration: 'underline' }}
               >
-                📄 Open Printable Calibration Mat (A4/Letter)
+                📄 View Printable Mat in Browser
               </a>
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', margin: '12px 0' }}>
