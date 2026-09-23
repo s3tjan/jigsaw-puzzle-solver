@@ -154,15 +154,28 @@ func ExtractDescriptor(img image.Image, mask *image.Alpha) FeatureDescriptor {
 	}
 }
 
-// DescriptorDistance computes illuminant-invariant visual distance between two descriptors.
-func DescriptorDistance(d1, d2 FeatureDescriptor) float64 {
+// MatchMetrics provides breakdown of why a piece candidate matched the artwork slot.
+type MatchMetrics struct {
+	HueSimilarity      float64 `json:"hue_similarity"`      // [0, 100]%
+	ChromaSimilarity   float64 `json:"chroma_similarity"`   // [0, 100]%
+	GradientSimilarity float64 `json:"gradient_similarity"` // [0, 100]%
+	OverallConfidence  float64 `json:"overall_confidence"`  // [0, 100]%
+}
+
+// DescriptorDistanceDetailed computes visual distance and returns granular similarity percentages.
+func DescriptorDistanceDetailed(d1, d2 FeatureDescriptor) (float64, MatchMetrics) {
 	dChromaMean := math.Hypot(d1.MeanChromaA-d2.MeanChromaA, d1.MeanChromaB-d2.MeanChromaB)
+	chromaSim := math.Max(0.0, math.Min(100.0, (1.0-math.Min(1.0, dChromaMean*2.0))*100.0))
 
 	hueIntersection := 0.0
 	for i := 0; i < 16; i++ {
 		hueIntersection += math.Min(d1.HueHist[i], d2.HueHist[i])
 	}
 	dHue := 1.0 - hueIntersection
+	hueSim := math.Max(0.0, math.Min(100.0, hueIntersection*100.0))
+
+	gradSim := 50.0
+	totalDist := 0.0
 
 	if d1.HasGradients && d2.HasGradients {
 		gradIntersection := 0.0
@@ -170,9 +183,24 @@ func DescriptorDistance(d1, d2 FeatureDescriptor) float64 {
 			gradIntersection += math.Min(d1.GradientHist[i], d2.GradientHist[i])
 		}
 		dGrad := 1.0 - gradIntersection
-		return 0.55*dHue + 0.25*dChromaMean + 0.20*dGrad
+		gradSim = math.Max(0.0, math.Min(100.0, gradIntersection*100.0))
+		totalDist = 0.55*dHue + 0.25*dChromaMean + 0.20*dGrad
+	} else {
+		totalDist = 0.70*dHue + 0.30*dChromaMean
 	}
 
-	// For flat color regions with no gradients
-	return 0.70*dHue + 0.30*dChromaMean
+	confidence := math.Max(0.0, math.Min(100.0, (1.0-totalDist)*100.0))
+
+	return totalDist, MatchMetrics{
+		HueSimilarity:      hueSim,
+		ChromaSimilarity:   chromaSim,
+		GradientSimilarity: gradSim,
+		OverallConfidence:  confidence,
+	}
+}
+
+// DescriptorDistance computes illuminant-invariant visual distance between two descriptors.
+func DescriptorDistance(d1, d2 FeatureDescriptor) float64 {
+	dist, _ := DescriptorDistanceDetailed(d1, d2)
+	return dist
 }

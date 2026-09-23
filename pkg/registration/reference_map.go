@@ -6,11 +6,14 @@ import (
 	"sort"
 )
 
-// GridLocationCandidate ranks a potential (row, col) match on the reference image.
+// GridLocationCandidate ranks a potential (row, col) match on the reference image with rotation advice.
 type GridLocationCandidate struct {
-	Row      int     `json:"row"`
-	Col      int     `json:"col"`
-	Distance float64 `json:"distance"` // [0, 1], lower is closer visual match
+	Row            int          `json:"row"`
+	Col            int          `json:"col"`
+	Distance       float64      `json:"distance"`        // [0, 1], lower is closer visual match
+	Rotation       int          `json:"rotation"`        // 0, 90, 180, 270 degrees CW piece should be rotated
+	CandidateImage string       `json:"candidate_image"` // Base64 PNG crop of artwork at this location
+	Metrics        MatchMetrics `json:"metrics"`         // Breakdown: Hue, Chroma, Gradient similarities
 }
 
 // ReferenceMap indexes a master reference image (e.g. Starry Night) into an R x C grid of descriptors.
@@ -20,6 +23,19 @@ type ReferenceMap struct {
 	TileWidth   float64
 	TileHeight  float64
 	MasterImage image.Image
+}
+
+// rotateImage90CW rotates an RGBA/generic image 90 degrees clockwise.
+func rotateImage90CW(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(h-1-y, x, src.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return dst
 }
 
 // NewReferenceMap partitions masterImg into an R x C grid and precomputes multi-rotation feature descriptors.
@@ -44,10 +60,17 @@ func NewReferenceMap(masterImg image.Image, grid puzzle.Grid) *ReferenceMap {
 			sub := subImage(masterImg, rect)
 
 			tiles[r][c] = make([]FeatureDescriptor, 4)
+			// Rot 0
 			tiles[r][c][0] = ExtractDescriptor(sub, nil)
-			tiles[r][c][1] = tiles[r][c][0]
-			tiles[r][c][2] = tiles[r][c][0]
-			tiles[r][c][3] = tiles[r][c][0]
+			// Rot 90 CW
+			r90 := rotateImage90CW(sub)
+			tiles[r][c][1] = ExtractDescriptor(r90, nil)
+			// Rot 180 CW
+			r180 := rotateImage90CW(r90)
+			tiles[r][c][2] = ExtractDescriptor(r180, nil)
+			// Rot 270 CW
+			r270 := rotateImage90CW(r180)
+			tiles[r][c][3] = ExtractDescriptor(r270, nil)
 		}
 	}
 
@@ -65,13 +88,14 @@ func (rm *ReferenceMap) LocateCandidates(desc FeatureDescriptor, topK int) []Gri
 	return rm.LocateCandidatesWithTopology(desc, -1, topK)
 }
 
-// LocateCandidatesWithTopology filters candidate slots by physical edge topology:
+// LocateCandidatesWithTopology filters candidate slots by physical edge topology and tests all 4 rotations.
 // flatCount == 2 -> Corners only
 // flatCount == 1 -> Borders only (excluding corners)
 // flatCount == 0 -> Interior only
 // flatCount < 0  -> No topological filter (searches everywhere)
 func (rm *ReferenceMap) LocateCandidatesWithTopology(desc FeatureDescriptor, flatCount int, topK int) []GridLocationCandidate {
 	var candidates []GridLocationCandidate
+	rotations := []int{0, 90, 180, 270}
 
 	for r := 0; r < rm.Grid.Rows; r++ {
 		for c := 0; c < rm.Grid.Cols; c++ {
@@ -91,11 +115,29 @@ func (rm *ReferenceMap) LocateCandidatesWithTopology(desc FeatureDescriptor, fla
 				}
 			}
 
-			d := DescriptorDistance(desc, rm.Tiles[r][c][0])
+			// Test all 4 orientations to find the minimum distance and optimal rotation
+			bestDist := 1.0
+			bestRot := 0
+			var bestMetrics MatchMetrics
+
+			for rotIdx, deg := range rotations {
+				// Comparing scanned piece with tile rotated by (360-deg)%360 determines
+				// how much the user should rotate the physical piece clockwise.
+				tileDesc := rm.Tiles[r][c][rotIdx]
+				d, metrics := DescriptorDistanceDetailed(desc, tileDesc)
+				if d < bestDist {
+					bestDist = d
+					bestRot = deg
+					bestMetrics = metrics
+				}
+			}
+
 			candidates = append(candidates, GridLocationCandidate{
 				Row:      r,
 				Col:      c,
-				Distance: d,
+				Distance: bestDist,
+				Rotation: bestRot,
+				Metrics:  bestMetrics,
 			})
 		}
 	}
@@ -108,6 +150,33 @@ func (rm *ReferenceMap) LocateCandidatesWithTopology(desc FeatureDescriptor, fla
 		topK = len(candidates)
 	}
 	return candidates[:topK]
+}
+
+// GetTileCrop returns a high-resolution crop of the master artwork centered around (r, c) with optional padding margin.
+func (rm *ReferenceMap) GetTileCrop(r, c int, marginPixels int) image.Image {
+	if rm.MasterImage == nil {
+		return nil
+	}
+	b := rm.MasterImage.Bounds()
+	x0 := int(float64(c)*rm.TileWidth) - marginPixels
+	y0 := int(float64(r)*rm.TileHeight) - marginPixels
+	x1 := int(float64(c+1)*rm.TileWidth) + marginPixels
+	y1 := int(float64(r+1)*rm.TileHeight) + marginPixels
+
+	if x0 < b.Min.X {
+		x0 = b.Min.X
+	}
+	if y0 < b.Min.Y {
+		y0 = b.Min.Y
+	}
+	if x1 > b.Max.X {
+		x1 = b.Max.X
+	}
+	if y1 > b.Max.Y {
+		y1 = b.Max.Y
+	}
+
+	return subImage(rm.MasterImage, image.Rect(x0, y0, x1, y1))
 }
 
 // CellDistance returns visual distance between piece descriptor and grid tile (r, c).

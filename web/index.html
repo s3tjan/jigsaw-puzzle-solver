@@ -3,174 +3,337 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JigSolve - Interactive Jigsaw Puzzle Solver Workbench</title>
+  <title>JigSolve - Precision Puzzle Vision & Placement Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
   <div class="app-layout">
-    <!-- Sidebar Controls -->
-    <aside class="sidebar">
+
+    <!-- Global Header (Ravensburger Blue Theme) -->
+    <header class="studio-header">
       <div class="brand">
-        <div class="logo-icon">🧩</div>
+        <div class="brand-triangle-mark"></div>
         <div class="brand-text">
-          <h1>JigSolve</h1>
-          <span class="badge">Go Core v1.0</span>
+          <h1>JigSolve <span>Studio</span></h1>
+          <span class="badge">Go Vision Engine</span>
         </div>
       </div>
 
-      <div class="panel-section">
-        <h2>Artwork & Grid</h2>
-        <div class="control-group">
-          <label for="presetSelect">Preset Artwork</label>
+      <div class="header-controls">
+        <div class="control-pill">
+          <label for="presetSelect">Master Artwork</label>
           <select id="presetSelect">
-            <option value="starry_night" selected>Starry Night (Van Gogh)</option>
-            <option value="gradient">Color Spectrum Gradient</option>
-            <option value="custom">📁 Custom Uploaded Image</option>
+            <option value="starry_night" selected>Starry Night (1000 Pcs, 25×40)</option>
+            <option value="custom">Custom Image File</option>
           </select>
-          <div id="uploadGroup" style="display:none; margin-top:8px;">
-            <label for="customFileInput" class="action-btn secondary-btn" style="cursor:pointer; font-size:12px; padding:6px 10px;">
-              📁 Choose Master Image (JPG/PNG)
-            </label>
-            <input type="file" id="customFileInput" accept="image/*" style="display:none;">
-            <div id="uploadedFileName" class="mono-val" style="font-size:11px; margin-top:4px; word-break:break-all;"></div>
+          <input type="file" id="customFileInput" accept="image/*" style="display:none;">
+          <button id="uploadCustomBtn" class="pill-action-btn" style="display:none;">Upload</button>
+        </div>
+
+        <div class="control-pill">
+          <label>Grid Spec</label>
+          <div class="grid-inputs">
+            <input type="number" id="rowsInput" value="25" min="2" max="60" title="Rows">
+            <span>×</span>
+            <input type="number" id="colsInput" value="40" min="2" max="80" title="Columns">
+            <button id="applyGridBtn" class="pill-action-btn" title="Update grid dimensions">Update</button>
           </div>
         </div>
 
-        <div class="grid-controls">
-          <div class="control-group">
-            <label for="rowsInput">Rows: <span id="rowsVal" class="mono-val">25</span></label>
-            <input type="number" id="rowsInput" min="2" max="40" value="25" style="background:var(--card-bg); color:var(--text-main); border:1px solid var(--panel-border); border-radius:var(--radius-sm); padding:6px 10px; font-family:var(--font-mono); font-size:13px;">
-          </div>
-          <div class="control-group">
-            <label for="colsInput">Columns: <span id="colsVal" class="mono-val">40</span></label>
-            <input type="number" id="colsInput" min="2" max="50" value="40" style="background:var(--card-bg); color:var(--text-main); border:1px solid var(--panel-border); border-radius:var(--radius-sm); padding:6px 10px; font-family:var(--font-mono); font-size:13px;">
-          </div>
-        </div>
-
-        <div class="preset-pills">
-          <button class="pill-btn" data-r="4" data-c="5">4×5 (20 pcs)</button>
-          <button class="pill-btn" data-r="10" data-c="10">10×10 (100 pcs)</button>
-          <button class="pill-btn" data-r="20" data-c="25">20×25 (500 pcs)</button>
-          <button class="pill-btn active" data-r="25" data-c="40">25×40 (1000 pcs)</button>
-        </div>
-
-        <button id="generateBtn" class="action-btn primary-btn">
-          <span>⚡ Generate & Cut</span>
-        </button>
-      </div>
-
-      <div class="panel-section">
-        <h2>Solver Engine</h2>
-        <div class="control-group">
-          <label for="speedInput">Playback Speed: <span id="speedVal" class="mono-val">100ms</span></label>
-          <input type="range" id="speedInput" min="10" max="500" value="100" step="10">
-        </div>
-
-        <div class="solver-actions">
-          <button id="scrambleBtn" class="action-btn secondary-btn" title="Randomly shuffle and rotate pieces">
-            🔀 Scramble
-          </button>
-          <button id="stepBtn" class="action-btn secondary-btn" title="Step one placement">
-            ⏯️ Step
-          </button>
-          <button id="solveBtn" class="action-btn glow-btn" title="Auto solve">
-            ✨ Auto Solve
-          </button>
-        </div>
-      </div>
-
-      <div class="panel-section stats-section">
-        <h2>Live Telemetry</h2>
-        <div class="stat-grid">
-          <div class="stat-card">
-            <span class="stat-label">Pieces</span>
-            <span id="statPieces" class="stat-val">20</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Placed</span>
-            <span id="statPlaced" class="stat-val">0</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Solve Time</span>
-            <span id="statTime" class="stat-val">-</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Accuracy</span>
-            <span id="statAccuracy" class="stat-val">-</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel-section inspector-section">
-        <h2>Piece Inspector</h2>
-        <div id="inspectorContent" class="inspector-card empty">
-          Hover or click any piece to inspect its geometry, polarity, and rotation.
-        </div>
-      </div>
-    </aside>
-
-    <!-- Main Visual Canvas Workbench -->
-    <main class="workbench">
-      <header class="topbar">
-        <div class="view-toggles">
-          <button id="viewBoardBtn" class="toggle-tab active">Board & Tray</button>
-          <button id="viewSolvedBtn" class="toggle-tab">Original Reference</button>
-          <button id="viewScannerBtn" class="toggle-tab">📷 Camera Scanner</button>
-        </div>
         <div class="status-indicator">
-          <span class="status-dot ready"></span>
-          <span id="statusText">Ready</span>
+          <span class="status-dot ready" id="statusDot"></span>
+          <span id="statusText">System Ready</span>
         </div>
-      </header>
-
-      <!-- Main Puzzle Canvas View -->
-      <div class="canvas-container" id="canvasContainer">
-        <canvas id="puzzleCanvas"></canvas>
       </div>
+    </header>
 
-      <!-- Live Webcam Scanner View -->
-      <div class="scanner-container" id="scannerContainer" style="display: none;">
-        <div class="scanner-split">
-          <div class="camera-card">
-            <div class="camera-viewport">
+    <!-- 3-Column Studio Layout Centered on Screen: Sections Ordered 3, 1, 2 -->
+    <div class="studio-body-container">
+      <main class="studio-body">
+
+        <!-- SECTION 3 (PRIMARY IMPORTANCE): Master Artwork Location, Candidate Matching & Explanations -->
+        <section class="studio-col col-placement">
+          <div class="panel-header">
+            <h2>3. Master Artwork Placement</h2>
+            <span class="badge" id="gridInfoBadge">1000 Pieces (25×40)</span>
+          </div>
+
+          <!-- Master Painting Navigator Canvas -->
+          <div class="master-canvas-card">
+            <div class="master-canvas-header">
+              <h3>Artwork Coordinates</h3>
+              <span class="reticle-status" id="reticleStatus">No piece located</span>
+            </div>
+            <div class="master-canvas-wrapper">
+              <canvas id="masterCanvas" width="500" height="375"></canvas>
+              <div class="grid-overlay-hint">Spatial Grid Navigation</div>
+            </div>
+          </div>
+
+          <!-- Primary Match & Rotation Instruction Hero -->
+          <div class="placement-hero-card" id="placementHero">
+            <div class="hero-empty">Scan a piece to view exact coordinates and match analysis</div>
+          </div>
+
+          <!-- Top Candidate Comparison & Match Explanation Cards -->
+          <div class="candidates-container">
+            <h3>Candidate Locations & Match Telemetry</h3>
+            <div class="candidate-cards" id="candidateCards">
+              <div class="candidate-empty">Candidates will appear here after scanning</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION 1 (SECONDARY IMPORTANCE): Camera Ingestion, Hardware Settings & Human-in-the-Loop Assist -->
+        <section class="studio-col col-scanner">
+          <div class="panel-header">
+            <h2>1. Ingestion & Assist</h2>
+            <div class="header-tags">
+              <span class="tag-pill" id="autoThreshTag">Otsu Auto: ON</span>
+            </div>
+          </div>
+
+          <!-- Camera Viewport with Framing Guide -->
+          <div class="camera-viewport-card">
+            <div class="video-container">
               <video id="webcamVideo" autoplay playsinline muted></video>
               <div class="camera-reticle">
-                <span class="reticle-hint">Place puzzle piece inside target</span>
+                <div class="reticle-box">
+                  <span class="corner tl"></span>
+                  <span class="corner tr"></span>
+                  <span class="corner br"></span>
+                  <span class="corner bl"></span>
+                  <span class="reticle-label">FRAME PIECE HERE</span>
+                </div>
               </div>
             </div>
-            <div class="camera-controls">
-              <button id="startCamBtn" class="action-btn secondary-btn">📹 Start Camera</button>
-              <button id="capturePieceBtn" class="action-btn primary-btn">📸 Capture & Segment</button>
+            <div class="camera-actions">
+              <button id="startCamBtn" class="action-btn secondary-btn">Start Camera</button>
+              <button id="capturePieceBtn" class="action-btn primary-btn glow">Scan Physical Piece</button>
             </div>
           </div>
 
-          <div class="analysis-card">
-            <h3>Piece Extraction & Classification</h3>
-            <div class="scanner-settings">
-              <div class="control-group">
-                <label for="threshSlider">Luminance Threshold: <span id="threshVal" class="mono-val">70</span></label>
-                <input type="range" id="threshSlider" min="10" max="240" value="70">
-              </div>
-              <div class="control-group" style="flex-direction:row; align-items:center; gap:8px;">
-                <input type="checkbox" id="invertBgCheck">
-                <label for="invertBgCheck" style="cursor:pointer;">Invert Background (Light Surface)</label>
-              </div>
+          <!-- Ingestion Settings -->
+          <div class="scanner-settings-card">
+            <div class="setting-row">
+              <label class="switch-container">
+                <input type="checkbox" id="autoThreshCheck" checked>
+                <span class="switch-slider"></span>
+                <span class="switch-label">Otsu Auto-Threshold</span>
+              </label>
+              <label class="switch-container">
+                <input type="checkbox" id="invertBgCheck" checked>
+                <span class="switch-slider"></span>
+                <span class="switch-label">Light Background</span>
+              </label>
             </div>
-
-            <div class="piece-preview-box">
-              <canvas id="cvCanvas" width="300" height="300"></canvas>
-            </div>
-
-            <div id="cvResults" class="cv-results-card empty">
-              Capture a piece to analyze its 4 physical corners, tabs/blanks, and predict its location on the master painting.
+            <div class="control-group" id="manualThreshGroup" style="opacity: 0.5; pointer-events: none;">
+              <div class="slider-header">
+                <label for="threshSlider">Manual Threshold</label>
+                <span id="threshVal" class="mono-val">Auto</span>
+              </div>
+              <input type="range" id="threshSlider" min="10" max="240" value="110">
             </div>
           </div>
-        </div>
-      </div>
-    </main>
+
+          <!-- Human-in-the-Loop Override & Verification Bar -->
+          <div class="telemetry-card hitl-card">
+            <div class="hitl-header">
+              <h3>Human-in-the-Loop Assist</h3>
+              <span class="badge hitl-badge" id="hitlBadge">Auto-Classified</span>
+            </div>
+            <p class="hitl-hint">Override edge geometry classifications if lighting causes false contours:</p>
+            <div class="hitl-override-grid">
+              <div class="hitl-edge-selector" data-dir="0">
+                <span class="hitl-dir top">Top</span>
+                <select id="hitlEdge0">
+                  <option value="Tab">Tab (Convex)</option>
+                  <option value="Blank">Blank (Concave)</option>
+                  <option value="Flat">Flat (Border)</option>
+                </select>
+              </div>
+              <div class="hitl-edge-selector" data-dir="1">
+                <span class="hitl-dir right">Right</span>
+                <select id="hitlEdge1">
+                  <option value="Tab">Tab (Convex)</option>
+                  <option value="Blank">Blank (Concave)</option>
+                  <option value="Flat">Flat (Border)</option>
+                </select>
+              </div>
+              <div class="hitl-edge-selector" data-dir="2">
+                <span class="hitl-dir bottom">Bottom</span>
+                <select id="hitlEdge2">
+                  <option value="Tab">Tab (Convex)</option>
+                  <option value="Blank">Blank (Concave)</option>
+                  <option value="Flat">Flat (Border)</option>
+                </select>
+              </div>
+              <div class="hitl-edge-selector" data-dir="3">
+                <span class="hitl-dir left">Left</span>
+                <select id="hitlEdge3">
+                  <option value="Tab">Tab (Convex)</option>
+                  <option value="Blank">Blank (Concave)</option>
+                  <option value="Flat">Flat (Border)</option>
+                </select>
+              </div>
+            </div>
+            <div class="hitl-actions">
+              <button id="recheckCandidatesBtn" class="action-btn secondary-btn" style="padding: 6px 10px; font-size: 11px;">
+                Re-Rank Placement
+              </button>
+              <button id="downloadDebugJsonBtn" class="action-btn secondary-btn" style="padding: 6px 10px; font-size: 11px;">
+                Export Debug JSON
+              </button>
+            </div>
+          </div>
+
+          <!-- Computer Vision Pipeline Diagnostics -->
+          <div class="telemetry-card">
+            <h3>CV Diagnostics</h3>
+            <div class="metrics-grid">
+              <div class="metric-item">
+                <span class="metric-title">Bimodal Otsu Cut</span>
+                <span class="metric-value" id="valThresh">--</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-title">Surface Contrast Mode</span>
+                <span class="metric-value" id="valInvertMode">--</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-title">Straight-Line Fit Score</span>
+                <span class="metric-value" id="valStraightFit">--</span>
+              </div>
+              <div class="metric-item">
+                <span class="metric-title">Piece Perimeter / Area</span>
+                <span class="metric-value" id="valPerimArea">--</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- SECTION 2 (TERTIARY IMPORTANCE): Computer Vision Multi-Layer View & Telemetry -->
+        <section class="studio-col col-cv-center">
+          <div class="panel-header">
+            <h2>2. Computer Vision Multi-Layer View</h2>
+            <span class="mono-meta" id="scanTimestamp">No scan</span>
+          </div>
+
+          <!-- Multi-Layer CV Canvas Viewport -->
+          <div class="cv-viewport-card">
+            <div class="cv-canvas-header">
+              <div class="canvas-layers">
+                <button class="layer-btn active" data-layer="img" title="Piece Photo">Photo</button>
+                <button class="layer-btn active" data-layer="contour" title="Smooth 160pt Perimeter">Contour</button>
+                <button class="layer-btn active" data-layer="corners" title="4 Physical Corners">Corners</button>
+                <button class="layer-btn active" data-layer="vectors" title="Tab/Blank Curvature Vectors">Vectors</button>
+                <button class="layer-btn" data-layer="rawContour" title="Raw Pixel Discretized Boundary">Raw</button>
+                <button class="layer-btn active" data-layer="zebra" title="Highlight Over-Exposed Pixels">Zebra</button>
+                <button class="layer-btn" data-layer="mask" title="Binary Threshold Mask">Mask</button>
+              </div>
+            </div>
+            <div class="canvas-wrapper">
+              <canvas id="cvCanvas" width="520" height="380"></canvas>
+              <div id="cvEmptyOverlay" class="canvas-empty-state">
+                <span>Capture a piece to inspect boundary curves and corners</span>
+              </div>
+            </div>
+
+            <!-- Exposure & Lighting Diagnostics Subcard -->
+            <div class="exposure-telemetry-subcard">
+              <div class="exposure-status-row">
+                <span class="exp-title">Sensor Exposure Level:</span>
+                <span class="exp-badge good" id="expWarningBadge">Exposure OK</span>
+              </div>
+              <div class="lum-histogram-wrapper">
+                <canvas id="lumHistCanvas" width="500" height="38"></canvas>
+                <div class="lum-axis">
+                  <span>0 (Shadows)</span>
+                  <span id="otsuMarkerLabel">Threshold: --</span>
+                  <span>255 (Highlights)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Spectral & Feature Analysis Subcards -->
+          <div class="cv-analytics-grid">
+            <!-- RGB Chromaticity Histogram -->
+            <div class="telemetry-card half-card">
+              <div class="hitl-header">
+                <h3>RGB Distribution</h3>
+                <span class="mono-meta" id="meanLabText">CIE-Lab: --</span>
+              </div>
+              <div class="channel-hist-wrapper">
+                <canvas id="colorHistCanvas" width="240" height="42"></canvas>
+                <div class="lum-axis">
+                  <span style="color:#ef4444">R</span>
+                  <span style="color:#22c55e">G</span>
+                  <span style="color:#3b82f6">B</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Histogram of Oriented Gradients (HOG) -->
+            <div class="telemetry-card half-card">
+              <div class="hitl-header">
+                <h3>Gradient Orientations (HOG)</h3>
+                <span class="mono-meta">8 Angular Bins</span>
+              </div>
+              <div class="channel-hist-wrapper">
+                <canvas id="hogCanvas" width="240" height="42"></canvas>
+                <div class="lum-axis">
+                  <span>0°</span>
+                  <span>90°</span>
+                  <span>180°</span>
+                  <span>270°</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Interactive 4-Edge Physical Geometry Cards -->
+          <div class="telemetry-card">
+            <div class="hitl-header">
+              <h3>Edge Curvature & Deviation Analysis</h3>
+              <span class="mono-meta" id="edgeAnalysisSummary">4 Edges</span>
+            </div>
+            <div class="edge-telemetry-list" id="edgeTelemetryList">
+              <div class="empty-list-notice">Waiting for piece scan...</div>
+            </div>
+          </div>
+
+          <!-- Corner Geometry & Orthogonality -->
+          <div class="telemetry-card">
+            <div class="hitl-header">
+              <h3>Corner Orthogonality (Target: ~90°)</h3>
+              <span class="mono-meta" id="valCornerAvg">Avg: --°</span>
+            </div>
+            <div class="corners-grid">
+              <div class="corner-box" id="cornerBox0">
+                <span class="c-label">C0 (TL)</span>
+                <span class="c-val" id="angleC0">--°</span>
+              </div>
+              <div class="corner-box" id="cornerBox1">
+                <span class="c-label">C1 (TR)</span>
+                <span class="c-val" id="angleC1">--°</span>
+              </div>
+              <div class="corner-box" id="cornerBox2">
+                <span class="c-label">C2 (BR)</span>
+                <span class="c-val" id="angleC2">--°</span>
+              </div>
+              <div class="corner-box" id="cornerBox3">
+                <span class="c-label">C3 (BL)</span>
+                <span class="c-val" id="angleC3">--°</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
   </div>
 
   <script src="app.js"></script>
