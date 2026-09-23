@@ -305,15 +305,17 @@ function App() {
               style={{ display: isCameraActive ? 'block' : 'none' }}
             />
             <canvas ref={canvasRef} className="hidden-canvas" />
-            <canvas
-              ref={overlayCanvasRef}
-              className="overlay-canvas"
-              style={{ cursor: draggingIdx !== null ? 'grabbing' : 'crosshair' }}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerCancel={handlePointerUp}
-            />
+            {isCameraActive && (
+              <canvas
+                ref={overlayCanvasRef}
+                className="overlay-canvas"
+                style={{ cursor: draggingIdx !== null ? 'grabbing' : 'crosshair' }}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+              />
+            )}
 
             {!isCameraActive && (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
