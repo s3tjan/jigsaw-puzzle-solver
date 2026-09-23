@@ -228,17 +228,17 @@ function App() {
     }
   }, [isCameraActive, wasmReady, processLoop])
 
-  // Mouse / Touch drag handling for calibration corners
-  const handleOverlayMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Pointer / Touch / Mouse drag handling with hardware pointer capture
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const scaleX = 640 / rect.width
     const scaleY = 360 / rect.height
     const mx = (e.clientX - rect.left) * scaleX
     const my = (e.clientY - rect.top) * scaleY
 
-    // Find closest corner within 30px
+    // Generous detection radius (45px) for easy grabbing on desktop and mobile touch
     let closest = -1
-    let minDist = 35
+    let minDist = 45
     corners.forEach((pt, i) => {
       const d = Math.hypot(pt.x - mx, pt.y - my)
       if (d < minDist) {
@@ -249,10 +249,11 @@ function App() {
 
     if (closest !== -1) {
       setDraggingIdx(closest)
+      e.currentTarget.setPointerCapture(e.pointerId)
     }
   }
 
-  const handleOverlayMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (draggingIdx === null) return
     const rect = e.currentTarget.getBoundingClientRect()
     const scaleX = 640 / rect.width
@@ -267,8 +268,13 @@ function App() {
     })
   }
 
-  const handleOverlayMouseUp = () => {
-    setDraggingIdx(null)
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (draggingIdx !== null) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {}
+      setDraggingIdx(null)
+    }
   }
 
   return (
@@ -303,10 +309,10 @@ function App() {
               ref={overlayCanvasRef}
               className="overlay-canvas"
               style={{ cursor: draggingIdx !== null ? 'grabbing' : 'crosshair' }}
-              onMouseDown={handleOverlayMouseDown}
-              onMouseMove={handleOverlayMouseMove}
-              onMouseUp={handleOverlayMouseUp}
-              onMouseLeave={handleOverlayMouseUp}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
             />
 
             {!isCameraActive && (
