@@ -169,10 +169,10 @@ function App() {
           const analysis: FrameAnalysis = process_frame(rawBytes, targetW, targetH)
           setStats(analysis)
 
-          // Dewarp using current 4-corners into a square 256x256 orthographic mat view
+          // Dewarp using current 4-corners into a crisp 384x384 orthographic macro view
           if (autoDewarp && dewarpedCanvas) {
-            const dstW = 256
-            const dstH = 256
+            const dstW = 384
+            const dstH = 384
             if (dewarpedCanvas.width !== dstW || dewarpedCanvas.height !== dstH) {
               dewarpedCanvas.width = dstW
               dewarpedCanvas.height = dstH

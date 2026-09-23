@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Jigsaw Calibration Mat (US Letter)</title>
+  <title>Jigsaw Calibration Mat (Macro Precision Edition - US Letter)</title>
   <style>
     @page {
       size: letter portrait; /* 8.5in x 11in = 215.9mm x 279.4mm */
@@ -18,164 +18,195 @@
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
-    .print-sheet {
+    .page-container {
       width: 8.5in;
       height: 11in;
       position: relative;
       box-sizing: border-box;
-      padding: 0.6in;
+      padding: 0.5in;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
       align-items: center;
+      justify-content: space-between;
       background: white;
     }
 
-    /* 4 Corner Optical Calibration Anchors (ArUco / High-Contrast Target) */
-    .marker-corner {
+    .header {
+      text-align: center;
+      margin-top: 0.1in;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 18pt;
+      letter-spacing: -0.5px;
+      color: #111;
+    }
+    .header p {
+      margin: 4px 0 0 0;
+      font-size: 9.5pt;
+      color: #555;
+    }
+
+    /* THE MACRO PRECISION MAT (3.2" x 3.2" = 81.3mm x 81.3mm) */
+    .macro-mat-card {
+      width: 4.2in;
+      height: 4.2in;
+      border: 2px solid #000;
+      position: relative;
+      background: #ffffff;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.25in;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    }
+
+    /* 4 Tight Corner Optical Anchors */
+    .anchor {
       position: absolute;
-      width: 1.0in;
-      height: 1.0in;
+      width: 0.65in;
+      height: 0.65in;
       background: #000;
       display: flex;
       align-items: center;
       justify-content: center;
     }
-    .marker-inner {
-      width: 0.6in;
-      height: 0.6in;
+    .anchor-inner {
+      width: 0.38in;
+      height: 0.38in;
       background: #fff;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 800;
-      font-size: 18pt;
+      font-weight: 900;
+      font-size: 13pt;
       color: #000;
     }
+    .top-left     { top: 0.15in; left: 0.15in; }
+    .top-right    { top: 0.15in; right: 0.15in; }
+    .bottom-right { bottom: 0.15in; right: 0.15in; }
+    .bottom-left  { bottom: 0.15in; left: 0.15in; }
 
-    .top-left     { top: 0.5in; left: 0.5in; }
-    .top-right    { top: 0.5in; right: 0.5in; }
-    .bottom-right { bottom: 0.5in; right: 0.5in; }
-    .bottom-left  { bottom: 0.5in; left: 0.5in; }
-
-    .header-info {
-      text-align: center;
-      margin-top: 0.2in;
-    }
-    .header-info h1 {
-      margin: 0;
-      font-size: 20pt;
-      letter-spacing: -0.5px;
-      color: #111;
-    }
-    .header-info p {
-      margin: 4px 0 0 0;
-      font-size: 10pt;
-      color: #555;
-    }
-
-    /* Staging Target Zone */
-    .staging-zone {
-      width: 5.5in;
-      height: 5.5in;
-      border: 2px dashed #444;
+    /* Staging Box for typical ~20mm x 20mm Ravensburger Piece */
+    .piece-drop-zone {
+      width: 2.2in;
+      height: 2.2in;
+      border: 2px dashed #e53e3e;
+      background: #fffafa;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       text-align: center;
-      background: #fafafa;
       box-sizing: border-box;
-      padding: 20px;
+      padding: 8px;
+      margin: auto;
     }
-    .staging-title {
-      font-size: 13pt;
-      font-weight: 800;
-      color: #222;
-      letter-spacing: 1px;
-    }
-    .staging-desc {
-      font-size: 9.5pt;
-      color: #666;
-      max-width: 4.2in;
-      margin: 8px 0 16px 0;
-      line-height: 1.35;
-    }
-
-    /* 18% Neutral Gray Card & Pure White/Black reference */
-    .color-checker {
-      display: flex;
-      border: 1px solid #333;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-    }
-    .patch {
-      width: 1.4in;
-      height: 0.45in;
+    .piece-outline-guide {
+      width: 17mm; /* Exact Ravensburger physical piece width (700mm / 42) */
+      height: 21mm; /* Exact Ravensburger physical piece height (500mm / 24) */
+      border: 1.5px dotted #3182ce;
+      background: rgba(49, 130, 206, 0.08);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 7.5pt;
+      font-size: 6.5pt;
+      font-weight: bold;
+      color: #2b6cb0;
+      margin-bottom: 6px;
+    }
+
+    /* Color reference strip */
+    .color-checker {
+      display: flex;
+      border: 1px solid #333;
+      margin-top: 4px;
+    }
+    .patch {
+      width: 0.8in;
+      height: 0.28in;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 6pt;
       font-weight: 700;
     }
     .patch-black { background: #000000; color: #fff; }
     .patch-gray  { background: #777777; color: #fff; } /* 18% Neutral Gray */
     .patch-white { background: #ffffff; color: #000; }
 
-    /* Alignment Crosshairs */
-    .crosshair {
-      position: absolute;
-      width: 20px;
-      height: 20px;
+    .instructions {
+      max-width: 6.5in;
+      background: #f7fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px 20px;
+      font-size: 9pt;
+      color: #4a5568;
+      line-height: 1.45;
     }
-    .crosshair::before {
-      content: '';
-      position: absolute;
-      top: 9px; left: 0; right: 0; height: 2px; background: #666;
+    .instructions h3 {
+      margin: 0 0 8px 0;
+      font-size: 11pt;
+      color: #2d3748;
     }
-    .crosshair::after {
-      content: '';
-      position: absolute;
-      left: 9px; top: 0; bottom: 0; width: 2px; background: #666;
-    }
-
-    .footer-scale {
-      text-align: center;
+    .metric-badge {
+      display: inline-block;
+      background: #edf2f7;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
       font-size: 8.5pt;
-      color: #777;
-      margin-bottom: 0.1in;
+      font-weight: 600;
+      color: #2d3748;
     }
   </style>
 </head>
 <body>
-  <div class="print-sheet">
-    <!-- 4 Calibration Quad Markers -->
-    <div class="marker-corner top-left"><div class="marker-inner">0</div></div>
-    <div class="marker-corner top-right"><div class="marker-inner">1</div></div>
-    <div class="marker-corner bottom-right"><div class="marker-inner">2</div></div>
-    <div class="marker-corner bottom-left"><div class="marker-inner">3</div></div>
-
-    <div class="header-info">
-      <h1>🧩 Jigsaw Puzzle Solver</h1>
-      <p>Optical Calibration Mat &bull; Print at 100% Scale (Actual Size &bull; US Letter)</p>
+  <div class="page-container">
+    <div class="header">
+      <h1>🧩 Jigsaw Solver: Macro Precision Mat</h1>
+      <p>Optimized for Standard 1,000-Piece Puzzles (Ravensburger, Clementoni, Buffalo Games)</p>
     </div>
 
-    <!-- Active Staging Region -->
-    <div class="staging-zone">
-      <div class="staging-title">PIECE PLACEMENT ZONE</div>
-      <div class="staging-desc">
-        Place 1 piece at a time inside this box. The Rust WebAssembly engine uses the 4 corner anchors to dewarp perspective and correct optical tilt.
+    <!-- THE COMPACT CO-LOCATED CALIBRATION TARGET -->
+    <div class="macro-mat-card">
+      <div class="anchor top-left"><div class="anchor-inner">0</div></div>
+      <div class="anchor top-right"><div class="anchor-inner">1</div></div>
+      <div class="anchor bottom-right"><div class="anchor-inner">2</div></div>
+      <div class="anchor bottom-left"><div class="anchor-inner">3</div></div>
+
+      <div style="font-size: 7.5pt; font-weight: bold; color: #718096; letter-spacing: 0.5px;">
+        CALIBRATION QUAD (3.5" &times; 3.5")
       </div>
 
-      <!-- Color calibration reference -->
+      <div class="piece-drop-zone">
+        <div class="piece-outline-guide">17 &times; 21 mm</div>
+        <strong style="font-size: 8pt; color: #c53030;">PIECE DROP ZONE</strong>
+        <span style="font-size: 6.5pt; color: #718096; margin-top: 2px;">
+          Max optical zoom &bull; Camera 6-8 inches above
+        </span>
+      </div>
+
       <div class="color-checker">
         <div class="patch patch-black">0% BLACK</div>
-        <div class="patch patch-gray">18% NEUTRAL GRAY</div>
+        <div class="patch patch-gray">18% GRAY</div>
         <div class="patch patch-white">100% WHITE</div>
       </div>
     </div>
 
-    <div class="footer-scale">
-      <strong>Scale:</strong> Staging Box is 5.5" &times; 5.5" (139.7mm &times; 139.7mm) &bull; Designed for Letter Size (8.5" &times; 11")
+    <div class="instructions">
+      <h3>📐 Why This Solves the Webcam Resolution Problem:</h3>
+      <ul>
+        <li><strong>Piece Geometry:</strong> In a standard 1,000-piece Ravensburger (42 &times; 24 grid on 70&times;50cm), an average piece is only <span class="metric-badge">16.7mm &times; 20.8mm</span> (~0.7" &times; 0.8").</li>
+        <li><strong>Macro Framing:</strong> By shrinking the 4 anchors to a tight 3.5" box, you can bring your webcam just <strong>6 to 8 inches</strong> away.</li>
+        <li><strong>Resolution Gain:</strong> The piece now fills <strong>~250 &times; 300 pixels</strong> (instead of 60px), giving the Rust engine sub-millimeter tab & blank precision!</li>
+      </ul>
+      <p style="margin: 0; font-size: 8pt; color: #a0aec0; text-align: center;">
+        Print on US Letter at 100% Scale (Do not scale/shrink to fit). You can optionally cut out the 4.2" square card.
+      </p>
     </div>
   </div>
 </body>
