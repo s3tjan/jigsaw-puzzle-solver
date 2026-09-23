@@ -1,11 +1,18 @@
+pub mod aruco;
+pub mod homography;
+
 use wasm_bindgen::prelude::*;
+use homography::{dewarp_image, Homography, Point2D};
+use aruco::MatCorners;
 
 #[derive(serde::Serialize)]
-pub struct FrameStats {
+pub struct FrameAnalysis {
     pub width: u32,
     pub height: u32,
     pub avg_brightness: f32,
     pub elapsed_ms: f64,
+    pub corners: Option<MatCorners>,
+    pub dewarped_ready: bool,
 }
 
 #[wasm_bindgen]
@@ -29,13 +36,11 @@ pub fn process_frame(pixels: &[u8], width: u32, height: u32) -> Result<JsValue, 
     let mut sum_brightness: u64 = 0;
     let total_pixels = (width * height) as usize;
 
-    // Fast loop over RGBA buffer (every 4th byte stride)
     for i in 0..total_pixels {
         let offset = i * 4;
         let r = pixels[offset] as u64;
         let g = pixels[offset + 1] as u64;
         let b = pixels[offset + 2] as u64;
-        // Standard perceptual luminance: 0.299 R + 0.587 G + 0.114 B
         let lum = (r * 299 + g * 587 + b * 114) / 1000;
         sum_brightness += lum;
     }
@@ -46,17 +51,61 @@ pub fn process_frame(pixels: &[u8], width: u32, height: u32) -> Result<JsValue, 
         0.0
     };
 
+    let corners = aruco::find_mat_quad(pixels, width, height);
+
     let end = web_sys::window()
         .and_then(|w| w.performance())
         .map(|p| p.now())
         .unwrap_or(0.0);
 
-    let stats = FrameStats {
+    let analysis = FrameAnalysis {
         width,
         height,
         avg_brightness: avg,
         elapsed_ms: end - start,
+        corners,
+        dewarped_ready: true,
     };
 
-    serde_wasm_bindgen::to_value(&stats).map_err(|e| JsValue::from_str(&e.to_string()))
+    serde_wasm_bindgen::to_value(&analysis).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Dewarp the specified 4-point quadrilateral from src_pixels into a rectified dst_w x dst_h RGBA buffer
+#[wasm_bindgen]
+pub fn dewarp_quad(
+    src_pixels: &[u8],
+    src_w: u32,
+    src_h: u32,
+    p0_x: f32, p0_y: f32,
+    p1_x: f32, p1_y: f32,
+    p2_x: f32, p2_y: f32,
+    p3_x: f32, p3_y: f32,
+    dst_w: u32,
+    dst_h: u32,
+) -> Result<Vec<u8>, JsValue> {
+    let src_corners = [
+        Point2D { x: p0_x, y: p0_y },
+        Point2D { x: p1_x, y: p1_y },
+        Point2D { x: p2_x, y: p2_y },
+        Point2D { x: p3_x, y: p3_y },
+    ];
+
+    let dst_corners = [
+        Point2D { x: 0.0, y: 0.0 },
+        Point2D { x: dst_w as f32, y: 0.0 },
+        Point2D { x: dst_w as f32, y: dst_h as f32 },
+        Point2D { x: 0.0, y: dst_h as f32 },
+    ];
+
+    // Compute homography mapping source quad to destination rectangle
+    let h = Homography::from_4_points(&src_corners, &dst_corners)
+        .ok_or_else(|| JsValue::from_str("Failed to calculate homography matrix"))?;
+
+    let inv_h = h.invert()
+        .ok_or_else(|| JsValue::from_str("Homography matrix is non-invertible"))?;
+
+    let mut dst_buffer = vec![0u8; (dst_w * dst_h * 4) as usize];
+    dewarp_image(src_pixels, src_w, src_h, dst_w, dst_h, &inv_h, &mut dst_buffer);
+
+    Ok(dst_buffer)
 }
