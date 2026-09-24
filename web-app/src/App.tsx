@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import init, { greet, process_frame, dewarp_quad } from './pkg/cv_engine'
+import init, { greet, process_frame, dewarp_quad, snap_fiducial_corner } from './pkg/cv_engine'
 import './App.css'
 
 interface Point2D {
@@ -7,21 +7,21 @@ interface Point2D {
   y: number
 }
 
-interface MatCorners {
-  top_left: Point2D
-  top_right: Point2D
-  bottom_right: Point2D
-  bottom_left: Point2D
-}
-
 interface FrameAnalysis {
   width: number
   height: number
   avg_brightness: number
   elapsed_ms: number
-  corners: MatCorners | null
-  dewarped_ready: boolean
 }
+
+const STORAGE_KEY = 'jigsaw_calibration_corners_v1'
+
+const DEFAULT_CORNERS: [Point2D, Point2D, Point2D, Point2D] = [
+  { x: 120, y: 40 },
+  { x: 520, y: 40 },
+  { x: 520, y: 320 },
+  { x: 120, y: 320 },
+]
 
 function App() {
   const [wasmReady, setWasmReady] = useState(false)
@@ -30,14 +30,24 @@ function App() {
   const [fps, setFps] = useState(0)
   const [stats, setStats] = useState<FrameAnalysis | null>(null)
   const [autoDewarp, setAutoDewarp] = useState(true)
+  const [snappedIndex, setSnappedIndex] = useState<number | null>(null)
 
-  // Interactive/Custom calibration corners (can be dragged or auto-detected)
-  const [corners, setCorners] = useState<[Point2D, Point2D, Point2D, Point2D]>([
-    { x: 96, y: 54 },
-    { x: 544, y: 54 },
-    { x: 544, y: 306 },
-    { x: 96, y: 306 },
-  ])
+  // 1. LocalStorage Persistence for Corner Coordinates
+  const [corners, setCorners] = useState<[Point2D, Point2D, Point2D, Point2D]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length === 4) {
+          return parsed as [Point2D, Point2D, Point2D, Point2D]
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load saved corners from localStorage:', e)
+    }
+    return DEFAULT_CORNERS
+  })
+
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
 
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -47,8 +57,16 @@ function App() {
   const animFrameIdRef = useRef<number | null>(null)
   const lastTimeRef = useRef<number>(performance.now())
   const frameCountRef = useRef<number>(0)
+  const latestPixelsRef = useRef<{ bytes: Uint8Array; w: number; h: number } | null>(null)
 
-  // 1. Initialize WASM Engine
+  // Save corners to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(corners))
+    } catch {}
+  }, [corners])
+
+  // Initialize WASM Engine
   useEffect(() => {
     init()
       .then(() => {
@@ -61,15 +79,15 @@ function App() {
       })
   }, [])
 
-  // 2. Start Camera
+  // 2. Camera Resolution Upgrade to 1080p Full HD (ideal: 1920x1080)
   const startCamera = async () => {
     try {
       setCameraError(null)
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
         },
         audio: false,
       })
@@ -80,12 +98,24 @@ function App() {
         setIsCameraActive(true)
       }
     } catch (err: any) {
-      console.error('Camera access error:', err)
-      setCameraError(err.message || 'Permission denied or no camera found.')
+      console.warn('1080p unavailable, attempting standard fallback:', err)
+      try {
+        const fallbackStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false,
+        })
+        if (videoRef.current) {
+          videoRef.current.srcObject = fallbackStream
+          await videoRef.current.play()
+          setIsCameraActive(true)
+        }
+      } catch (fallbackErr: any) {
+        console.error('Camera fallback failed:', fallbackErr)
+        setCameraError(fallbackErr.message || 'Permission denied or no camera found.')
+      }
     }
   }
 
-  // 3. Stop Camera
   const stopCamera = () => {
     if (animFrameIdRef.current) {
       cancelAnimationFrame(animFrameIdRef.current)
@@ -99,9 +129,10 @@ function App() {
     }
     setIsCameraActive(false)
     setStats(null)
+    latestPixelsRef.current = null
   }
 
-  // 4. Draw HUD / AR Quad overlay
+  // Draw HUD / AR Quad overlay
   const drawOverlay = (w: number, h: number, pts: [Point2D, Point2D, Point2D, Point2D]) => {
     const overlay = overlayCanvasRef.current
     if (!overlay) return
@@ -127,24 +158,31 @@ function App() {
     ctx.fill()
     ctx.stroke()
 
-    // Corner anchor points
+    // Corner anchor points with sub-pixel snapping indicators
     const labels = ['TL (0)', 'TR (1)', 'BR (2)', 'BL (3)']
     pts.forEach((pt, i) => {
       ctx.beginPath()
       ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2)
-      ctx.fillStyle = i === draggingIdx ? '#ffd33d' : '#3fb950'
+      ctx.fillStyle = i === draggingIdx ? '#ffd33d' : i === snappedIndex ? '#3fb950' : '#58a6ff'
       ctx.fill()
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 2
       ctx.stroke()
 
+      // Target reticle
+      ctx.beginPath()
+      ctx.arc(pt.x, pt.y, 14, 0, Math.PI * 2)
+      ctx.strokeStyle = i === draggingIdx ? 'rgba(255, 211, 61, 0.5)' : 'rgba(88, 166, 255, 0.3)'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+
       ctx.fillStyle = '#ffffff'
       ctx.font = '10px monospace'
-      ctx.fillText(labels[i], pt.x + 12, pt.y + 4)
+      ctx.fillText(labels[i], pt.x + 16, pt.y + 4)
     })
   }
 
-  // 5. Processing Loop: Video -> Canvas -> Rust WASM Dewarp
+  // Processing Loop: Video -> Canvas -> Rust WASM Dewarp
   const processLoop = useCallback(() => {
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -166,6 +204,8 @@ function App() {
 
         try {
           const rawBytes = new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength)
+          latestPixelsRef.current = { bytes: rawBytes, w: targetW, h: targetH }
+
           const analysis: FrameAnalysis = process_frame(rawBytes, targetW, targetH)
           setStats(analysis)
 
@@ -215,7 +255,7 @@ function App() {
     }
 
     animFrameIdRef.current = requestAnimationFrame(processLoop)
-  }, [wasmReady, corners, autoDewarp, draggingIdx])
+  }, [wasmReady, corners, autoDewarp, draggingIdx, snappedIndex])
 
   useEffect(() => {
     if (isCameraActive && wasmReady) {
@@ -228,7 +268,7 @@ function App() {
     }
   }, [isCameraActive, wasmReady, processLoop])
 
-  // Pointer / Touch / Mouse drag handling with hardware pointer capture
+  // Pointer / Touch / Mouse drag handling with Sub-Pixel Auto-Snap
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const scaleX = 640 / rect.width
@@ -236,7 +276,6 @@ function App() {
     const mx = (e.clientX - rect.left) * scaleX
     const my = (e.clientY - rect.top) * scaleY
 
-    // Generous detection radius (45px) for easy grabbing on desktop and mobile touch
     let closest = -1
     let minDist = 45
     corners.forEach((pt, i) => {
@@ -249,6 +288,7 @@ function App() {
 
     if (closest !== -1) {
       setDraggingIdx(closest)
+      setSnappedIndex(null)
       e.currentTarget.setPointerCapture(e.pointerId)
     }
   }
@@ -268,13 +308,43 @@ function App() {
     })
   }
 
+  // 3. Auto-Fiducial Snapping in Rust on Pointer Release
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (draggingIdx !== null) {
+      const idx = draggingIdx
       try {
         e.currentTarget.releasePointerCapture(e.pointerId)
       } catch {}
       setDraggingIdx(null)
+
+      // Snap to exact sub-pixel concentric ring center in Rust
+      if (latestPixelsRef.current && wasmReady) {
+        const { bytes, w, h } = latestPixelsRef.current
+        const currentPt = corners[idx]
+        const snapped = snap_fiducial_corner(bytes, w, h, currentPt.x, currentPt.y, 28)
+        if (snapped && snapped.length >= 2) {
+          const sx = snapped[0]
+          const sy = snapped[1]
+          // If within reasonable snap range (< 18px delta), lock to center!
+          if (Math.hypot(sx - currentPt.x, sy - currentPt.y) < 18) {
+            setCorners((prev) => {
+              const next = [...prev] as [Point2D, Point2D, Point2D, Point2D]
+              next[idx] = { x: sx, y: sy }
+              return next
+            })
+            setSnappedIndex(idx)
+            setTimeout(() => setSnappedIndex(null), 1200)
+          }
+        }
+      }
     }
+  }
+
+  const handleResetCorners = () => {
+    setCorners(DEFAULT_CORNERS)
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {}
   }
 
   return (
@@ -282,7 +352,7 @@ function App() {
       <header className="app-header">
         <div className="header-title">
           <h1>🧩 Jigsaw Solver</h1>
-          <span className="badge">Pillar 1: Calibration & Dewarp</span>
+          <span className="badge">Pillar 1: Calibration Engine</span>
         </div>
         <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
           Status: {wasmReady ? '⚡ WASM Ready' : '⏳ Initializing...'}
@@ -293,7 +363,7 @@ function App() {
         <section className="viewport-panel">
           <div className="panel-header">
             <span>Camera Feed & Optical Mat Overlay</span>
-            <span>{isCameraActive ? `🟢 60 FPS (${fps} Live)` : '⚪ Standby'}</span>
+            <span>{isCameraActive ? `🟢 1080p Stream (${fps} Live FPS)` : '⚪ Standby'}</span>
           </div>
 
           <div className="video-container">
@@ -336,18 +406,12 @@ function App() {
               >
                 {autoDewarp ? '✓ Live Dewarp Active' : 'Enable Dewarp'}
               </button>
-              <button
-                onClick={() =>
-                  setCorners([
-                    { x: 96, y: 54 },
-                    { x: 544, y: 54 },
-                    { x: 544, y: 306 },
-                    { x: 96, y: 306 },
-                  ])
-                }
-              >
-                Reset Calibration Corners
-              </button>
+              <button onClick={handleResetCorners}>Reset Calibration Corners</button>
+              {snappedIndex !== null && (
+                <span style={{ color: '#3fb950', fontSize: '0.85rem', alignSelf: 'center' }}>
+                  🎯 Snapped to fiducial centroid!
+                </span>
+              )}
             </div>
           )}
         </section>
@@ -359,7 +423,7 @@ function App() {
               <p style={{ color: '#f85149', fontSize: '0.85rem' }}>⚠️ {cameraError}</p>
             )}
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Rust 3x3 Homography DLT Unwarping. Drag green corners on video to correct optical angle!
+              Rust 3x3 Homography DLT Unwarping. Drag green corners to auto-snap to the fiducial bullseyes!
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
               <a
@@ -367,7 +431,7 @@ function App() {
                 download="calibration_mat_letter.pdf"
                 style={{ color: '#3fb950', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'underline' }}
               >
-                📥 Download Calibration Mat (PDF - US Letter)
+                📥 Download Calibration Target (PDF - US Letter)
               </a>
               <a
                 href="/calibration_mat_letter.html"
@@ -375,7 +439,7 @@ function App() {
                 rel="noreferrer"
                 style={{ color: 'var(--accent-cyan)', fontSize: '0.8rem', textDecoration: 'underline' }}
               >
-                📄 View Printable Mat in Browser
+                📄 View Target in Browser
               </a>
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', margin: '12px 0' }}>
@@ -403,7 +467,7 @@ function App() {
               </div>
 
               <div className="metric-box">
-                <div className="metric-label">Homography Latency</div>
+                <div className="metric-label">Compute Latency</div>
                 <div className="metric-val">
                   {stats ? `${stats.elapsed_ms.toFixed(2)}ms` : '--'}
                 </div>

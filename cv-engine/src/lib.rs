@@ -3,7 +3,6 @@ pub mod homography;
 
 use wasm_bindgen::prelude::*;
 use homography::{dewarp_image, Homography, Point2D};
-use aruco::MatCorners;
 
 #[derive(serde::Serialize)]
 pub struct FrameAnalysis {
@@ -11,8 +10,6 @@ pub struct FrameAnalysis {
     pub height: u32,
     pub avg_brightness: f32,
     pub elapsed_ms: f64,
-    pub corners: Option<MatCorners>,
-    pub dewarped_ready: bool,
 }
 
 #[wasm_bindgen]
@@ -51,8 +48,6 @@ pub fn process_frame(pixels: &[u8], width: u32, height: u32) -> Result<JsValue, 
         0.0
     };
 
-    let corners = aruco::find_mat_quad(pixels, width, height);
-
     let end = web_sys::window()
         .and_then(|w| w.performance())
         .map(|p| p.now())
@@ -63,11 +58,23 @@ pub fn process_frame(pixels: &[u8], width: u32, height: u32) -> Result<JsValue, 
         height,
         avg_brightness: avg,
         elapsed_ms: end - start,
-        corners,
-        dewarped_ready: true,
     };
 
     serde_wasm_bindgen::to_value(&analysis).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Snaps a manual seed coordinate to the exact sub-pixel center of the nearest fiducial bullseye
+#[wasm_bindgen]
+pub fn snap_fiducial_corner(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    seed_x: f32,
+    seed_y: f32,
+    radius: i32,
+) -> Vec<f32> {
+    let refined = aruco::refine_fiducial_centroid(pixels, width, height, seed_x, seed_y, radius);
+    vec![refined.x, refined.y]
 }
 
 /// Dewarp the specified 4-point quadrilateral from src_pixels into a rectified dst_w x dst_h RGBA buffer
@@ -97,7 +104,6 @@ pub fn dewarp_quad(
         Point2D { x: 0.0, y: dst_h as f32 },
     ];
 
-    // Compute homography mapping source quad to destination rectangle
     let h = Homography::from_4_points(&src_corners, &dst_corners)
         .ok_or_else(|| JsValue::from_str("Failed to calculate homography matrix"))?;
 
