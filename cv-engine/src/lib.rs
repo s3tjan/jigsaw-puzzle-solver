@@ -131,14 +131,17 @@ pub fn analyze_staged_piece(
         return Err(JsValue::from_str("Buffer size mismatch"));
     }
 
-    // 1. Convert to Grayscale
-    let mut gray = vec![0u8; total_pixels];
+    // 1. Convert to Grayscale & Apply Gaussian Smoothing
+    let mut raw_gray = vec![0u8; total_pixels];
     for i in 0..total_pixels {
         let r = dewarped_pixels[i * 4] as u32;
         let g = dewarped_pixels[i * 4 + 1] as u32;
         let b = dewarped_pixels[i * 4 + 2] as u32;
-        gray[i] = ((r * 299 + g * 587 + b * 114) / 1000) as u8;
+        raw_gray[i] = ((r * 299 + g * 587 + b * 114) / 1000) as u8;
     }
+
+    let mut gray = vec![0u8; total_pixels];
+    contour::gaussian_blur_3x3(&raw_gray, width, height, &mut gray);
 
     // 2. Otsu Binarization (Piece is darker than pristine white background)
     let thresh = compute_otsu_threshold(&gray);

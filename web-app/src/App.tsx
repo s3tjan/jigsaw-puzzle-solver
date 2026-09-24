@@ -17,6 +17,7 @@ interface PieceEdge {
 
 interface ScannedPiece {
   center: Point2D
+  rotation_angle_rad: number
   bounding_width: number
   bounding_height: number
   perimeter_length: number
@@ -53,6 +54,7 @@ function App() {
   const [snappedIndex, setSnappedIndex] = useState<number | null>(null)
   const [detectedPiece, setDetectedPiece] = useState<ScannedPiece | null>(null)
   const [stagedHistory, setStagedHistory] = useState<ScannedPiece[]>([])
+  const [autoCaptureNotice, setAutoCaptureNotice] = useState<string | null>(null)
 
   const [corners, setCorners] = useState<[Point2D, Point2D, Point2D, Point2D]>(() => {
     try {
@@ -79,6 +81,11 @@ function App() {
   const lastTimeRef = useRef<number>(performance.now())
   const frameCountRef = useRef<number>(0)
   const latestPixelsRef = useRef<{ bytes: Uint8Array; w: number; h: number } | null>(null)
+
+  // Motion debouncing & hands-free auto-capture state
+  const steadySinceRef = useRef<number | null>(null)
+  const lastCenterRef = useRef<Point2D | null>(null)
+  const hasCapturedRef = useRef<boolean>(false)
 
   useEffect(() => {
     try {
@@ -197,9 +204,7 @@ function App() {
     })
   }
 
-  // Draw detected piece contour & edge labels over the dewarped preview canvas
   const drawPieceDiagnostics = (ctx: CanvasRenderingContext2D, piece: ScannedPiece) => {
-    // 1. Draw outer boundary silhouette
     if (piece.contour_points.length > 0) {
       ctx.beginPath()
       ctx.moveTo(piece.contour_points[0].x, piece.contour_points[0].y)
@@ -214,7 +219,6 @@ function App() {
       ctx.fill()
     }
 
-    // 2. Draw 4 piece corners
     piece.corners.forEach((pt, i) => {
       ctx.beginPath()
       ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2)
@@ -228,7 +232,6 @@ function App() {
       ctx.fillText(`C${i}`, pt.x + 6, pt.y - 4)
     })
 
-    // 3. Draw edge types (Tab / Hole / Flat)
     const edgeColors: Record<string, string> = {
       Tab: '#388bfd',
       Hole: '#d29922',
@@ -242,6 +245,26 @@ function App() {
       ctx.font = 'bold 10px monospace'
       ctx.fillText(`E${i}: ${edge.edge_type}`, midX - 20, midY)
     })
+  }
+
+  // Hands-free auto capture sound using Web Audio API
+  const playCaptureTone = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      if (!AudioCtx) return
+      const ctx = new AudioCtx()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime) // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12) // A5
+      gain.gain.setValueAtTime(0.15, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start()
+      osc.stop(ctx.currentTime + 0.2)
+    } catch {}
   }
 
   const processLoop = useCallback(() => {
@@ -302,6 +325,35 @@ function App() {
 
               if (piece) {
                 drawPieceDiagnostics(dCtx, piece)
+
+                // Hands-Free Auto-Capture Motion Debouncing:
+                // Check if piece centroid has been stationary for 500ms
+                const now = performance.now()
+                if (lastCenterRef.current) {
+                  const dist = Math.hypot(piece.center.x - lastCenterRef.current.x, piece.center.y - lastCenterRef.current.y)
+                  if (dist < 2.5) {
+                    if (steadySinceRef.current === null) {
+                      steadySinceRef.current = now
+                    } else if (now - steadySinceRef.current >= 500 && !hasCapturedRef.current) {
+                      // Piece is completely steady: Auto-Capture!
+                      hasCapturedRef.current = true
+                      playCaptureTone()
+                      setStagedHistory((prev) => [piece, ...prev.slice(0, 11)])
+                      setAutoCaptureNotice('✨ Piece auto-captured!')
+                      setTimeout(() => setAutoCaptureNotice(null), 1500)
+                    }
+                  } else {
+                    // Hand or piece moved
+                    steadySinceRef.current = null
+                    hasCapturedRef.current = false
+                  }
+                }
+                lastCenterRef.current = piece.center
+              } else {
+                // Arena empty
+                steadySinceRef.current = null
+                lastCenterRef.current = null
+                hasCapturedRef.current = false
               }
             }
           }
@@ -410,9 +462,10 @@ function App() {
     } catch {}
   }
 
-  const handleLockPiece = () => {
+  const handleManualLockPiece = () => {
     if (detectedPiece) {
-      setStagedHistory((prev) => [detectedPiece, ...prev.slice(0, 7)])
+      playCaptureTone()
+      setStagedHistory((prev) => [detectedPiece, ...prev.slice(0, 11)])
     }
   }
 
@@ -477,12 +530,17 @@ function App() {
               </button>
               <button onClick={handleResetCorners}>Reset Calibration Corners</button>
               {detectedPiece && (
-                <button className="primary" onClick={handleLockPiece}>
+                <button className="primary" onClick={handleManualLockPiece}>
                   🔒 Capture Piece #{stagedHistory.length + 1}
                 </button>
               )}
+              {autoCaptureNotice && (
+                <span style={{ color: '#3fb950', fontSize: '0.85rem', fontWeight: 600, alignSelf: 'center' }}>
+                  {autoCaptureNotice}
+                </span>
+              )}
               {snappedIndex !== null && (
-                <span style={{ color: '#3fb950', fontSize: '0.85rem', alignSelf: 'center' }}>
+                <span style={{ color: '#58a6ff', fontSize: '0.85rem', alignSelf: 'center' }}>
                   🎯 Snapped to fiducial!
                 </span>
               )}
@@ -497,7 +555,7 @@ function App() {
               <p style={{ color: '#f85149', fontSize: '0.85rem' }}>⚠️ {cameraError}</p>
             )}
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Real-time Otsu segmentation, contour tracking & 4-edge tab/blank classification directly in Rust.
+              Rotated PCA orientation, Gaussian smoothing & auto-capture active.
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', margin: '12px 0' }}>
               <canvas
@@ -523,6 +581,10 @@ function App() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                   <span>Dimensions:</span>
                   <code>{(detectedPiece.bounding_width * 0.22).toFixed(1)}mm &times; {(detectedPiece.bounding_height * 0.22).toFixed(1)}mm</code>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span>Rotation:</span>
+                  <code>{((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(1)}&deg;</code>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>Edges:</span>
@@ -553,7 +615,7 @@ function App() {
             <h3>Captured Pieces ({stagedHistory.length})</h3>
             {stagedHistory.length === 0 ? (
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                No pieces captured yet. Place a piece and click "Capture Piece".
+                Drop a piece and hold still for 500ms — it will auto-capture hands-free!
               </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '160px', overflowY: 'auto' }}>
@@ -567,7 +629,7 @@ function App() {
                     display: 'flex',
                     justifyContent: 'space-between'
                   }}>
-                    <span>Piece #{stagedHistory.length - i}</span>
+                    <span>Piece #{stagedHistory.length - i} ({((p.rotation_angle_rad * 180) / Math.PI).toFixed(0)}&deg;)</span>
                     <span style={{ color: p.is_corner ? '#f85149' : p.is_border ? '#d29922' : '#3fb950', fontWeight: 600 }}>
                       {p.is_corner ? 'Corner' : p.is_border ? 'Border' : 'Interior'}
                     </span>
