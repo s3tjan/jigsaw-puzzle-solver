@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import init, { greet, process_frame, dewarp_quad, snap_fiducial_corner, analyze_staged_piece, WasmPuzzleBoard } from './pkg/cv_engine'
-import { BoardView } from './components/BoardView'
-import type { BoardSlot, SlotCandidate } from './components/BoardView'
+import init, {
+  greet,
+  process_frame,
+  dewarp_quad,
+  snap_fiducial_corner,
+  auto_detect_mat_quad,
+  measure_stage_focus,
+  analyze_staged_piece,
+} from './pkg/cv_engine'
 import './App.css'
+
 
 interface Point2D {
   x: number
@@ -54,6 +61,7 @@ function App() {
   const [stats, setStats] = useState<FrameAnalysis | null>(null)
   const [autoDewarp, setAutoDewarp] = useState(true)
   const [snappedIndex, setSnappedIndex] = useState<number | null>(null)
+  const [focusScore, setFocusScore] = useState<number>(0)
   const [detectedPiece, setDetectedPiece] = useState<ScannedPiece | null>(null)
   const [stagedHistory, setStagedHistory] = useState<ScannedPiece[]>([])
   const [autoCaptureNotice, setAutoCaptureNotice] = useState<string | null>(null)
@@ -69,17 +77,10 @@ function App() {
   // Problem 4 & 5: Visual inspection view mode ('dewarped' | 'binary' | 'composite')
   const [viewMode, setViewMode] = useState<'dewarped' | 'binary' | 'composite'>('composite')
 
-  // Problem 5: Diagnostics snapshot info
+  // Diagnostics snapshot info
   const [latestAnalysis, setLatestAnalysis] = useState<any>(null)
   const [snapshotStatus, setSnapshotStatus] = useState<string | null>(null)
 
-  // Pillar 4: Assembly Board Graph State
-  const boardRef = useRef<WasmPuzzleBoard | null>(null)
-  const [boardSlots, setBoardSlots] = useState<BoardSlot[]>([])
-  const [slotCandidates, setSlotCandidates] = useState<SlotCandidate[]>([])
-  const [selectedCandidate, setSelectedCandidate] = useState<SlotCandidate | null>(null)
-  const BOARD_ROWS = 10
-  const BOARD_COLS = 15
 
   const [corners, setCorners] = useState<[Point2D, Point2D, Point2D, Point2D]>(() => {
     try {
@@ -127,14 +128,6 @@ function App() {
       .then(() => {
         setWasmReady(true)
         greet('Puzzle Master')
-
-        // Initialize Pillar 4 Assembly Board Graph
-        const board = new WasmPuzzleBoard(BOARD_ROWS, BOARD_COLS)
-        boardRef.current = board
-        const initialSlots = board.get_slots_json()
-        if (Array.isArray(initialSlots)) {
-          setBoardSlots(initialSlots)
-        }
       })
       .catch((err) => {
         console.error('Failed to init WASM:', err)
@@ -253,12 +246,6 @@ function App() {
       const unBR = undistortPt(pts[2].x, pts[2].y, w, h, lensDistortion)
       const unBL = undistortPt(pts[3].x, pts[3].y, w, h, lensDistortion)
 
-      // 2. Fiducial Delta to Outer Square Extents:
-      // On the standardized calibration mat:
-      // Inner fiducial centers: 84.00 mm
-      // Outer square dimension: 100.00 mm
-      // Ratio outer / fiducial: 100 / 84 = 1.190476
-      const fiducialToOuterRatio = 100.0 / 84.0
       const centerRect = {
         x: (unTL.x + unTR.x + unBR.x + unBL.x) * 0.25,
         y: (unTL.y + unTR.y + unBR.y + unBL.y) * 0.25,
@@ -269,16 +256,11 @@ function App() {
         y: centerRect.y + (p.y - centerRect.y) * ratio,
       })
 
-      const outerTL = expandFromCenter(unTL, fiducialToOuterRatio)
-      const outerTR = expandFromCenter(unTR, fiducialToOuterRatio)
-      const outerBR = expandFromCenter(unBR, fiducialToOuterRatio)
-      const outerBL = expandFromCenter(unBL, fiducialToOuterRatio)
-
-      // Inner piece staging box: 50.00 mm (ratio 50 / 84 = 0.595)
-      const stagingTL = expandFromCenter(unTL, 50.0 / 84.0)
-      const stagingTR = expandFromCenter(unTR, 50.0 / 84.0)
-      const stagingBR = expandFromCenter(unBR, 50.0 / 84.0)
-      const stagingBL = expandFromCenter(unBL, 50.0 / 84.0)
+      // Inner piece staging box: 40.00 mm on 60.00 mm fiducial square (ratio 40 / 60 = 0.6667)
+      const stagingTL = expandFromCenter(unTL, 40.0 / 60.0)
+      const stagingTR = expandFromCenter(unTR, 40.0 / 60.0)
+      const stagingBR = expandFromCenter(unBR, 40.0 / 60.0)
+      const stagingBL = expandFromCenter(unBL, 40.0 / 60.0)
 
       // Draw curved polygon sampling straight line in rectified plane and projecting through lens distortion
       const drawCurvedPolygon = (
@@ -318,60 +300,89 @@ function App() {
         ctx.setLineDash([])
       }
 
-      // Draw Outer Square Guide (100mm border on the mat)
-      // When k1 is adjusted correctly, this outline aligns precisely with the printed 100mm outer square!
-      drawCurvedPolygon([outerTL, outerTR, outerBR, outerBL], '#ffd33d', 2.0, [6, 4], 'rgba(255, 211, 61, 0.04)')
+      // Draw Main 48.00mm Sovereign ArUco Perimeter Guide (Amber outline)
+      drawCurvedPolygon([unTL, unTR, unBR, unBL], '#ffd33d', 2.0, [6, 4], 'rgba(255, 211, 61, 0.04)')
 
-      // Draw Inner Staging Boundary (50mm piece placement area)
+      // Draw Inner Staging Boundary (35mm piece placement area, Green dashed)
       drawCurvedPolygon([stagingTL, stagingTR, stagingBR, stagingBL], '#3fb950', 1.5, [4, 4], 'rgba(63, 185, 80, 0.03)')
 
-      // Draw Fiducial Quadrilateral (connecting the 4 fiducials)
-      drawCurvedPolygon([unTL, unTR, unBR, unBL], '#58a6ff', 1.5, [3, 3])
-
-      // Center crosshairs
+      // Digital Center Crosshair HUD on the live video feed (Never physically printed on the mat!)
       const cDist = distortPt(centerRect.x, centerRect.y, w, h, lensDistortion)
       ctx.beginPath()
-      ctx.strokeStyle = 'rgba(255, 211, 61, 0.6)'
-      ctx.lineWidth = 1.0
-      ctx.moveTo(cDist.x - 12, cDist.y)
-      ctx.lineTo(cDist.x + 12, cDist.y)
-      ctx.moveTo(cDist.x, cDist.y - 12)
-      ctx.lineTo(cDist.x, cDist.y + 12)
+      ctx.strokeStyle = 'rgba(63, 185, 80, 0.85)'
+      ctx.lineWidth = 1.2
+      // Crosshair with open center
+      ctx.moveTo(cDist.x - 18, cDist.y)
+      ctx.lineTo(cDist.x - 4, cDist.y)
+      ctx.moveTo(cDist.x + 4, cDist.y)
+      ctx.lineTo(cDist.x + 18, cDist.y)
+      ctx.moveTo(cDist.x, cDist.y - 18)
+      ctx.lineTo(cDist.x, cDist.y - 4)
+      ctx.moveTo(cDist.x, cDist.y + 4)
+      ctx.lineTo(cDist.x, cDist.y + 18)
       ctx.stroke()
 
-      // Diagnostic guide labels
+      // Diagnostic guide label
       ctx.fillStyle = '#ffd33d'
       ctx.font = '10px monospace'
       const topLabelPt = distortPt(
-        (outerTL.x + outerTR.x) * 0.5,
-        outerTL.y - 6,
+        (unTL.x + unTR.x) * 0.5,
+        unTL.y - 8,
         w,
         h,
         lensDistortion
       )
-      ctx.fillText(`OUTER SQUARE: 100mm (k1=${lensDistortion.toFixed(2)})`, topLabelPt.x - 90, topLabelPt.y)
+      ctx.fillText(`48mm ARUCO BENCH (k1=${lensDistortion.toFixed(2)})`, topLabelPt.x - 75, topLabelPt.y)
     }
 
     // Draw the 4 interactive draggable corner handles on the fiducials
-    const labels = ['FID 0: TL', 'FID 1: TR', 'FID 2: BR', 'FID 3: BL']
+    // Styled as precision see-through optical crosshair reticles so the underlying fiducial lines remain 100% visible
+    const labels = ['P0: TL', 'P1: TR', 'P2: BR', 'P3: BL']
     pts.forEach((pt, i) => {
-      ctx.beginPath()
-      ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2)
-      ctx.fillStyle = i === draggingIdx ? '#ffd33d' : i === snappedIndex ? '#3fb950' : '#58a6ff'
-      ctx.fill()
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 2
-      ctx.stroke()
+      const isDragging = i === draggingIdx
+      const isSnapped = i === snappedIndex
+      const activeColor = isDragging ? '#ffd33d' : isSnapped ? '#3fb950' : '#58a6ff'
 
+      // Outer ring
       ctx.beginPath()
       ctx.arc(pt.x, pt.y, 14, 0, Math.PI * 2)
-      ctx.strokeStyle = i === draggingIdx ? 'rgba(255, 211, 61, 0.5)' : 'rgba(88, 166, 255, 0.3)'
-      ctx.lineWidth = 1.5
+      ctx.strokeStyle = activeColor
+      ctx.lineWidth = isDragging ? 2.5 : 1.5
       ctx.stroke()
 
+      // Inner clear center punch (radius 3px, unshaded transparent hole)
+      ctx.beginPath()
+      ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2)
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.2
+      ctx.stroke()
+
+      // Reticle Crosshairs with central gap (leaving fiducial center unobstructed)
+      ctx.beginPath()
+      ctx.strokeStyle = activeColor
+      ctx.lineWidth = 1.2
+      // Left tick
+      ctx.moveTo(pt.x - 18, pt.y)
+      ctx.lineTo(pt.x - 5, pt.y)
+      // Right tick
+      ctx.moveTo(pt.x + 5, pt.y)
+      ctx.lineTo(pt.x + 18, pt.y)
+      // Top tick
+      ctx.moveTo(pt.x, pt.y - 18)
+      ctx.lineTo(pt.x, pt.y - 5)
+      // Bottom tick
+      ctx.moveTo(pt.x, pt.y + 5)
+      ctx.lineTo(pt.x, pt.y + 18)
+      ctx.stroke()
+
+      // Text label with subtle dark backdrop for legibility
+      ctx.font = 'bold 9px monospace'
+      const labelText = labels[i]
+      const textWidth = ctx.measureText(labelText).width
+      ctx.fillStyle = 'rgba(10, 13, 17, 0.75)'
+      ctx.fillRect(pt.x + 16, pt.y - 7, textWidth + 6, 13)
       ctx.fillStyle = '#ffffff'
-      ctx.font = '10px monospace'
-      ctx.fillText(labels[i], pt.x + 16, pt.y + 4)
+      ctx.fillText(labelText, pt.x + 19, pt.y + 3)
     })
   }
 
@@ -464,6 +475,18 @@ function App() {
 
           const analysis: FrameAnalysis = process_frame(rawBytes, targetW, targetH)
           setStats(analysis)
+
+          // Measure high-frequency focus MTF on optical stage
+          const mtf = measure_stage_focus(
+            rawBytes,
+            targetW,
+            targetH,
+            corners[0].x, corners[0].y,
+            corners[1].x, corners[1].y,
+            corners[2].x, corners[2].y,
+            corners[3].x, corners[3].y
+          )
+          setFocusScore(mtf)
 
           if (autoDewarp && dewarpedCanvas) {
             const dstW = 384
@@ -585,20 +608,8 @@ function App() {
     setStagedHistory((prev) => [piece, ...prev.slice(0, 11)])
     setAutoCaptureNotice('PIECE REGISTERED')
     setTimeout(() => setAutoCaptureNotice(null), 1500)
-
-    // Compute board slot matches ONLY on capture
-    if (boardRef.current) {
-      try {
-        const cands = boardRef.current.find_candidates(piece)
-        if (Array.isArray(cands)) {
-          setSlotCandidates(cands)
-          setSelectedCandidate(cands.length > 0 ? cands[0] : null)
-        }
-      } catch (e) {
-        console.warn('Candidate calculation error:', e)
-      }
-    }
   }
+
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -666,6 +677,31 @@ function App() {
             setTimeout(() => setSnappedIndex(null), 1200)
           }
         }
+      }
+    }
+  }
+
+  const handleAutoSnapAllCorners = () => {
+    if (latestPixelsRef.current && wasmReady) {
+      const { bytes, w, h } = latestPixelsRef.current
+      const detected = auto_detect_mat_quad(
+        bytes,
+        w,
+        h,
+        corners[0].x, corners[0].y,
+        corners[1].x, corners[1].y,
+        corners[2].x, corners[2].y,
+        corners[3].x, corners[3].y
+      )
+      if (detected && detected.length >= 8) {
+        setCorners([
+          { x: detected[0], y: detected[1] },
+          { x: detected[2], y: detected[3] },
+          { x: detected[4], y: detected[5] },
+          { x: detected[6], y: detected[7] },
+        ])
+        setSnappedIndex(99)
+        setTimeout(() => setSnappedIndex(null), 1500)
       }
     }
   }
@@ -762,49 +798,9 @@ function App() {
     }
   }
 
-  // Candidate slots are updated upon piece capture (manual or auto-capture)
-  useEffect(() => {
-    if (!detectedPiece) {
-      // Clear live candidates when stage is cleared
-      setSlotCandidates([])
-      setSelectedCandidate(null)
-    }
-  }, [detectedPiece])
-
-  const handlePlacePieceAtSlot = (candidate: SlotCandidate) => {
-    if (!detectedPiece || !boardRef.current) return
-    const pieceId = stagedHistory.length + 1
-    try {
-      const ok = boardRef.current.place_piece(
-        pieceId,
-        detectedPiece,
-        candidate.row,
-        candidate.col,
-        candidate.rotation
-      )
-      if (ok) {
-        playCaptureTone()
-        setBoardSlots(boardRef.current.get_slots_json())
-        setStagedHistory((prev) => [detectedPiece, ...prev.slice(0, 11)])
-        setAutoCaptureNotice(`✓ Placed Piece #${pieceId} at (${candidate.row}, ${candidate.col})!`)
-        setTimeout(() => setAutoCaptureNotice(null), 2000)
-        // Refresh candidates for current piece
-        setSlotCandidates([])
-        setSelectedCandidate(null)
-      }
-    } catch (e: any) {
-      alert(`Could not place piece: ${e}`)
-    }
-  }
-
-  const handleUnplacePiece = (row: number, col: number) => {
-    if (!boardRef.current) return
-    boardRef.current.unplace_piece(row, col)
-    setBoardSlots(boardRef.current.get_slots_json())
-  }
-
   return (
     <div className="app-container">
+
       <div className="main-content">
         <section className="viewport-panel">
           <div className="panel-header">
@@ -856,6 +852,13 @@ function App() {
               >
                 {autoDewarp ? 'DEWARP: ON' : 'DEWARP: OFF'}
               </button>
+              <button
+                onClick={handleAutoSnapAllCorners}
+                style={{ borderColor: '#58a6ff', color: '#58a6ff' }}
+                title="Automatically snap all 4 corners to the binary-encoded fiducials"
+              >
+                AUTO-SNAP CORNERS
+              </button>
               <button onClick={handleResetCorners}>RESET CORNERS</button>
               <button
                 className="primary"
@@ -874,6 +877,25 @@ function App() {
               <button onClick={() => handleSaveSnapshot(true)} title="Save full bundle with base64 images">
                 SAVE FULL SNAPSHOT
               </button>
+              <a
+                href={`/calibration_mat.svg?t=${Date.now()}`}
+                download="sovereign_calibration_mat_48mm.svg"
+                title="Download 1:1 scale Sovereign Industrial Calibration Bench (48mm ArUco 4x4, Chroma Green, Sub-Pixel Rails)"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: '5px 10px',
+                  borderRadius: '2px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                  background: '#238636',
+                  color: '#ffffff',
+                  border: '1px solid #2ea043',
+                }}
+              >
+                PRINT SOVEREIGN BENCH (48mm ARUCO)
+              </a>
               <div className="controls-status-slot">
                 <span
                   style={{
@@ -972,38 +994,25 @@ function App() {
               </div>
             </div>
           )}
-
-          {/* Assembly Board Grid & Recommendations */}
-          <BoardView
-            rows={BOARD_ROWS}
-            cols={BOARD_COLS}
-            slots={boardSlots}
-            candidates={slotCandidates}
-            selectedCandidate={selectedCandidate}
-            onSelectCandidate={setSelectedCandidate}
-            onPlacePieceAtSlot={handlePlacePieceAtSlot}
-            onUnplacePiece={handleUnplacePiece}
-          />
         </section>
+
 
         <aside className="side-panel">
           <div className="card">
             <h3>CONTOUR & PROFILE ANALYSIS</h3>
-            <p style={{ color: cameraError ? '#f85149' : 'var(--text-muted)', fontSize: '0.75rem', margin: '0 0 6px 0' }}>
-              DIAGNOSTIC: {cameraError ? `ERROR: ${cameraError}` : 'NOMINAL'}
-            </p>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', margin: 0 }}>
-              PCA ORIENTATION / CONTOUR EXTRACTION
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'center', margin: '12px 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+              <span>STATUS: <strong style={{ color: cameraError ? '#f85149' : '#3fb950' }}>{cameraError ? 'ERROR' : 'ACTIVE'}</strong></span>
+              <span>PCA CONTOUR</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', margin: '6px 0' }}>
               <canvas
                 ref={dewarpedCanvasRef}
                 style={{
                   border: '1px solid var(--border-color)',
                   borderRadius: '2px',
                   background: '#0d1117',
-                  width: '320px',
-                  height: '320px',
+                  width: '240px',
+                  height: '240px',
                   maxWidth: '100%',
                   aspectRatio: '1 / 1',
                   imageRendering: 'pixelated',
@@ -1026,7 +1035,7 @@ function App() {
                 <span>DIMENSIONS:</span>
                 <code style={{ color: detectedPiece ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   {detectedPiece
-                    ? `${(detectedPiece.bounding_width * 0.22).toFixed(1)} mm × ${(detectedPiece.bounding_height * 0.22).toFixed(1)} mm`
+                    ? `${(detectedPiece.bounding_width * 0.156).toFixed(1)} mm × ${(detectedPiece.bounding_height * 0.156).toFixed(1)} mm`
                     : '-- mm × -- mm'}
                 </code>
               </div>
@@ -1065,7 +1074,7 @@ function App() {
 
           <div className="card">
             <h3>PIECE INVENTORY ({stagedHistory.length})</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', height: '140px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '80px', overflowY: 'auto' }}>
               {stagedHistory.length === 0 ? (
                 <div style={{
                   height: '100%',
@@ -1133,9 +1142,19 @@ function App() {
               </div>
 
               <div className="metric-box">
-                <div className="metric-label">18% GRAY CARD</div>
+                <div className="metric-label">STAGE RGB</div>
                 <div className="metric-val" style={{ fontSize: '0.85rem' }}>
-                  {latestAnalysis?.gray_card_rgb ? `rgb(${latestAnalysis.gray_card_rgb.join(',')})` : '--'}
+                  {latestAnalysis?.bg_mean_rgb ? `rgb(${latestAnalysis.bg_mean_rgb.join(',')})` : '--'}
+                </div>
+              </div>
+
+              <div className="metric-box">
+                <div className="metric-label">FOCUS MTF</div>
+                <div className="metric-val" style={{
+                  color: focusScore >= 45 ? '#3fb950' : focusScore >= 20 ? '#d29922' : '#f85149',
+                  fontSize: '0.95rem'
+                }}>
+                  {focusScore.toFixed(0)}% {focusScore >= 45 ? 'SHARP' : focusScore >= 20 ? 'FAIR' : 'BLUR'}
                 </div>
               </div>
 

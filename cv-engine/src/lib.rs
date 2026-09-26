@@ -83,6 +83,52 @@ pub fn snap_fiducial_corner(
     vec![refined.x, refined.y]
 }
 
+/// Automatically detects and snaps all 4 calibration mat corners
+#[wasm_bindgen]
+pub fn auto_detect_mat_quad(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    p0_x: f32, p0_y: f32,
+    p1_x: f32, p1_y: f32,
+    p2_x: f32, p2_y: f32,
+    p3_x: f32, p3_y: f32,
+) -> Vec<f32> {
+    let current = [
+        Point2D { x: p0_x, y: p0_y },
+        Point2D { x: p1_x, y: p1_y },
+        Point2D { x: p2_x, y: p2_y },
+        Point2D { x: p3_x, y: p3_y },
+    ];
+    let detected = aruco::auto_detect_mat_corners(pixels, width, height, &current);
+    vec![
+        detected[0].x, detected[0].y,
+        detected[1].x, detected[1].y,
+        detected[2].x, detected[2].y,
+        detected[3].x, detected[3].y,
+    ]
+}
+
+/// Measures real-time optical focus MTF score [0, 100]% using high-frequency gradient energy
+#[wasm_bindgen]
+pub fn measure_stage_focus(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    p0_x: f32, p0_y: f32,
+    p1_x: f32, p1_y: f32,
+    p2_x: f32, p2_y: f32,
+    p3_x: f32, p3_y: f32,
+) -> f32 {
+    let corners = [
+        Point2D { x: p0_x, y: p0_y },
+        Point2D { x: p1_x, y: p1_y },
+        Point2D { x: p2_x, y: p2_y },
+        Point2D { x: p3_x, y: p3_y },
+    ];
+    aruco::compute_focus_mtf(pixels, width, height, &corners)
+}
+
 /// Apply radial lens distortion to a point for visual calibration overlay alignment
 #[wasm_bindgen]
 pub fn distort_point(x: f32, y: f32, w: f32, h: f32, k1: f32) -> Vec<f32> {
@@ -105,7 +151,7 @@ pub struct AnalysisResult {
     pub piece: Option<ScannedPiece>,
     pub binary_mask: Vec<u8>,
     pub bg_mean_rgb: [u8; 3],
-    pub gray_card_rgb: [u8; 3],
+    pub stage_reflectance_rgb: [u8; 3],
     pub fg_pixels: usize,
     pub threshold_used: u8,
 }
@@ -158,7 +204,7 @@ pub fn dewarp_quad(
 }
 
 /// Scans, segments, and analyzes the puzzle piece from a rectified RGBA buffer using
-/// dual-polarity background delta segmentation and 18% gray card reflectance normalization.
+/// color-opponency Chroma-Green segmentation with neutral fallback.
 #[wasm_bindgen]
 pub fn analyze_staged_piece(
     dewarped_pixels: &[u8],
@@ -175,7 +221,7 @@ pub fn analyze_staged_piece(
     let h = height as usize;
 
     // 1. Sample Background Mean RGB from the safe peripheral margin of the staging mat (y: 3%..10%, x: 20%..80%)
-    // This avoids outer fiducials and dark corner artifacts
+    // This samples the pure Chroma Green (#00A859) stage arena, avoiding ArUco tags and outer borders.
     let mut bg_r_sum: u64 = 0;
     let mut bg_g_sum: u64 = 0;
     let mut bg_b_sum: u64 = 0;
@@ -196,61 +242,73 @@ pub fn analyze_staged_piece(
         }
     }
 
-    let bg_r = if bg_count > 0 { (bg_r_sum / bg_count) as f32 } else { 204.0 };
-    let bg_g = if bg_count > 0 { (bg_g_sum / bg_count) as f32 } else { 204.0 };
-    let bg_b = if bg_count > 0 { (bg_b_sum / bg_count) as f32 } else { 202.0 };
+    let bg_r = if bg_count > 0 { (bg_r_sum / bg_count) as f32 } else { 0.0 };
+    let bg_g = if bg_count > 0 { (bg_g_sum / bg_count) as f32 } else { 168.0 };
+    let bg_b = if bg_count > 0 { (bg_b_sum / bg_count) as f32 } else { 89.0 };
 
-    // 2. Sample 18% Neutral Gray Card location on calibration mat (top-middle scale region: x: 35%..65%, y: 4%..12%)
-    let mut gray_r_sum: u64 = 0;
-    let mut gray_g_sum: u64 = 0;
-    let mut gray_b_sum: u64 = 0;
-    let mut gray_count: u64 = 0;
+    let is_chroma_green = bg_g > 50.0 && bg_g > bg_r * 1.25 && bg_g > bg_b * 1.25;
 
-    let gx_min = (width as f32 * 0.38) as usize;
-    let gx_max = (width as f32 * 0.62) as usize;
-    let gy_min = (height as f32 * 0.04) as usize;
-    let gy_max = (height as f32 * 0.12) as usize;
-
-    for y in gy_min..gy_max.min(h) {
-        for x in gx_min..gx_max.min(w) {
-            let idx = (y * w + x) * 4;
-            gray_r_sum += dewarped_pixels[idx] as u64;
-            gray_g_sum += dewarped_pixels[idx + 1] as u64;
-            gray_b_sum += dewarped_pixels[idx + 2] as u64;
-            gray_count += 1;
-        }
-    }
-
-    let gray_card_r = if gray_count > 0 { (gray_r_sum / gray_count) as u8 } else { 118 };
-    let gray_card_g = if gray_count > 0 { (gray_g_sum / gray_count) as u8 } else { 118 };
-    let gray_card_b = if gray_count > 0 { (gray_b_sum / gray_count) as u8 } else { 118 };
-
-    // 3. Compute Delta Image (Euclidean color distance from calibrated background)
-    // Any piece (light, dark, or vibrant color) deviates significantly from the white/gray mat background
+    // 3. Compute Delta Image:
+    // If Chroma Green stage: compute true color opponency in HSV / Normalized Green ratio.
+    // Jigsaw puzzle pieces (black, white, blue, yellow, red, patterned) have low saturation or completely different hue.
     let mut delta_img = vec![0u8; total_pixels];
-    let sens = sensitivity.clamp(10.0, 80.0);
+    let sens = sensitivity.clamp(8.0, 80.0);
 
     for i in 0..total_pixels {
         let r = dewarped_pixels[i * 4] as f32;
         let g = dewarped_pixels[i * 4 + 1] as f32;
         let b = dewarped_pixels[i * 4 + 2] as f32;
 
-        let dr = r - bg_r;
-        let dg = g - bg_g;
-        let db = b - bg_b;
-        let dist = (dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114).sqrt();
-        delta_img[i] = dist.min(255.0) as u8;
+        let dist = if is_chroma_green {
+            // Compute RGB to Hue & Saturation
+            let max_c = r.max(g).max(b);
+            let min_c = r.min(g).min(b);
+            let delta = max_c - min_c;
+            
+            let hue = if delta < 1e-4 {
+                0.0
+            } else if max_c == g {
+                60.0 * (((b - r) / delta) + 2.0)
+            } else if max_c == r {
+                60.0 * (((g - b) / delta).rem_euclid(6.0))
+            } else {
+                60.0 * (((r - g) / delta) + 4.0)
+            };
+
+            let sat = if max_c > 1.0 { delta / max_c } else { 0.0 };
+
+            // Chroma Green stage has Hue in [85, 160] deg and Saturation > 0.35.
+            // If pixel is within green hue and saturated, it's stage (dist ~ 0).
+            // Any piece (black, white, blue, red, yellow) has either sat < 0.25 (white/gray/black) or hue outside green.
+            if hue >= 80.0 && hue <= 165.0 && sat > 0.32 {
+                // Background pixel
+                let dg = (g - bg_g).abs() * 0.2;
+                dg.min(20.0)
+            } else {
+                // Piece pixel: high contrast delta
+                let non_green_penalty = if hue < 75.0 || hue > 170.0 { 160.0 } else { 80.0 };
+                let desat_penalty = if sat < 0.28 { 140.0 } else { 0.0 };
+                let lum_delta = ((r - bg_r).abs() + (g - bg_g).abs() + (b - bg_b).abs()) * 0.4;
+                (non_green_penalty + desat_penalty + lum_delta).min(255.0)
+            }
+        } else {
+            let dr = r - bg_r;
+            let dg = g - bg_g;
+            let db = b - bg_b;
+            (dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114).sqrt().min(255.0)
+        };
+        delta_img[i] = dist as u8;
     }
 
     let mut smoothed_delta = vec![0u8; total_pixels];
     contour::gaussian_blur_3x3(&delta_img, width, height, &mut smoothed_delta);
 
     // 4. Thresholding: Foreground is any pixel whose color delta exceeds sensitivity threshold
-    // Strictly isolate the active piece staging square: mask out outer 14% margins (fiducial markers,
+    // Strictly isolate the active piece staging square: mask out outer 13% margins (fiducial markers,
     // calibration scales, and tick marks all reside in the outer margins).
     let mut binary = vec![0u8; total_pixels];
     let mut foreground_count = 0;
-    let thresh_val = sens as u8;
+    let thresh_val = if is_chroma_green { (sens * 0.85).max(12.0) as u8 } else { sens as u8 };
 
     let margin_frac = 0.14f32;
     let margin_y_px = (h as f32 * margin_frac) as usize;
@@ -266,19 +324,24 @@ pub fn analyze_staged_piece(
         }
     }
 
+    // Apply morphological closing (3x3 dilation + erosion) to fuse small dropouts and bridge specular glare fractures
+    let mut closed_binary = vec![0u8; total_pixels];
+    contour::morphological_close_3x3(&binary, width, height, &mut closed_binary);
+
     // 5. Trace Boundary Contour
     let piece_profile = if foreground_count >= total_pixels / 250 {
-        trace_piece_contour(&binary, width, height)
+        trace_piece_contour(&closed_binary, width, height)
             .and_then(|c| partition_edges_and_classify(&c))
     } else {
         None
     };
 
+    let bg_rgb = [bg_r as u8, bg_g as u8, bg_b as u8];
     let result = AnalysisResult {
         piece: piece_profile,
-        binary_mask: binary,
-        bg_mean_rgb: [bg_r as u8, bg_g as u8, bg_b as u8],
-        gray_card_rgb: [gray_card_r, gray_card_g, gray_card_b],
+        binary_mask: closed_binary,
+        bg_mean_rgb: bg_rgb,
+        stage_reflectance_rgb: bg_rgb,
         fg_pixels: foreground_count,
         threshold_used: thresh_val,
     };

@@ -102,3 +102,103 @@ pub fn refine_fiducial_centroid(
         Point2D { x: seed_x, y: seed_y }
     }
 }
+
+/// Automatically searches each frame quadrant for the 4 fiducials starting from initial quadrant seeds
+pub fn auto_detect_mat_corners(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    current_corners: &[Point2D; 4],
+) -> [Point2D; 4] {
+    let mut refined = [
+        Point2D { x: 0.0, y: 0.0 },
+        Point2D { x: 0.0, y: 0.0 },
+        Point2D { x: 0.0, y: 0.0 },
+        Point2D { x: 0.0, y: 0.0 },
+    ];
+
+    let w_f = width as f32;
+    let h_f = height as f32;
+
+    // Fallback default seeds in each quadrant if current points are invalid
+    let default_seeds = [
+        Point2D { x: w_f * 0.30, y: h_f * 0.20 }, // TL
+        Point2D { x: w_f * 0.70, y: h_f * 0.20 }, // TR
+        Point2D { x: w_f * 0.70, y: h_f * 0.80 }, // BR
+        Point2D { x: w_f * 0.30, y: h_f * 0.80 }, // BL
+    ];
+
+    for i in 0..4 {
+        let seed = if current_corners[i].x > 10.0 && current_corners[i].y > 10.0 {
+            current_corners[i]
+        } else {
+            default_seeds[i]
+        };
+
+        // First snap with coarse radius (32px), then refine with precision radius (14px)
+        let coarse = refine_fiducial_centroid(pixels, width, height, seed.x, seed.y, 32);
+        let fine = refine_fiducial_centroid(pixels, width, height, coarse.x, coarse.y, 14);
+        refined[i] = fine;
+    }
+
+    refined
+}
+
+/// Computes a normalized high-frequency focus/sharpness MTF score [0.0, 100.0]% using
+/// Laplacian energy gradient variance on the optical stage
+pub fn compute_focus_mtf(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    corners: &[Point2D; 4],
+) -> f32 {
+    let w = width as i32;
+    let h = height as i32;
+
+    // Sample around center between corners
+    let cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) * 0.25;
+    let cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) * 0.25;
+
+    let rad = 25i32;
+    let x_min = (cx as i32 - rad).clamp(2, w - 3);
+    let x_max = (cx as i32 + rad).clamp(2, w - 3);
+    let y_min = (cy as i32 - rad).clamp(2, h - 3);
+    let y_max = (cy as i32 + rad).clamp(2, h - 3);
+
+    let mut sum_lap: f64 = 0.0;
+    let mut sum_lap_sq: f64 = 0.0;
+    let mut count: f64 = 0.0;
+
+    for y in y_min..=y_max {
+        for x in x_min..=x_max {
+            let get_lum = |px: i32, py: i32| -> f64 {
+                let idx = ((py * w + px) * 4) as usize;
+                if idx + 2 < pixels.len() {
+                    pixels[idx] as f64 * 0.299 + pixels[idx + 1] as f64 * 0.587 + pixels[idx + 2] as f64 * 0.114
+                } else {
+                    0.0
+                }
+            };
+
+            // 3x3 Discrete Laplacian kernel
+            let lap = -4.0 * get_lum(x, y)
+                + get_lum(x - 1, y)
+                + get_lum(x + 1, y)
+                + get_lum(x, y - 1)
+                + get_lum(x, y + 1);
+
+            sum_lap += lap;
+            sum_lap_sq += lap * lap;
+            count += 1.0;
+        }
+    }
+
+    if count > 0.0 {
+        let mean = sum_lap / count;
+        let variance = (sum_lap_sq / count - mean * mean).max(0.0);
+        // Normalize variance: typical sharp image has var >= 400
+        (variance as f32 / 5.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    }
+}

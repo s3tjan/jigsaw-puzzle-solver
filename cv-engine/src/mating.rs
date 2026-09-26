@@ -27,9 +27,9 @@ pub fn match_edge_curves(edge_a: &PieceEdge, edge_b: &PieceEdge) -> f32 {
         return 0.0; // Physically impossible fit
     }
 
-    // Normalized Turn-Angle / Discrete Curve Correlation:
-    // Compare 20 evenly sampled points along both curves
-    let num_samples = 20;
+    // 1. Normalized Turn-Angle / Discrete Curve Correlation:
+    // Compare 50 evenly sampled points along both curves
+    let num_samples = 50;
     let samples_a = resample_curve(&edge_a.curve_samples, num_samples);
     // Reverse edge B because pieces touch head-to-tail along their shared boundary
     let mut reversed_b = edge_b.curve_samples.clone();
@@ -48,10 +48,19 @@ pub fn match_edge_curves(edge_a: &PieceEdge, edge_b: &PieceEdge) -> f32 {
     }
 
     let rms_error = (sum_sq_error / num_samples as f32).sqrt();
+    let curve_score = (-rms_error / 8.0).exp();
 
-    // Convert RMS pixel error into smooth 0.0 - 1.0 confidence score
-    // 0px error = 1.0, 10px error = ~0.36
-    (-rms_error / 8.0).exp()
+    // 2. Fourier Edge Descriptor Correlation (Invariant to translation, rotation, scale)
+    let mut fourier_dist_sq = 0.0f32;
+    for k in 0..16 {
+        let diff = edge_a.fourier_descriptor[k] - edge_b.fourier_descriptor[k];
+        fourier_dist_sq += diff * diff;
+    }
+    let fourier_rms = fourier_dist_sq.sqrt();
+    let fourier_score = (-fourier_rms * 25.0).exp();
+
+    // Combined metric
+    (curve_score * 0.70 + fourier_score * 0.30).clamp(0.0, 1.0)
 }
 
 /// Uniformly resamples a 2D polyline curve into N equidistant points

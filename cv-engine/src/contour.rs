@@ -15,6 +15,8 @@ pub struct PieceEdge {
     pub end_corner: Point2D,
     pub curvature_depth: f32, // Positive = Tab, Negative = Hole, ~0 = Flat
     pub curve_samples: Vec<Point2D>, // Dense smoothed contour points
+    pub normalized_profile: Vec<f32>, // 100 equidistant points normalized relative to baseline chord
+    pub fourier_descriptor: [f32; 16], // 16 scale- and rotation-invariant Fourier coefficients
 }
 
 /// Complete geometric profile of a scanned puzzle piece
@@ -106,6 +108,56 @@ pub fn gaussian_blur_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8
     }
 }
 
+/// Applies a 3x3 morphological closing (dilation followed by erosion) to fuse small dropouts
+/// and bridge hairline fractures on the binary mask before contour tracing
+pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8]) {
+    let w = width as i32;
+    let h = height as i32;
+    let total = (width * height) as usize;
+    let mut dilated = vec![0u8; total];
+
+    // 1. Dilation
+    for y in 0..h {
+        for x in 0..w {
+            let mut max_val = 0u8;
+            for ky in -1..=1 {
+                for kx in -1..=1 {
+                    let px = (x + kx).clamp(0, w - 1) as usize;
+                    let py = (y + ky).clamp(0, h - 1) as usize;
+                    let val = input[py * width as usize + px];
+                    if val > max_val {
+                        max_val = val;
+                        if max_val == 255 { break; }
+                    }
+                }
+                if max_val == 255 { break; }
+            }
+            dilated[(y * w + x) as usize] = max_val;
+        }
+    }
+
+    // 2. Erosion
+    for y in 0..h {
+        for x in 0..w {
+            let mut min_val = 255u8;
+            for ky in -1..=1 {
+                for kx in -1..=1 {
+                    let px = (x + kx).clamp(0, w - 1) as usize;
+                    let py = (y + ky).clamp(0, h - 1) as usize;
+                    let val = dilated[py * width as usize + px];
+                    if val < min_val {
+                        min_val = val;
+                        if min_val == 0 { break; }
+                    }
+                }
+                if min_val == 0 { break; }
+            }
+            output[(y * w + x) as usize] = min_val;
+        }
+    }
+}
+
+
 /// Smooths a closed contour polygon using a 5-point Gaussian moving window
 pub fn smooth_contour_points(points: &[Point2D]) -> Vec<Point2D> {
     let n = points.len();
@@ -150,8 +202,8 @@ pub fn trace_piece_contour(
     // We keep track of visited pixels to avoid repeatedly re-tracing small noise specs
     let mut visited = vec![false; (width * height) as usize];
 
-    for y in (margin_y..(h - margin_y)).step_by(2) {
-        for x in (margin_x..(w - margin_x)).step_by(2) {
+    for y in margin_y..(h - margin_y) {
+        for x in margin_x..(w - margin_x) {
             let idx = (y * w + x) as usize;
             if binary[idx] == 255 && !visited[idx] {
                 let left_idx = (y * w + (x - 1)) as usize;
@@ -267,44 +319,79 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let cos_t = theta.cos();
     let sin_t = theta.sin();
 
-    // 2. Project all points onto the rotated principal axes:
-    // u = dx * cos - dy * sin, v = dx * sin + dy * cos
-    let mut idx_tl = 0;
-    let mut idx_tr = 0;
-    let mut idx_br = 0;
-    let mut idx_bl = 0;
+    // 2. Straight-Edge-First Corner Detection:
+    // Puzzle boundary cuts (border and corner pieces) are physically straight cuts.
+    // Detecting straight chord segments with low variance directly identifies corners at their endpoints
+    // and eliminates corner jitter, tab-splitting, and edge flipping.
+    let min_edge_pts = (n as f32 * 0.16) as usize;
+    let max_edge_pts = (n as f32 * 0.38) as usize;
+    let mut straight_segments = Vec::new();
 
-    let mut score_tl = f32::MAX;
-    let mut score_tr = f32::MIN;
-    let mut score_br = f32::MIN;
-    let mut score_bl = f32::MAX;
+    for start in (0..n).step_by(2) {
+        for length in (min_edge_pts..max_edge_pts).step_by(3) {
+            let p_s = contour[start];
+            let p_e = contour[(start + length) % n];
+            let base_dx = p_e.x - p_s.x;
+            let base_dy = p_e.y - p_s.y;
+            let base_len = (base_dx * base_dx + base_dy * base_dy).sqrt();
+            if base_len < 25.0 { continue; }
 
-    for (i, p) in contour.iter().enumerate() {
-        let dx = p.x - cx;
-        let dy = p.y - cy;
-        let u = dx * cos_t + dy * sin_t;
-        let v = -dx * sin_t + dy * cos_t;
+            let mut max_dev = 0.0f32;
+            let mut sum_d = 0.0f32;
+            let mut sum_d2 = 0.0f32;
+            let count = (length + 1) as f32;
 
-        // In rotated frame, 4 quadrant corners are independent of mat orientation
-        let s_tl = u + v;
-        if s_tl < score_tl { score_tl = s_tl; idx_tl = i; }
+            for k in 0..=length {
+                let p = contour[(start + k) % n];
+                let d = ((p.x - p_s.x) * base_dy - (p.y - p_s.y) * base_dx) / base_len;
+                let ad = d.abs();
+                if ad > max_dev { max_dev = ad; }
+                sum_d += d;
+                sum_d2 += d * d;
+            }
 
-        let s_tr = u - v;
-        if s_tr > score_tr { score_tr = s_tr; idx_tr = i; }
+            let mean_d = sum_d / count;
+            let var_d = (sum_d2 / count - mean_d * mean_d).max(0.0);
+            let std_d = var_d.sqrt();
 
-        let s_br = u + v;
-        if s_br > score_br { score_br = s_br; idx_br = i; }
-
-        let s_bl = u - v;
-        if s_bl < score_bl { score_bl = s_bl; idx_bl = i; }
+            if max_dev < 2.8 && std_d < 1.4 {
+                straight_segments.push((length, start, (start + length) % n, base_len));
+            }
+        }
     }
 
-    // 3. Local curvature refinement: Search within +/- 8 points for highest corner angle
-    let refine_corner = |approx_idx: usize| -> usize {
+    // Cluster into distinct non-overlapping straight edges (longest first)
+    straight_segments.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut detected_straight_edges: Vec<(usize, usize, usize, f32)> = Vec::new();
+
+
+    for seg in straight_segments {
+        let mut overlaps = false;
+        for existing in &detected_straight_edges {
+            let diff_s = ((seg.1 as i32 - existing.1 as i32).rem_euclid(n as i32)) as usize;
+            let diff_e = ((seg.2 as i32 - existing.2 as i32).rem_euclid(n as i32)) as usize;
+            let dist_s = diff_s.min(n - diff_s);
+            let dist_e = diff_e.min(n - diff_e);
+            let thresh = (min_edge_pts as f32 * 0.7) as usize;
+            if dist_s < thresh || dist_e < thresh {
+                overlaps = true;
+                break;
+            }
+        }
+        if !overlaps {
+            detected_straight_edges.push(seg);
+            if detected_straight_edges.len() == 2 {
+                break;
+            }
+        }
+    }
+
+    // Local curvature refinement helper with configurable search radius
+    let refine_corner = |approx_idx: usize, radius: i32| -> usize {
         let mut best_idx = approx_idx;
         let mut min_dot = f32::MAX;
 
-        for offset in -8..=8 {
+        for offset in -radius..=radius {
             let idx = (approx_idx as i32 + offset).rem_euclid(n as i32) as usize;
             let prev = contour[(idx + n - 6) % n];
             let curr = contour[idx];
@@ -318,7 +405,6 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             let len1 = (v1x * v1x + v1y * v1y).sqrt().max(1e-4);
             let len2 = (v2x * v2x + v2y * v2y).sqrt().max(1e-4);
 
-            // Dot product evaluates right-angle (~0 dot product)
             let dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
             if dot < min_dot {
                 min_dot = dot;
@@ -328,18 +414,167 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         best_idx
     };
 
-    let c0 = refine_corner(idx_tl);
-    let c1 = refine_corner(idx_tr);
-    let c2 = refine_corner(idx_br);
-    let c3 = refine_corner(idx_bl);
+    let mut raw_corners: [usize; 4];
 
-    let mut raw_corners = [c0, c1, c2, c3];
+    if detected_straight_edges.len() == 2 {
+        // CORNER PIECE: 2 straight edges meeting at outer corner
+        let e1 = detected_straight_edges[0];
+        let e2 = detected_straight_edges[1];
+
+        // Find which endpoint of e1 meets e2 (the outer corner vertex)
+        let d_1s_2s = ((e1.1 as i32 - e2.1 as i32).rem_euclid(n as i32) as usize).min(n - ((e1.1 as i32 - e2.1 as i32).rem_euclid(n as i32) as usize));
+        let d_1s_2e = ((e1.1 as i32 - e2.2 as i32).rem_euclid(n as i32) as usize).min(n - ((e1.1 as i32 - e2.2 as i32).rem_euclid(n as i32) as usize));
+        let d_1e_2s = ((e1.2 as i32 - e2.1 as i32).rem_euclid(n as i32) as usize).min(n - ((e1.2 as i32 - e2.1 as i32).rem_euclid(n as i32) as usize));
+        let d_1e_2e = ((e1.2 as i32 - e2.2 as i32).rem_euclid(n as i32) as usize).min(n - ((e1.2 as i32 - e2.2 as i32).rem_euclid(n as i32) as usize));
+
+        let (c_shared, c_end1, c_end2) = if d_1s_2s <= d_1s_2e && d_1s_2s <= d_1e_2s && d_1s_2s <= d_1e_2e {
+            ((e1.1 + e2.1) / 2, e1.2, e2.2)
+        } else if d_1s_2e <= d_1s_2s && d_1s_2e <= d_1e_2s && d_1s_2e <= d_1e_2e {
+            ((e1.1 + e2.2) / 2, e1.2, e2.1)
+        } else if d_1e_2s <= d_1s_2s && d_1e_2s <= d_1s_2e && d_1e_2s <= d_1e_2e {
+            ((e1.2 + e2.1) / 2, e1.1, e2.2)
+        } else {
+            ((e1.2 + e2.2) / 2, e1.1, e2.1)
+        };
+
+        // Fourth corner is opposite the shared corner
+        let opp_target = (c_shared + n / 2) % n;
+        let c_opp = refine_corner(opp_target, (n as i32 / 8).max(12));
+
+        raw_corners = [
+            refine_corner(c_shared, 8),
+            refine_corner(c_end1, 8),
+            c_opp,
+            refine_corner(c_end2, 8),
+        ];
+    } else if detected_straight_edges.len() == 1 {
+        // BORDER PIECE: 1 straight cut
+        let e1 = detected_straight_edges[0];
+        let c_border_start = refine_corner(e1.1, 8);
+        let c_border_end = refine_corner(e1.2, 8);
+
+        // Remaining contour arc between border_end and border_start contains 3 inner edges
+        let arc_len = (c_border_start + n - c_border_end) % n;
+        let search_rad = (arc_len as i32 / 6).clamp(10, 50);
+        let c_inner1 = refine_corner((c_border_end + arc_len / 3) % n, search_rad);
+        let c_inner2 = refine_corner((c_border_end + (arc_len * 2) / 3) % n, search_rad);
+
+        raw_corners = [c_border_start, c_border_end, c_inner1, c_inner2];
+    } else {
+        // INTERIOR PIECE: Tangent Curvature Scale Space (CSS) Corner Detection
+        // Walk the contour and compute the signed tangent turning angle over a chord span (e.g. k=7..10).
+        // The 4 true corners of a puzzle piece core are localized angle extrema (~90 deg turn valleys).
+        let k_span = (n as i32 / 24).clamp(6, 14);
+        let mut turning_angles = vec![0.0f32; n];
+
+        for i in 0..n {
+            let prev = contour[(i as i32 - k_span).rem_euclid(n as i32) as usize];
+            let curr = contour[i];
+            let next = contour[(i as i32 + k_span).rem_euclid(n as i32) as usize];
+
+            let v1x = curr.x - prev.x;
+            let v1y = curr.y - prev.y;
+            let v2x = next.x - curr.x;
+            let v2y = next.y - curr.y;
+
+            let len1 = (v1x * v1x + v1y * v1y).sqrt().max(1e-4);
+            let len2 = (v2x * v2x + v2y * v2y).sqrt().max(1e-4);
+
+            let cross = (v1x * v2y - v1y * v2x) / (len1 * len2);
+            let dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+            turning_angles[i] = cross.atan2(dot);
+        }
+
+        // Find candidate turning extrema separated by at least 15% of perimeter
+        let min_separation = (n as f32 * 0.15) as usize;
+        let mut extrema: Vec<(usize, f32)> = Vec::new();
+
+        for i in 0..n {
+            let prev = turning_angles[(i + n - 1) % n];
+            let curr = turning_angles[i];
+            let next = turning_angles[(i + 1) % n];
+
+            // Local maximum or minimum turning angle magnitude
+            if (curr.abs() > prev.abs() && curr.abs() > next.abs()) && curr.abs() > 0.45 {
+                extrema.push((i, curr.abs()));
+            }
+        }
+
+        extrema.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let mut chosen_css_corners = Vec::new();
+
+        for (cand_idx, _) in extrema {
+            let mut too_close = false;
+            for &chosen in &chosen_css_corners {
+                let diff = ((cand_idx as i32 - chosen as i32).rem_euclid(n as i32)) as usize;
+                let dist = diff.min(n - diff);
+                if dist < min_separation {
+                    too_close = true;
+                    break;
+                }
+            }
+            if !too_close {
+                chosen_css_corners.push(cand_idx);
+                if chosen_css_corners.len() == 4 {
+                    break;
+                }
+            }
+        }
+
+        if chosen_css_corners.len() == 4 {
+            chosen_css_corners.sort();
+            raw_corners = [
+                refine_corner(chosen_css_corners[0], 6),
+                refine_corner(chosen_css_corners[1], 6),
+                refine_corner(chosen_css_corners[2], 6),
+                refine_corner(chosen_css_corners[3], 6),
+            ];
+        } else {
+            // Robust Fallback: Principal Orientation Quadrant Projections
+            let mut idx_tl = 0;
+            let mut idx_tr = 0;
+            let mut idx_br = 0;
+            let mut idx_bl = 0;
+
+            let mut score_tl = f32::MAX;
+            let mut score_tr = f32::MIN;
+            let mut score_br = f32::MIN;
+            let mut score_bl = f32::MAX;
+
+            for (i, p) in contour.iter().enumerate() {
+                let dx = p.x - cx;
+                let dy = p.y - cy;
+                let u = dx * cos_t + dy * sin_t;
+                let v = -dx * sin_t + dy * cos_t;
+
+                let s_tl = u + v;
+                if s_tl < score_tl { score_tl = s_tl; idx_tl = i; }
+
+                let s_tr = u - v;
+                if s_tr > score_tr { score_tr = s_tr; idx_tr = i; }
+
+                let s_br = u + v;
+                if s_br > score_br { score_br = s_br; idx_br = i; }
+
+                let s_bl = u - v;
+                if s_bl < score_bl { score_bl = s_bl; idx_bl = i; }
+            }
+
+            raw_corners = [
+                refine_corner(idx_tl, 8),
+                refine_corner(idx_tr, 8),
+                refine_corner(idx_br, 8),
+                refine_corner(idx_bl, 8),
+            ];
+        }
+    }
+
     // Sort corner indices strictly along the contour sequence so that edge traversal
     // always progresses forward along the perimeter without wrapping backward
     raw_corners.sort();
 
     // Verify minimum separation between corners (at least 5% of perimeter each)
-    let min_sep = (n as f32 * 0.06) as usize;
+    let min_sep = (n as f32 * 0.05) as usize;
     for i in 0..4 {
         let diff = (raw_corners[(i + 1) % 4] + n - raw_corners[i]) % n;
         if diff < min_sep {
@@ -377,12 +612,21 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
 
         let mut max_signed_dist: f32 = 0.0;
         for s in &samples {
-            // Signed perpendicular distance: positive = tab protruding outward, negative = hole
             let dist = ((s.x - p_start.x) * base_dy - (s.y - p_start.y) * base_dx) / base_len;
             if dist.abs() > max_signed_dist.abs() {
                 max_signed_dist = dist;
             }
         }
+
+        // Compute signed distance of the piece centroid relative to this chord
+        // This is mathematically invariant to contour winding direction:
+        // A point on the SAME side of the chord as the piece center protrudes INWARD (Hole)
+        // A point on the OPPOSITE side of the chord from the piece center protrudes OUTWARD (Tab)
+        let mid_x = (p_start.x + p_end.x) * 0.5;
+        let mid_y = (p_start.y + p_end.y) * 0.5;
+        let center_dx = cx - mid_x;
+        let center_dy = cy - mid_y;
+        let center_signed_dist = (center_dx * base_dy - center_dy * base_dx) / base_len;
 
         // Compute standard deviation of distance to line to ensure edge is genuinely flat and straight
         let mut sum_dist = 0.0f32;
@@ -398,14 +642,38 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let std_dev = variance.sqrt();
 
         let rel_depth = max_signed_dist / base_len;
-        // A true Flat jigsaw edge is straight: minimal peak deviation (< 0.06 base_len) AND low deviation (< 2.8px)
-        let edge_type = if rel_depth.abs() < 0.06 && std_dev < 2.8 {
+        // A true Flat jigsaw edge is straight: minimal peak deviation (< 0.12 base_len) AND low deviation (< 3.2px)
+        let edge_type = if rel_depth.abs() < 0.12 && std_dev < 3.2 {
             EdgeType::Flat
-        } else if rel_depth > 0.0 {
-            EdgeType::Tab
-        } else {
+        } else if (max_signed_dist * center_signed_dist) > 0.0 {
             EdgeType::Hole
+        } else {
+            EdgeType::Tab
         };
+
+        // Resample edge into exactly 100 equidistant points and project relative to baseline chord
+        let mut norm_profile = Vec::with_capacity(100);
+        let n_s = samples.len();
+        for k in 0..100 {
+            let t = k as f32 / 99.0;
+            let sample_idx = ((t * (n_s - 1) as f32).round() as usize).min(n_s - 1);
+            let s = samples[sample_idx];
+            let dist_to_chord = ((s.x - p_start.x) * base_dy - (s.y - p_start.y) * base_dx) / base_len;
+            norm_profile.push(dist_to_chord / base_len);
+        }
+
+        // Compute 16-coefficient Fourier Edge Descriptor (scale & rotation invariant magnitude spectrum)
+        let mut fourier = [0.0f32; 16];
+        for k in 1..=16 {
+            let mut re = 0.0f32;
+            let mut im = 0.0f32;
+            for (m, &val) in norm_profile.iter().enumerate() {
+                let angle = 2.0 * std::f32::consts::PI * (k as f32) * (m as f32) / 100.0;
+                re += val * angle.cos();
+                im -= val * angle.sin();
+            }
+            fourier[k - 1] = (re * re + im * im).sqrt() / 100.0;
+        }
 
         edges_vec.push(PieceEdge {
             edge_type,
@@ -413,6 +681,8 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             end_corner: p_end,
             curvature_depth: max_signed_dist,
             curve_samples: samples,
+            normalized_profile: norm_profile,
+            fourier_descriptor: fourier,
         });
     }
 
