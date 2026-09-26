@@ -78,23 +78,28 @@ fn resample_curve(points: &[Point2D], target_count: usize) -> Vec<Point2D> {
         return vec![points[0]; target_count];
     }
 
-    let step = total_len / (target_count - 1) as f32;
+    let n_pts = points.len();
+    if n_pts < 2 || cum_dist.len() < 2 {
+        return vec![points[0]; target_count];
+    }
+
+    let step = total_len / (target_count - 1).max(1) as f32;
     let mut resampled = Vec::with_capacity(target_count);
 
     let mut seg = 0;
     for i in 0..target_count {
         let target_dist = i as f32 * step;
-        while seg < cum_dist.len() - 2 && cum_dist[seg + 1] < target_dist {
+        while seg + 2 < cum_dist.len() && cum_dist[seg + 1] < target_dist {
             seg += 1;
         }
 
         let seg_start_d = cum_dist[seg];
-        let seg_end_d = cum_dist[seg + 1];
+        let seg_end_d = cum_dist[(seg + 1).min(cum_dist.len() - 1)];
         let seg_len = (seg_end_d - seg_start_d).max(1e-4);
         let t = ((target_dist - seg_start_d) / seg_len).clamp(0.0, 1.0);
 
-        let p0 = points[seg];
-        let p1 = points[seg + 1];
+        let p0 = points[seg.min(n_pts - 1)];
+        let p1 = points[(seg + 1).min(n_pts - 1)];
 
         resampled.push(Point2D {
             x: p0.x + t * (p1.x - p0.x),

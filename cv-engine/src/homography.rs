@@ -155,7 +155,59 @@ impl Homography {
     }
 }
 
+/// Apply radial lens distortion to a 2D point given image dimensions and k1 coefficient
+pub fn apply_radial_distortion(pt: Point2D, w: f32, h: f32, k1: f32) -> Point2D {
+    if k1.abs() <= 1e-4 {
+        return pt;
+    }
+    let cx = w * 0.5;
+    let cy = h * 0.5;
+    let diag = (cx * cx + cy * cy).sqrt().max(1.0);
+    let norm_x = (pt.x - cx) / diag;
+    let norm_y = (pt.y - cy) / diag;
+    let r2 = norm_x * norm_x + norm_y * norm_y;
+    let factor = 1.0 + k1 * r2;
+    Point2D {
+        x: cx + norm_x * factor * diag,
+        y: cy + norm_y * factor * diag,
+    }
+}
+
+/// Invert radial lens distortion for a point (from distorted sensor coordinate to rectilinear undistorted plane)
+pub fn undistort_point(pt: Point2D, w: f32, h: f32, k1: f32) -> Point2D {
+    if k1.abs() <= 1e-4 {
+        return pt;
+    }
+    let cx = w * 0.5;
+    let cy = h * 0.5;
+    let diag = (cx * cx + cy * cy).sqrt().max(1.0);
+    let dist_x = (pt.x - cx) / diag;
+    let dist_y = (pt.y - cy) / diag;
+    let r_dist = (dist_x * dist_x + dist_y * dist_y).sqrt();
+    if r_dist < 1e-6 {
+        return pt;
+    }
+
+    // Fixed-point Newton iterations to solve r_dist = r_un * (1 + k1 * r_un^2)
+    let mut r_un = r_dist;
+    for _ in 0..5 {
+        let f = r_un * (1.0 + k1 * r_un * r_un) - r_dist;
+        let df = 1.0 + 3.0 * k1 * r_un * r_un;
+        if df.abs() > 1e-6 {
+            r_un -= f / df;
+        }
+    }
+
+    let scale = (r_un / r_dist).max(0.1).min(3.0);
+    Point2D {
+        x: cx + dist_x * scale * diag,
+        y: cy + dist_y * scale * diag,
+    }
+}
+
+
 /// Dewarp/unwarp source image into an orthographic rectified target buffer using inverse homography sampling
+/// and optional radial lens distortion correction (k1).
 pub fn dewarp_image(
     src_pixels: &[u8],
     src_w: u32,
@@ -163,6 +215,7 @@ pub fn dewarp_image(
     dst_w: u32,
     dst_h: u32,
     inv_h: &Homography,
+    k1: f32,
     dst_pixels: &mut [u8],
 ) {
     let src_w_f = src_w as f32;
@@ -176,11 +229,13 @@ pub fn dewarp_image(
             let dx_f = dx as f32;
             let dst_offset = dst_row_offset + (dx * 4) as usize;
 
-            // Map destination pixel back to source coordinates using inverse homography
-            let src_pt = inv_h.transform_point(Point2D { x: dx_f, y: dy_f });
+            // Map destination pixel back to perspective source coordinates using inverse homography
+            let unwarped_pt = inv_h.transform_point(Point2D { x: dx_f, y: dy_f });
+
+            // Apply radial lens distortion to find where this unwarped ray hits the distorted sensor
+            let src_pt = apply_radial_distortion(unwarped_pt, src_w_f, src_h_f, k1);
 
             if src_pt.x >= 0.0 && src_pt.x < src_w_f && src_pt.y >= 0.0 && src_pt.y < src_h_f {
-                // Bilinear or nearest-neighbor sample from source
                 let sx = src_pt.x as u32;
                 let sy = src_pt.y as u32;
                 let src_offset = ((sy * src_w + sx) * 4) as usize;
@@ -199,3 +254,4 @@ pub fn dewarp_image(
         }
     }
 }
+

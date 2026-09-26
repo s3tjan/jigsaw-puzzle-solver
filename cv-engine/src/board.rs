@@ -158,7 +158,11 @@ impl PuzzleBoard {
 
         for r in 0..self.rows {
             for c in 0..self.cols {
-                let slot = &self.slots[self.slot_index(r, c)];
+                let slot_idx = self.slot_index(r, c);
+                if slot_idx >= self.slots.len() {
+                    continue;
+                }
+                let slot = &self.slots[slot_idx];
                 // If slot already occupied, skip
                 if slot.piece_id.is_some() {
                     continue;
@@ -179,15 +183,18 @@ impl PuzzleBoard {
                 for rot_val in 0..4u8 {
                     let rot = RotationStep::from_u8(rot_val);
 
-                    // Validate border flatness constraint against grid boundary:
-                    // North boundary: r == 0
-                    // East boundary:  c == cols - 1
-                    // South boundary: r == rows - 1
-                    // West boundary:  c == 0
                     let n_edge_idx = rot.get_piece_edge_idx(0);
                     let e_edge_idx = rot.get_piece_edge_idx(1);
                     let s_edge_idx = rot.get_piece_edge_idx(2);
                     let w_edge_idx = rot.get_piece_edge_idx(3);
+
+                    if n_edge_idx >= piece.edges.len()
+                        || e_edge_idx >= piece.edges.len()
+                        || s_edge_idx >= piece.edges.len()
+                        || w_edge_idx >= piece.edges.len()
+                    {
+                        continue;
+                    }
 
                     let n_type = piece.edges[n_edge_idx].edge_type;
                     let e_type = piece.edges[e_edge_idx].edge_type;
@@ -197,17 +204,17 @@ impl PuzzleBoard {
                     if (r == 0 && n_type != EdgeType::Flat) || (r > 0 && n_type == EdgeType::Flat) {
                         continue;
                     }
-                    if (c == self.cols - 1 && e_type != EdgeType::Flat) || (c < self.cols - 1 && e_type == EdgeType::Flat) {
+                    if (c == self.cols.saturating_sub(1) && e_type != EdgeType::Flat) || (c < self.cols.saturating_sub(1) && e_type == EdgeType::Flat) {
                         continue;
                     }
-                    if (r == self.rows - 1 && s_type != EdgeType::Flat) || (r < self.rows - 1 && s_type == EdgeType::Flat) {
+                    if (r == self.rows.saturating_sub(1) && s_type != EdgeType::Flat) || (r < self.rows.saturating_sub(1) && s_type == EdgeType::Flat) {
                         continue;
                     }
                     if (c == 0 && w_type != EdgeType::Flat) || (c > 0 && w_type == EdgeType::Flat) {
                         continue;
                     }
 
-                    // Now check neighbor matches if any neighbor is already placed
+                    // Check neighbor matches if any neighbor is already placed
                     let mut neighbor_count = 0;
                     let mut total_score = 0.0f32;
                     let mut mismatch = false;
@@ -296,15 +303,20 @@ impl PuzzleBoard {
                         row: r,
                         col: c,
                         rotation: rot,
-                        score: final_score,
+                        score: if final_score.is_nan() { 0.0 } else { final_score },
                         reason,
                     });
                 }
             }
         }
 
-        // Sort descending by match score
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort descending by match score safely
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        candidates.truncate(15);
         candidates
     }
 }
@@ -367,8 +379,10 @@ impl WasmPuzzleBoard {
 
     /// Find best matching candidate slots for a piece
     pub fn find_candidates(&self, piece_js: JsValue) -> Result<JsValue, JsValue> {
-        let piece: ScannedPiece = serde_wasm_bindgen::from_value(piece_js)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let piece: ScannedPiece = match serde_wasm_bindgen::from_value(piece_js) {
+            Ok(p) => p,
+            Err(e) => return Err(JsValue::from_str(&e.to_string())),
+        };
         let candidates = self.inner.find_candidate_slots(&piece);
         serde_wasm_bindgen::to_value(&candidates)
             .map_err(|e| JsValue::from_str(&e.to_string()))

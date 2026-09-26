@@ -130,7 +130,8 @@ pub fn smooth_contour_points(points: &[Point2D]) -> Vec<Point2D> {
     smoothed
 }
 
-/// Extracts the continuous boundary contour using radial-sweep Moore-Neighbor tracing
+/// Extracts the continuous boundary contour using radial-sweep Moore-Neighbor tracing.
+/// Searches for significant closed foreground contours without strict 8% margin clipping.
 pub fn trace_piece_contour(
     binary: &[u8],
     width: u32,
@@ -139,75 +140,102 @@ pub fn trace_piece_contour(
     let w = width as i32;
     let h = height as i32;
 
-    let margin_x = (width as f32 * 0.08) as i32;
-    let margin_y = (height as f32 * 0.08) as i32;
+    // Small boundary margin to avoid touching image outer border
+    let margin_x = (width as f32 * 0.03) as i32;
+    let margin_y = (height as f32 * 0.03) as i32;
 
-    let mut start_pt: Option<(i32, i32)> = None;
-    'outer: for y in margin_y..(h - margin_y) {
-        for x in margin_x..(w - margin_x) {
+    let mut best_contour: Option<Vec<Point2D>> = None;
+    let mut best_area = 0.0f32;
+
+    // We keep track of visited pixels to avoid repeatedly re-tracing small noise specs
+    let mut visited = vec![false; (width * height) as usize];
+
+    for y in (margin_y..(h - margin_y)).step_by(2) {
+        for x in (margin_x..(w - margin_x)).step_by(2) {
             let idx = (y * w + x) as usize;
-            if binary[idx] == 255 {
+            if binary[idx] == 255 && !visited[idx] {
                 let left_idx = (y * w + (x - 1)) as usize;
                 if binary[left_idx] == 0 {
-                    start_pt = Some((x, y));
-                    break 'outer;
+                    // Candidate contour start
+                    let sx = x;
+                    let sy = y;
+                    let mut raw_contour = Vec::new();
+
+                    let dx = [-1,  0,  1,  1,  1,  0, -1, -1];
+                    let dy = [-1, -1, -1,  0,  1,  1,  1,  0];
+
+                    let mut curr_x = sx;
+                    let mut curr_y = sy;
+                    let mut backtrack_dir = 0;
+
+                    raw_contour.push(Point2D { x: sx as f32, y: sy as f32 });
+                    visited[idx] = true;
+
+                    let max_steps = (width * height) as usize;
+                    for _ in 0..max_steps {
+                        let mut next_found = false;
+                        let start_dir = (backtrack_dir + 5) % 8;
+
+                        for i in 0..8 {
+                            let dir = (start_dir + i) % 8;
+                            let nx = curr_x + dx[dir];
+                            let ny = curr_y + dy[dir];
+
+                            if nx >= 0 && nx < w && ny >= 0 && ny < h {
+                                let nidx = (ny * w + nx) as usize;
+                                visited[nidx] = true;
+                                if binary[nidx] == 255 {
+                                    curr_x = nx;
+                                    curr_y = ny;
+                                    backtrack_dir = dir;
+                                    raw_contour.push(Point2D { x: nx as f32, y: ny as f32 });
+                                    next_found = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if !next_found || (curr_x == sx && curr_y == sy) {
+                            break;
+                        }
+                    }
+
+                    // A piece taking 1/3 of the inner square (~120px perimeter in 384x384)
+                    // has perimeter >= 35 points
+                    if raw_contour.len() >= 35 {
+                        // Calculate approximate polygon area via Shoelace formula
+                        let mut area: f32 = 0.0;
+                        let clen = raw_contour.len();
+                        for ci in 0..clen {
+                            let p1 = raw_contour[ci];
+                            let p2 = raw_contour[(ci + 1) % clen];
+                            area += (p1.x * p2.y) - (p2.x * p1.y);
+                        }
+                        area = (area * 0.5).abs();
+
+                        // Discard tiny artifacts or full-canvas border boxes
+                        let max_valid_area = (width * height) as f32 * 0.85;
+                        let min_valid_area = (width * height) as f32 * 0.005;
+
+                        if area >= min_valid_area && area <= max_valid_area {
+                            if area > best_area {
+                                best_area = area;
+                                best_contour = Some(raw_contour);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    let (sx, sy) = start_pt?;
-    let mut raw_contour = Vec::new();
-
-    let dx = [-1,  0,  1,  1,  1,  0, -1, -1];
-    let dy = [-1, -1, -1,  0,  1,  1,  1,  0];
-
-    let mut curr_x = sx;
-    let mut curr_y = sy;
-    let mut backtrack_dir = 0;
-
-    raw_contour.push(Point2D { x: sx as f32, y: sy as f32 });
-
-    let max_steps = (width * height) as usize;
-    for _ in 0..max_steps {
-        let mut next_found = false;
-        let start_dir = (backtrack_dir + 5) % 8;
-
-        for i in 0..8 {
-            let dir = (start_dir + i) % 8;
-            let nx = curr_x + dx[dir];
-            let ny = curr_y + dy[dir];
-
-            if nx >= 0 && nx < w && ny >= 0 && ny < h {
-                let nidx = (ny * w + nx) as usize;
-                if binary[nidx] == 255 {
-                    curr_x = nx;
-                    curr_y = ny;
-                    backtrack_dir = dir;
-                    raw_contour.push(Point2D { x: nx as f32, y: ny as f32 });
-                    next_found = true;
-                    break;
-                }
-            }
-        }
-
-        if !next_found || (curr_x == sx && curr_y == sy) {
-            break;
-        }
-    }
-
-    if raw_contour.len() > 60 {
-        // Return 5-point smoothed anti-aliased contour
-        Some(smooth_contour_points(&raw_contour))
-    } else {
-        None
-    }
+    best_contour.map(|c| smooth_contour_points(&c))
 }
 
 /// Robust rotation-invariant corner finder using Principal Component Analysis (PCA)
 /// and local curvature analysis on oriented bounding axes
 pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece> {
-    if contour.len() < 80 {
+    if contour.len() < 35 {
         return None;
     }
 
@@ -305,15 +333,33 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let c2 = refine_corner(idx_br);
     let c3 = refine_corner(idx_bl);
 
-    let ordered_indices = [c0, c1, c2, c3];
-    let corners = [contour[c0], contour[c1], contour[c2], contour[c3]];
+    let mut raw_corners = [c0, c1, c2, c3];
+    // Sort corner indices strictly along the contour sequence so that edge traversal
+    // always progresses forward along the perimeter without wrapping backward
+    raw_corners.sort();
+
+    // Verify minimum separation between corners (at least 5% of perimeter each)
+    let min_sep = (n as f32 * 0.06) as usize;
+    for i in 0..4 {
+        let diff = (raw_corners[(i + 1) % 4] + n - raw_corners[i]) % n;
+        if diff < min_sep {
+            return None; // Degenerate corner collapse
+        }
+    }
+
+    let corners = [
+        contour[raw_corners[0]],
+        contour[raw_corners[1]],
+        contour[raw_corners[2]],
+        contour[raw_corners[3]],
+    ];
 
     // 4. Partition 4 Edges and Classify
     let mut edges_vec = Vec::with_capacity(4);
 
     for e in 0..4 {
-        let start_i = ordered_indices[e];
-        let end_i = ordered_indices[(e + 1) % 4];
+        let start_i = raw_corners[e];
+        let end_i = raw_corners[(e + 1) % 4];
 
         let mut samples = Vec::new();
         let mut curr = start_i;
@@ -331,14 +377,29 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
 
         let mut max_signed_dist: f32 = 0.0;
         for s in &samples {
+            // Signed perpendicular distance: positive = tab protruding outward, negative = hole
             let dist = ((s.x - p_start.x) * base_dy - (s.y - p_start.y) * base_dx) / base_len;
             if dist.abs() > max_signed_dist.abs() {
                 max_signed_dist = dist;
             }
         }
 
+        // Compute standard deviation of distance to line to ensure edge is genuinely flat and straight
+        let mut sum_dist = 0.0f32;
+        let mut sum_dist_sq = 0.0f32;
+        let n_samples = samples.len().max(1) as f32;
+        for s in &samples {
+            let dist = ((s.x - p_start.x) * base_dy - (s.y - p_start.y) * base_dx) / base_len;
+            sum_dist += dist;
+            sum_dist_sq += dist * dist;
+        }
+        let mean_dist = sum_dist / n_samples;
+        let variance = (sum_dist_sq / n_samples - mean_dist * mean_dist).max(0.0);
+        let std_dev = variance.sqrt();
+
         let rel_depth = max_signed_dist / base_len;
-        let edge_type = if rel_depth.abs() < 0.12 {
+        // A true Flat jigsaw edge is straight: minimal peak deviation (< 0.06 base_len) AND low deviation (< 2.8px)
+        let edge_type = if rel_depth.abs() < 0.06 && std_dev < 2.8 {
             EdgeType::Flat
         } else if rel_depth > 0.0 {
             EdgeType::Tab
@@ -366,9 +427,12 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         edges_vec[3].clone(),
     ];
 
+    // Canonicalize orientation angle to [0, pi) for stability
+    let canonical_theta = if theta < 0.0 { theta + std::f32::consts::PI } else { theta };
+
     Some(ScannedPiece {
         center: Point2D { x: cx, y: cy },
-        rotation_angle_rad: theta,
+        rotation_angle_rad: canonical_theta,
         bounding_width: (corners[1].x - corners[0].x).abs().max((corners[2].x - corners[3].x).abs()),
         bounding_height: (corners[3].y - corners[0].y).abs().max((corners[2].y - corners[1].y).abs()),
         perimeter_length: contour.len() as f32,
