@@ -36,18 +36,43 @@ pub fn refine_fiducial_centroid(
     let mut weight_sum: f64 = 0.0;
     let mut weighted_x: f64 = 0.0;
     let mut weighted_y: f64 = 0.0;
-
-    // The fiducial center is a dark concentric circle.
-    // Darkness inverted (255 - luminance) gives higher weight to the bullseye center.
     let rad_sq = (radius * radius) as f32;
+
+    // Two-pass approach:
+    // 1. Find min and max luminance in the circular search window
+    let mut min_lum = 255u32;
+    let mut max_lum = 0u32;
 
     for y in y_min..=y_max {
         for x in x_min..=x_max {
             let dx = (x - cx) as f32;
             let dy = (y - cy) as f32;
-            let dist_sq = dx * dx + dy * dy;
+            if dx * dx + dy * dy <= rad_sq {
+                let idx = ((y as u32 * width + x as u32) * 4) as usize;
+                if idx + 2 < pixels.len() {
+                    let r = pixels[idx] as u32;
+                    let g = pixels[idx + 1] as u32;
+                    let b = pixels[idx + 2] as u32;
+                    let lum = (r * 299 + g * 587 + b * 114) / 1000;
+                    if lum < min_lum { min_lum = lum; }
+                    if lum > max_lum { max_lum = lum; }
+                }
+            }
+        }
+    }
 
-            if dist_sq <= rad_sq {
+    // If there is insufficient contrast across the window (< 25 levels), don't snap
+    if max_lum.saturating_sub(min_lum) < 25 {
+        return Point2D { x: seed_x, y: seed_y };
+    }
+
+    // 2. Compute centroid weighted by contrast relative to max luminance
+    let contrast_range = (max_lum - min_lum) as f64;
+    for y in y_min..=y_max {
+        for x in x_min..=x_max {
+            let dx = (x - cx) as f32;
+            let dy = (y - cy) as f32;
+            if dx * dx + dy * dy <= rad_sq {
                 let idx = ((y as u32 * width + x as u32) * 4) as usize;
                 if idx + 2 < pixels.len() {
                     let r = pixels[idx] as u32;
@@ -55,9 +80,10 @@ pub fn refine_fiducial_centroid(
                     let b = pixels[idx + 2] as u32;
                     let lum = (r * 299 + g * 587 + b * 114) / 1000;
                     
-                    // Emphasize deep blacks (dark center spot)
-                    let darkness = (255 - lum) as f64;
-                    let weight = darkness * darkness; // quadratic contrast boost
+                    // Normalized darkness score in [0, 1]
+                    let darkness_norm = (max_lum.saturating_sub(lum)) as f64 / contrast_range;
+                    // Cubic sharpening to isolate the central dark core precisely
+                    let weight = darkness_norm * darkness_norm * darkness_norm;
 
                     weighted_x += x as f64 * weight;
                     weighted_y += y as f64 * weight;

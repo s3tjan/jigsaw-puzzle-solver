@@ -190,10 +190,10 @@ pub fn dewarp_image(
                 dst_pixels[dst_offset + 2] = src_pixels[src_offset + 2];
                 dst_pixels[dst_offset + 3] = 255;
             } else {
-                // Out of bounds background color (dark gray)
-                dst_pixels[dst_offset] = 16;
-                dst_pixels[dst_offset + 1] = 18;
-                dst_pixels[dst_offset + 2] = 22;
+                // Out of bounds background color (pure white mat background)
+                dst_pixels[dst_offset] = 255;
+                dst_pixels[dst_offset + 1] = 255;
+                dst_pixels[dst_offset + 2] = 255;
                 dst_pixels[dst_offset + 3] = 255;
             }
         }

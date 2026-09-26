@@ -36,6 +36,10 @@ pub fn match_edge_curves(edge_a: &PieceEdge, edge_b: &PieceEdge) -> f32 {
     reversed_b.reverse();
     let samples_b = resample_curve(&reversed_b, num_samples);
 
+    if samples_a.len() < num_samples || samples_b.len() < num_samples {
+        return 0.0;
+    }
+
     let mut sum_sq_error: f32 = 0.0;
     for i in 0..num_samples {
         let dx = samples_a[i].x - samples_b[i].x;

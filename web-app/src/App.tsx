@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import init, { greet, process_frame, dewarp_quad, snap_fiducial_corner, analyze_staged_piece } from './pkg/cv_engine'
+import init, { greet, process_frame, dewarp_quad, snap_fiducial_corner, analyze_staged_piece, WasmPuzzleBoard } from './pkg/cv_engine'
+import { BoardView } from './components/BoardView'
+import type { BoardSlot, SlotCandidate } from './components/BoardView'
 import './App.css'
 
 interface Point2D {
@@ -56,6 +58,14 @@ function App() {
   const [stagedHistory, setStagedHistory] = useState<ScannedPiece[]>([])
   const [autoCaptureNotice, setAutoCaptureNotice] = useState<string | null>(null)
 
+  // Pillar 4: Assembly Board Graph State
+  const boardRef = useRef<WasmPuzzleBoard | null>(null)
+  const [boardSlots, setBoardSlots] = useState<BoardSlot[]>([])
+  const [slotCandidates, setSlotCandidates] = useState<SlotCandidate[]>([])
+  const [selectedCandidate, setSelectedCandidate] = useState<SlotCandidate | null>(null)
+  const BOARD_ROWS = 10
+  const BOARD_COLS = 15
+
   const [corners, setCorners] = useState<[Point2D, Point2D, Point2D, Point2D]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
@@ -98,6 +108,14 @@ function App() {
       .then(() => {
         setWasmReady(true)
         greet('Puzzle Master')
+
+        // Initialize Pillar 4 Assembly Board Graph
+        const board = new WasmPuzzleBoard(BOARD_ROWS, BOARD_COLS)
+        boardRef.current = board
+        const initialSlots = board.get_slots_json()
+        if (Array.isArray(initialSlots)) {
+          setBoardSlots(initialSlots)
+        }
       })
       .catch((err) => {
         console.error('Failed to init WASM:', err)
@@ -469,23 +487,63 @@ function App() {
     }
   }
 
+  // Calculate candidate slots whenever detectedPiece changes
+  useEffect(() => {
+    if (detectedPiece && boardRef.current) {
+      try {
+        const cands = boardRef.current.find_candidates(detectedPiece)
+        if (Array.isArray(cands)) {
+          setSlotCandidates(cands)
+          setSelectedCandidate(cands.length > 0 ? cands[0] : null)
+        }
+      } catch (e) {
+        console.warn('Candidate calculation error:', e)
+      }
+    } else {
+      setSlotCandidates([])
+      setSelectedCandidate(null)
+    }
+  }, [detectedPiece])
+
+  const handlePlacePieceAtSlot = (candidate: SlotCandidate) => {
+    if (!detectedPiece || !boardRef.current) return
+    const pieceId = stagedHistory.length + 1
+    try {
+      const ok = boardRef.current.place_piece(
+        pieceId,
+        detectedPiece,
+        candidate.row,
+        candidate.col,
+        candidate.rotation
+      )
+      if (ok) {
+        playCaptureTone()
+        setBoardSlots(boardRef.current.get_slots_json())
+        setStagedHistory((prev) => [detectedPiece, ...prev.slice(0, 11)])
+        setAutoCaptureNotice(`✓ Placed Piece #${pieceId} at (${candidate.row}, ${candidate.col})!`)
+        setTimeout(() => setAutoCaptureNotice(null), 2000)
+        // Refresh candidates for current piece
+        setSlotCandidates([])
+        setSelectedCandidate(null)
+      }
+    } catch (e: any) {
+      alert(`Could not place piece: ${e}`)
+    }
+  }
+
+  const handleUnplacePiece = (row: number, col: number) => {
+    if (!boardRef.current) return
+    boardRef.current.unplace_piece(row, col)
+    setBoardSlots(boardRef.current.get_slots_json())
+  }
+
   return (
     <div className="app-container">
-      <header className="app-header">
-        <div className="header-title">
-          <h1>🧩 Jigsaw Solver</h1>
-          <span className="badge">Pillars 1 & 3: CV Engine Active</span>
-        </div>
-        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-          Status: {wasmReady ? '⚡ Rust WASM Ready' : '⏳ Initializing...'}
-        </div>
-      </header>
-
       <div className="main-content">
         <section className="viewport-panel">
           <div className="panel-header">
-            <span>Camera Feed & Optical Mat Overlay</span>
-            <span>{isCameraActive ? `🟢 1080p Stream (${fps} Live FPS)` : '⚪ Standby'}</span>
+            <span>OPTICAL STAGE & CALIBRATION</span>
+            <span>{isCameraActive ? `1080P STREAM (${fps} FPS)` : 'STANDBY'}</span>
           </div>
 
           <div className="video-container">
@@ -511,9 +569,11 @@ function App() {
 
             {!isCameraActive && (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                <p>Camera is currently inactive.</p>
+                <p style={{ margin: '0 0 12px 0', textTransform: 'uppercase', letterSpacing: '0.5px', fontSize: '0.85rem' }}>
+                  Video device offline
+                </p>
                 <button className="primary" onClick={startCamera} disabled={!wasmReady}>
-                  Enable Camera
+                  START CAPTURE
                 </button>
               </div>
             )}
@@ -521,48 +581,68 @@ function App() {
 
           {isCameraActive && (
             <div className="controls-bar">
-              <button onClick={stopCamera}>Stop Camera</button>
+              <button onClick={stopCamera}>STOP STREAM</button>
               <button
                 onClick={() => setAutoDewarp(!autoDewarp)}
                 style={{ borderColor: autoDewarp ? '#3fb950' : '#30363d' }}
               >
-                {autoDewarp ? '✓ Live Dewarp Active' : 'Enable Dewarp'}
+                {autoDewarp ? 'DEWARP: ON' : 'DEWARP: OFF'}
               </button>
-              <button onClick={handleResetCorners}>Reset Calibration Corners</button>
-              {detectedPiece && (
-                <button className="primary" onClick={handleManualLockPiece}>
-                  🔒 Capture Piece #{stagedHistory.length + 1}
-                </button>
-              )}
-              {autoCaptureNotice && (
-                <span style={{ color: '#3fb950', fontSize: '0.85rem', fontWeight: 600, alignSelf: 'center' }}>
-                  {autoCaptureNotice}
+              <button onClick={handleResetCorners}>RESET CORNERS</button>
+              <button
+                className="primary"
+                onClick={handleManualLockPiece}
+                disabled={!detectedPiece}
+                style={{
+                  opacity: detectedPiece ? 1 : 0.45,
+                  cursor: detectedPiece ? 'pointer' : 'not-allowed',
+                }}
+              >
+                RECORD PIECE [{stagedHistory.length + 1}]
+              </button>
+              <div className="controls-status-slot">
+                <span
+                  style={{
+                    color: autoCaptureNotice ? '#3fb950' : snappedIndex !== null ? '#58a6ff' : 'var(--text-muted)',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    letterSpacing: '0.5px',
+                  }}
+                >
+                  {autoCaptureNotice ? 'STATUS: CAPTURED' : snappedIndex !== null ? 'STATUS: FIDUCIAL LOCKED' : 'STATUS: READY'}
                 </span>
-              )}
-              {snappedIndex !== null && (
-                <span style={{ color: '#58a6ff', fontSize: '0.85rem', alignSelf: 'center' }}>
-                  🎯 Snapped to fiducial!
-                </span>
-              )}
+              </div>
             </div>
           )}
+
+          {/* Assembly Board Grid & Recommendations */}
+          <BoardView
+            rows={BOARD_ROWS}
+            cols={BOARD_COLS}
+            slots={boardSlots}
+            candidates={slotCandidates}
+            selectedCandidate={selectedCandidate}
+            onSelectCandidate={setSelectedCandidate}
+            onPlacePieceAtSlot={handlePlacePieceAtSlot}
+            onUnplacePiece={handleUnplacePiece}
+          />
         </section>
 
         <aside className="side-panel">
           <div className="card">
-            <h3>Pillar 3: Piece Boundary & Contour Extraction</h3>
-            {cameraError && (
-              <p style={{ color: '#f85149', fontSize: '0.85rem' }}>⚠️ {cameraError}</p>
-            )}
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Rotated PCA orientation, Gaussian smoothing & auto-capture active.
+            <h3>CONTOUR & PROFILE ANALYSIS</h3>
+            <p style={{ color: cameraError ? '#f85149' : 'var(--text-muted)', fontSize: '0.75rem', margin: '0 0 6px 0' }}>
+              DIAGNOSTIC: {cameraError ? `ERROR: ${cameraError}` : 'NOMINAL'}
+            </p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', margin: 0 }}>
+              PCA ORIENTATION / CONTOUR EXTRACTION
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', margin: '12px 0' }}>
               <canvas
                 ref={dewarpedCanvasRef}
                 style={{
-                  border: '2px solid var(--accent-cyan)',
-                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '2px',
                   background: '#000',
                   width: '240px',
                   height: '240px',
@@ -570,101 +650,124 @@ function App() {
               />
             </div>
 
-            {detectedPiece ? (
-              <div style={{ fontSize: '0.85rem', marginTop: '8px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span>Piece Type:</span>
-                  <strong style={{ color: detectedPiece.is_corner ? '#f85149' : detectedPiece.is_border ? '#d29922' : '#3fb950' }}>
-                    {detectedPiece.is_corner ? 'Corner Piece 🏆' : detectedPiece.is_border ? 'Border Piece 🧭' : 'Interior Piece 🧩'}
-                  </strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span>Dimensions:</span>
-                  <code>{(detectedPiece.bounding_width * 0.22).toFixed(1)}mm &times; {(detectedPiece.bounding_height * 0.22).toFixed(1)}mm</code>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span>Rotation:</span>
-                  <code>{((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(1)}&deg;</code>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Edges:</span>
-                  <span>
-                    {detectedPiece.edges.map((e, idx) => (
+            <div className="piece-details-container">
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span>CLASS:</span>
+                <strong style={{
+                  color: detectedPiece ? (detectedPiece.is_corner ? '#f85149' : detectedPiece.is_border ? '#d29922' : '#3fb950') : 'var(--text-muted)'
+                }}>
+                  {detectedPiece
+                    ? (detectedPiece.is_corner ? 'CORNER' : detectedPiece.is_border ? 'BORDER' : 'INTERIOR')
+                    : 'NO TARGET DETECTED'}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span>DIMENSIONS:</span>
+                <code style={{ color: detectedPiece ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {detectedPiece
+                    ? `${(detectedPiece.bounding_width * 0.22).toFixed(1)} mm × ${(detectedPiece.bounding_height * 0.22).toFixed(1)} mm`
+                    : '-- mm × -- mm'}
+                </code>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span>ROTATION:</span>
+                <code style={{ color: detectedPiece ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {detectedPiece
+                    ? `${((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(1)}°`
+                    : '--°'}
+                </code>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>EDGES:</span>
+                <span style={{ display: 'inline-flex', gap: '4px' }}>
+                  {detectedPiece ? (
+                    detectedPiece.edges.map((e, idx) => (
                       <span key={idx} style={{
-                        marginLeft: '4px',
-                        padding: '1px 4px',
-                        borderRadius: '3px',
+                        padding: '1px 5px',
+                        borderRadius: '2px',
                         fontSize: '0.75rem',
-                        background: e.edge_type === 'Tab' ? 'rgba(56, 139, 253, 0.2)' : e.edge_type === 'Hole' ? 'rgba(210, 153, 34, 0.2)' : 'rgba(163, 113, 247, 0.2)',
+                        fontWeight: 600,
+                        border: '1px solid var(--border-color)',
+                        background: 'rgba(0,0,0,0.3)',
                         color: e.edge_type === 'Tab' ? '#58a6ff' : e.edge_type === 'Hole' ? '#d29922' : '#a371f7'
                       }}>
-                        {e.edge_type}
+                        {e.edge_type.toUpperCase()}
                       </span>
-                    ))}
-                  </span>
-                </div>
+                    ))
+                  ) : (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>--</span>
+                  )}
+                </span>
               </div>
-            ) : (
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', margin: '8px 0' }}>
-                ⚪ Staging arena empty. Place a piece on the target.
-              </p>
-            )}
+            </div>
           </div>
 
           <div className="card">
-            <h3>Captured Pieces ({stagedHistory.length})</h3>
-            {stagedHistory.length === 0 ? (
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Drop a piece and hold still for 500ms — it will auto-capture hands-free!
-              </p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '160px', overflowY: 'auto' }}>
-                {stagedHistory.map((p, i) => (
+            <h3>PIECE INVENTORY ({stagedHistory.length})</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', height: '140px', overflowY: 'auto' }}>
+              {stagedHistory.length === 0 ? (
+                <div style={{
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                  color: 'var(--text-muted)',
+                  fontSize: '0.75rem',
+                  border: '1px dashed var(--border-color)',
+                  borderRadius: '2px',
+                  padding: '10px'
+                }}>
+                  NO PIECES REGISTERED
+                </div>
+              ) : (
+                stagedHistory.map((p, i) => (
                   <div key={i} style={{
-                    fontSize: '0.8rem',
+                    fontSize: '0.75rem',
                     padding: '6px 8px',
-                    borderRadius: '4px',
-                    background: 'rgba(0,0,0,0.25)',
+                    borderRadius: '2px',
+                    background: 'rgba(0,0,0,0.3)',
                     border: '1px solid var(--border-color)',
                     display: 'flex',
-                    justifyContent: 'space-between'
+                    justifyContent: 'space-between',
+                    flexShrink: 0
                   }}>
-                    <span>Piece #{stagedHistory.length - i} ({((p.rotation_angle_rad * 180) / Math.PI).toFixed(0)}&deg;)</span>
+                    <span>PIECE #{stagedHistory.length - i} ({((p.rotation_angle_rad * 180) / Math.PI).toFixed(0)}&deg;)</span>
                     <span style={{ color: p.is_corner ? '#f85149' : p.is_border ? '#d29922' : '#3fb950', fontWeight: 600 }}>
-                      {p.is_corner ? 'Corner' : p.is_border ? 'Border' : 'Interior'}
+                      {p.is_corner ? 'CORNER' : p.is_border ? 'BORDER' : 'INTERIOR'}
                     </span>
                   </div>
-                ))}
-              </div>
-            )}
+                ))
+              )}
+            </div>
           </div>
 
           <div className="card">
-            <h3>Live Telemetry</h3>
+            <h3>SYSTEM METRICS</h3>
             <div className="metric-grid">
               <div className="metric-box">
-                <div className="metric-label">Resolution</div>
+                <div className="metric-label">RESOLUTION</div>
                 <div className="metric-val">
-                  {stats ? `${stats.width}x${stats.height}` : '--'}
+                  {stats ? `${stats.width}×${stats.height}` : '--'}
                 </div>
               </div>
 
               <div className="metric-box">
-                <div className="metric-label">Rust Latency</div>
+                <div className="metric-label">LATENCY</div>
                 <div className="metric-val">
                   {stats ? `${stats.elapsed_ms.toFixed(2)}ms` : '--'}
                 </div>
               </div>
 
               <div className="metric-box">
-                <div className="metric-label">Luminance</div>
+                <div className="metric-label">LUMINANCE</div>
                 <div className="metric-val">
                   {stats ? stats.avg_brightness.toFixed(1) : '--'}
                 </div>
               </div>
 
               <div className="metric-box">
-                <div className="metric-label">Browser FPS</div>
+                <div className="metric-label">FPS</div>
                 <div className="metric-val">{fps}</div>
               </div>
             </div>

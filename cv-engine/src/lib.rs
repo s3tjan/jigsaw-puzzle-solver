@@ -1,9 +1,11 @@
 pub mod aruco;
+pub mod board;
 pub mod contour;
 pub mod homography;
 pub mod mating;
 
 use wasm_bindgen::prelude::*;
+pub use board::WasmPuzzleBoard;
 use homography::{dewarp_image, Homography, Point2D};
 use contour::{compute_otsu_threshold, trace_piece_contour, partition_edges_and_classify, ScannedPiece};
 

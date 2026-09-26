@@ -57,8 +57,8 @@ This roadmap documents the end-to-end architecture, current completion status, a
 | **Phase 3** | Calibration Polish: Bullseye Centroid Snapping & LocalStorage | Rust (`aruco.rs`), HTML5 Pointer Events | ✅ **DONE** |
 | **Phase 4** | Pillar 3: Boundary Segmentation & 4-Edge Classification | Rust (`contour.rs`), PCA, Otsu | ✅ **DONE** |
 | **Phase 5** | Vision Polish: Rotation Invariance & Hands-Free Auto-Capture | Web Audio API, Moving Window Blur | ✅ **DONE** |
-| **Phase 6** | **Pillar 4: Persistent Assembly Board Graph** | Rust (`board.rs`), React Canvas Grid | 🟡 **UP NEXT** |
-| **Phase 7** | **Visual Matching against Master Artwork Poster** | Rust / WASM Keypoints, FLANN / KD-Tree | ⏳ Planned |
+| **Phase 6** | **Pillar 4: Persistent Assembly Board Graph** | Rust (`board.rs`), React Canvas Grid | ✅ **DONE** |
+| **Phase 7** | **Visual Matching against Master Artwork Poster** | Rust / WASM Keypoints, FLANN / KD-Tree | 🟡 **UP NEXT** |
 | **Phase 8** | **Interactive AR Placement Guidance & Session Storage** | IndexedDB, Canvas 2D/WebGL Overlay | ⏳ Planned |
 | **Phase 9** | **PWA Packaging & Mobile Optimization** | Service Workers, Web App Manifest | ⏳ Planned |
 
