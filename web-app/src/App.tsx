@@ -7,6 +7,8 @@ import init, {
   auto_detect_mat_quad,
   measure_stage_focus,
   analyze_staged_piece,
+  compute_inverse_homography,
+  WasmPuzzleBoard,
 } from './pkg/cv_engine'
 import './App.css'
 
@@ -47,10 +49,10 @@ interface FrameAnalysis {
 const STORAGE_KEY = 'jigsaw_calibration_corners_v2'
 
 const DEFAULT_CORNERS: [Point2D, Point2D, Point2D, Point2D] = [
-  { x: 280, y: 90 },
-  { x: 640, y: 90 },
-  { x: 640, y: 440 },
-  { x: 280, y: 440 },
+  { x: 230, y: 75 },
+  { x: 490, y: 75 },
+  { x: 490, y: 335 },
+  { x: 230, y: 335 },
 ]
 
 function App() {
@@ -69,17 +71,30 @@ function App() {
   // Problem 1: Lens Radial Distortion (k1)
   const [lensDistortion, setLensDistortion] = useState<number>(0.0)
   const [showCalibrationGuides, setShowCalibrationGuides] = useState<boolean>(true)
+  const [showArOverlay, setShowArOverlay] = useState<boolean>(true)
 
 
   // Problem 2 & 4: Background delta segmentation sensitivity
   const [segSensitivity, setSegSensitivity] = useState<number>(24.0)
 
-  // Problem 4 & 5: Visual inspection view mode ('dewarped' | 'binary' | 'composite')
+  // Visual inspection view mode ('dewarped' | 'binary' | 'composite')
   const [viewMode, setViewMode] = useState<'dewarped' | 'binary' | 'composite'>('composite')
+  // Optical Sensor Rig display mode: 'camera' (full camera) vs 'dewarp' (magnified 1:1 piece)
+  const [rigDisplayMode, setRigDisplayMode] = useState<'camera' | 'dewarp'>('camera')
+  // Puzzle box artwork opacity (0.1 to 1.0)
+  const [boxArtOpacity, setBoxArtOpacity] = useState<number>(0.75)
 
   // Diagnostics snapshot info
   const [latestAnalysis, setLatestAnalysis] = useState<any>(null)
   const [snapshotStatus, setSnapshotStatus] = useState<string | null>(null)
+
+  // Assembly Puzzle Board Solver state (1000 pieces: 40 cols x 25 rows placeholder)
+  const boardRef = useRef<WasmPuzzleBoard | null>(null)
+  const [candidateSlots, setCandidateSlots] = useState<any[]>([])
+  const [boardSlots, setBoardSlots] = useState<any[]>([])
+  const [boxArtUrl, setBoxArtUrl] = useState<string | null>(null)
+  const boxArtInputRef = useRef<HTMLInputElement>(null)
+
 
 
   const [corners, setCorners] = useState<[Point2D, Point2D, Point2D, Point2D]>(() => {
@@ -103,6 +118,7 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
   const dewarpedCanvasRef = useRef<HTMLCanvasElement>(null)
+  const rigDewarpedCanvasRef = useRef<HTMLCanvasElement>(null)
   const animFrameIdRef = useRef<number | null>(null)
   const lastTimeRef = useRef<number>(performance.now())
   const frameCountRef = useRef<number>(0)
@@ -128,6 +144,15 @@ function App() {
       .then(() => {
         setWasmReady(true)
         greet('Puzzle Master')
+        try {
+          // Initialize 1000-piece board (25 rows x 40 cols = 1000 pieces)
+          const newBoard = new WasmPuzzleBoard(25, 40)
+          boardRef.current = newBoard
+          const initialSlots = newBoard.get_slots_json()
+          setBoardSlots(initialSlots || [])
+        } catch (e) {
+          console.error('Failed to init WasmPuzzleBoard:', e)
+        }
       })
       .catch((err) => {
         console.error('Failed to init WASM:', err)
@@ -227,24 +252,44 @@ function App() {
     }
   }
 
-  const drawOverlay = (w: number, h: number, pts: [Point2D, Point2D, Point2D, Point2D]) => {
+  const drawOverlay = (
+    w: number,
+    h: number,
+    pts: [Point2D, Point2D, Point2D, Point2D],
+    showGuides: boolean,
+    showAr: boolean,
+    lensK1: number,
+    piece: ScannedPiece | null
+  ) => {
     const overlay = overlayCanvasRef.current
+    const video = videoRef.current
     if (!overlay) return
     if (overlay.width !== w || overlay.height !== h) {
       overlay.width = w
       overlay.height = h
     }
+
+    // Align overlay canvas exact bounding box to match the displayed video element letterbox
+    if (video && video.clientWidth > 0 && video.clientHeight > 0) {
+      const vWidth = video.clientWidth
+      const vHeight = video.clientHeight
+      if (overlay.style.width !== `${vWidth}px`) {
+        overlay.style.width = `${vWidth}px`
+        overlay.style.height = `${vHeight}px`
+      }
+    }
+
     const ctx = overlay.getContext('2d')
     if (!ctx) return
 
     ctx.clearRect(0, 0, w, h)
 
-    if (showCalibrationGuides) {
+    if (showGuides) {
       // 1. Convert current 4 corner fiducial coordinates to undistorted rectilinear space
-      const unTL = undistortPt(pts[0].x, pts[0].y, w, h, lensDistortion)
-      const unTR = undistortPt(pts[1].x, pts[1].y, w, h, lensDistortion)
-      const unBR = undistortPt(pts[2].x, pts[2].y, w, h, lensDistortion)
-      const unBL = undistortPt(pts[3].x, pts[3].y, w, h, lensDistortion)
+      const unTL = undistortPt(pts[0].x, pts[0].y, w, h, lensK1)
+      const unTR = undistortPt(pts[1].x, pts[1].y, w, h, lensK1)
+      const unBR = undistortPt(pts[2].x, pts[2].y, w, h, lensK1)
+      const unBL = undistortPt(pts[3].x, pts[3].y, w, h, lensK1)
 
       const centerRect = {
         x: (unTL.x + unTR.x + unBR.x + unBL.x) * 0.25,
@@ -283,7 +328,7 @@ function App() {
             const t = step / SAMPLES_PER_EDGE
             const interpX = pStart.x + (pEnd.x - pStart.x) * t
             const interpY = pStart.y + (pEnd.y - pStart.y) * t
-            const distPt = distortPt(interpX, interpY, w, h, lensDistortion)
+            const distPt = distortPt(interpX, interpY, w, h, lensK1)
             if (side === 0 && step === 0) {
               ctx.moveTo(distPt.x, distPt.y)
             } else {
@@ -300,17 +345,19 @@ function App() {
         ctx.setLineDash([])
       }
 
-      // Draw Main 48.00mm Sovereign ArUco Perimeter Guide (Amber outline)
-      drawCurvedPolygon([unTL, unTR, unBR, unBL], '#ffd33d', 2.0, [6, 4], 'rgba(255, 211, 61, 0.04)')
+      // Draw Main 48.00mm Sovereign ArUco Perimeter Guide (High-contrast Neon Cyan outline)
+      drawCurvedPolygon([unTL, unTR, unBR, unBL], '#00e5ff', 2.2, [6, 4], 'rgba(0, 229, 255, 0.05)')
 
-      // Draw Inner Staging Boundary (35mm piece placement area, Green dashed)
-      drawCurvedPolygon([stagingTL, stagingTR, stagingBR, stagingBL], '#3fb950', 1.5, [4, 4], 'rgba(63, 185, 80, 0.03)')
+      // Draw Inner Staging Boundary (35mm piece placement area, Vivid Emerald dashed)
+      drawCurvedPolygon([stagingTL, stagingTR, stagingBR, stagingBL], '#00e676', 1.8, [4, 4], 'rgba(0, 230, 118, 0.04)')
 
-      // Digital Center Crosshair HUD on the live video feed (Never physically printed on the mat!)
-      const cDist = distortPt(centerRect.x, centerRect.y, w, h, lensDistortion)
+      // Digital Center Crosshair HUD on the live video feed (High visibility cyan reticle with contrast backing)
+      const cDist = distortPt(centerRect.x, centerRect.y, w, h, lensK1)
       ctx.beginPath()
-      ctx.strokeStyle = 'rgba(63, 185, 80, 0.85)'
-      ctx.lineWidth = 1.2
+      ctx.strokeStyle = '#00e5ff'
+      ctx.lineWidth = 1.8
+      ctx.shadowColor = '#000000'
+      ctx.shadowBlur = 3
       // Crosshair with open center
       ctx.moveTo(cDist.x - 18, cDist.y)
       ctx.lineTo(cDist.x - 4, cDist.y)
@@ -321,69 +368,134 @@ function App() {
       ctx.moveTo(cDist.x, cDist.y + 4)
       ctx.lineTo(cDist.x, cDist.y + 18)
       ctx.stroke()
+      ctx.shadowBlur = 0
 
-      // Diagnostic guide label
-      ctx.fillStyle = '#ffd33d'
-      ctx.font = '10px monospace'
+      // Diagnostic guide label with dark badge backing
       const topLabelPt = distortPt(
         (unTL.x + unTR.x) * 0.5,
-        unTL.y - 8,
+        unTL.y - 10,
         w,
         h,
-        lensDistortion
+        lensK1
       )
-      ctx.fillText(`48mm ARUCO BENCH (k1=${lensDistortion.toFixed(2)})`, topLabelPt.x - 75, topLabelPt.y)
+      const guideText = `48mm ARUCO BENCH (k1=${lensK1.toFixed(2)})`
+      ctx.font = 'bold 10px monospace'
+      const textWidth = ctx.measureText(guideText).width
+      ctx.fillStyle = 'rgba(15, 18, 23, 0.85)'
+      ctx.fillRect(topLabelPt.x - textWidth / 2 - 4, topLabelPt.y - 9, textWidth + 8, 14)
+      ctx.fillStyle = '#00e5ff'
+      ctx.fillText(guideText, topLabelPt.x - textWidth / 2, topLabelPt.y + 2)
     }
 
     // Draw the 4 interactive draggable corner handles on the fiducials
-    // Styled as precision see-through optical crosshair reticles so the underlying fiducial lines remain 100% visible
-    const labels = ['P0: TL', 'P1: TR', 'P2: BR', 'P3: BL']
-    pts.forEach((pt, i) => {
-      const isDragging = i === draggingIdx
-      const isSnapped = i === snappedIndex
-      const activeColor = isDragging ? '#ffd33d' : isSnapped ? '#3fb950' : '#58a6ff'
+    // If guides are turned off, we also hide the handles unless actively dragging
+    if (showGuides || draggingIdx !== null) {
+      const labels = ['P0: TL', 'P1: TR', 'P2: BR', 'P3: BL']
+      pts.forEach((pt, i) => {
+        const isDragging = i === draggingIdx
+        const isSnapped = i === snappedIndex
+        const activeColor = isDragging ? '#ff9100' : isSnapped ? '#00e676' : '#00e5ff'
 
-      // Outer ring
-      ctx.beginPath()
-      ctx.arc(pt.x, pt.y, 14, 0, Math.PI * 2)
-      ctx.strokeStyle = activeColor
-      ctx.lineWidth = isDragging ? 2.5 : 1.5
-      ctx.stroke()
+        // Outer ring
+        ctx.beginPath()
+        ctx.arc(pt.x, pt.y, 14, 0, Math.PI * 2)
+        ctx.strokeStyle = activeColor
+        ctx.lineWidth = isDragging ? 2.5 : 1.5
+        ctx.stroke()
 
-      // Inner clear center punch (radius 3px, unshaded transparent hole)
-      ctx.beginPath()
-      ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2)
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 1.2
-      ctx.stroke()
+        // Inner clear center punch (radius 3px, unshaded transparent hole)
+        ctx.beginPath()
+        ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2)
+        ctx.strokeStyle = '#ffffff'
+        ctx.lineWidth = 1.2
+        ctx.stroke()
 
-      // Reticle Crosshairs with central gap (leaving fiducial center unobstructed)
-      ctx.beginPath()
-      ctx.strokeStyle = activeColor
-      ctx.lineWidth = 1.2
-      // Left tick
-      ctx.moveTo(pt.x - 18, pt.y)
-      ctx.lineTo(pt.x - 5, pt.y)
-      // Right tick
-      ctx.moveTo(pt.x + 5, pt.y)
-      ctx.lineTo(pt.x + 18, pt.y)
-      // Top tick
-      ctx.moveTo(pt.x, pt.y - 18)
-      ctx.lineTo(pt.x, pt.y - 5)
-      // Bottom tick
-      ctx.moveTo(pt.x, pt.y + 5)
-      ctx.lineTo(pt.x, pt.y + 18)
-      ctx.stroke()
+        // Reticle Crosshairs with central gap (leaving fiducial center unobstructed)
+        ctx.beginPath()
+        ctx.strokeStyle = activeColor
+        ctx.lineWidth = 1.2
+        // Left tick
+        ctx.moveTo(pt.x - 18, pt.y)
+        ctx.lineTo(pt.x - 5, pt.y)
+        // Right tick
+        ctx.moveTo(pt.x + 5, pt.y)
+        ctx.lineTo(pt.x + 18, pt.y)
+        // Top tick
+        ctx.moveTo(pt.x, pt.y - 18)
+        ctx.lineTo(pt.x, pt.y - 5)
+        // Bottom tick
+        ctx.moveTo(pt.x, pt.y + 5)
+        ctx.lineTo(pt.x, pt.y + 18)
+        ctx.stroke()
 
-      // Text label with subtle dark backdrop for legibility
-      ctx.font = 'bold 9px monospace'
-      const labelText = labels[i]
-      const textWidth = ctx.measureText(labelText).width
-      ctx.fillStyle = 'rgba(10, 13, 17, 0.75)'
-      ctx.fillRect(pt.x + 16, pt.y - 7, textWidth + 6, 13)
-      ctx.fillStyle = '#ffffff'
-      ctx.fillText(labelText, pt.x + 19, pt.y + 3)
-    })
+        // Text label with subtle dark backdrop for legibility
+        ctx.font = 'bold 9px monospace'
+        const labelText = labels[i]
+        const textWidth = ctx.measureText(labelText).width
+        ctx.fillStyle = 'rgba(10, 13, 17, 0.75)'
+        ctx.fillRect(pt.x + 16, pt.y - 7, textWidth + 6, 13)
+        ctx.fillStyle = '#ffffff'
+        ctx.fillText(labelText, pt.x + 19, pt.y + 3)
+      })
+    }
+
+    // IN-SITU AUGMENTED REALITY PIECE OVERLAY (Rendered directly over the physical piece)
+    if (piece && piece.contour_points.length > 0 && showAr) {
+      // Map dewarped contour points back to video coordinates using inverse homography
+      const invH = compute_inverse_homography(
+        pts[0].x, pts[0].y,
+        pts[1].x, pts[1].y,
+        pts[2].x, pts[2].y,
+        pts[3].x, pts[3].y,
+        384, 384,
+        w, h,
+        lensK1
+      )
+
+      if (invH && invH.length === 9) {
+        const mapStageToVideo = (px: number, py: number): Point2D => {
+          const denom = invH[6] * px + invH[7] * py + invH[8]
+          if (Math.abs(denom) < 1e-9) return { x: 0, y: 0 }
+          const inv_d = 1.0 / denom
+          const unX = (invH[0] * px + invH[1] * py + invH[2]) * inv_d
+          const unY = (invH[3] * px + invH[4] * py + invH[5]) * inv_d
+          return distortPt(unX, unY, w, h, lensK1)
+        }
+
+        // A. Draw Neon Green Augmented Boundary
+        ctx.beginPath()
+        const firstPt = mapStageToVideo(piece.contour_points[0].x, piece.contour_points[0].y)
+        ctx.moveTo(firstPt.x, firstPt.y)
+        for (let i = 1; i < piece.contour_points.length; i++) {
+          const vidPt = mapStageToVideo(piece.contour_points[i].x, piece.contour_points[i].y)
+          ctx.lineTo(vidPt.x, vidPt.y)
+        }
+        ctx.closePath()
+        ctx.strokeStyle = '#00e676'
+        ctx.lineWidth = 2.0
+        ctx.shadowColor = '#00e676'
+        ctx.shadowBlur = 6
+        ctx.stroke()
+        ctx.fillStyle = 'rgba(0, 230, 118, 0.08)'
+        ctx.fill()
+        ctx.shadowBlur = 0
+
+        // B. Draw Piece Corners (C0..C3)
+        piece.corners.forEach((cPt, i) => {
+          const vidCorner = mapStageToVideo(cPt.x, cPt.y)
+          ctx.beginPath()
+          ctx.arc(vidCorner.x, vidCorner.y, 4, 0, Math.PI * 2)
+          ctx.fillStyle = '#ff3d00'
+          ctx.fill()
+          ctx.strokeStyle = '#ffffff'
+          ctx.lineWidth = 1.2
+          ctx.stroke()
+          ctx.fillStyle = '#ffffff'
+          ctx.font = 'bold 9px monospace'
+          ctx.fillText(`C${i}`, vidCorner.x + 5, vidCorner.y - 3)
+        })
+      }
+    }
   }
 
   const drawPieceDiagnostics = (ctx: CanvasRenderingContext2D, piece: ScannedPiece) => {
@@ -449,16 +561,36 @@ function App() {
     } catch { }
   }
 
+  // Refs to avoid rerunning useEffect/recreating processLoop on every state change
+  const cornersRef = useRef(corners)
+  cornersRef.current = corners
+  const lensDistortionRef = useRef(lensDistortion)
+  lensDistortionRef.current = lensDistortion
+  const segSensitivityRef = useRef(segSensitivity)
+  segSensitivityRef.current = segSensitivity
+  const viewModeRef = useRef(viewMode)
+  viewModeRef.current = viewMode
+  const showCalibrationGuidesRef = useRef(showCalibrationGuides)
+  showCalibrationGuidesRef.current = showCalibrationGuides
+  const showArOverlayRef = useRef(showArOverlay)
+  showArOverlayRef.current = showArOverlay
+  const autoDewarpRef = useRef(autoDewarp)
+  autoDewarpRef.current = autoDewarp
+  const lastCvTimeRef = useRef<number>(0)
+  const detectedPieceRef = useRef<ScannedPiece | null>(null)
+
   const processLoop = useCallback(() => {
     const video = videoRef.current
     const canvas = canvasRef.current
     const dewarpedCanvas = dewarpedCanvasRef.current
+    const rigDewarpedCanvas = rigDewarpedCanvasRef.current
 
     if (video && canvas && video.readyState >= 2 && wasmReady) {
       const ctx = canvas.getContext('2d', { willReadFrequently: true })
       if (ctx) {
-        const targetW = 960
-        const targetH = Math.round((video.videoHeight / video.videoWidth) * targetW) || 540
+        // Optimize CV processing resolution to 720p width (fast, highly accurate subpixel fiducials)
+        const targetW = 720
+        const targetH = Math.round((video.videoHeight / video.videoWidth) * targetW) || 405
         frameDimsRef.current = { w: targetW, h: targetH }
 
         if (canvas.width !== targetW || canvas.height !== targetH) {
@@ -469,106 +601,134 @@ function App() {
         ctx.drawImage(video, 0, 0, targetW, targetH)
         const imgData = ctx.getImageData(0, 0, targetW, targetH)
 
+        const now = performance.now()
+        // Throttle heavy Rust WASM CV analysis to ~6 times per second (every 160ms)
+        // This keeps the frame rate locked at a buttery 60 FPS while keeping metrology snappy!
+        const shouldRunCv = now - lastCvTimeRef.current >= 160
+
         try {
           const rawBytes = new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength)
           latestPixelsRef.current = { bytes: rawBytes, w: targetW, h: targetH }
 
-          const analysis: FrameAnalysis = process_frame(rawBytes, targetW, targetH)
-          setStats(analysis)
+          if (shouldRunCv) {
+            lastCvTimeRef.current = now
 
-          // Measure high-frequency focus MTF on optical stage
-          const mtf = measure_stage_focus(
-            rawBytes,
-            targetW,
-            targetH,
-            corners[0].x, corners[0].y,
-            corners[1].x, corners[1].y,
-            corners[2].x, corners[2].y,
-            corners[3].x, corners[3].y
-          )
-          setFocusScore(mtf)
+            const analysis: FrameAnalysis = process_frame(rawBytes, targetW, targetH)
+            setStats(analysis)
 
-          if (autoDewarp && dewarpedCanvas) {
-            const dstW = 384
-            const dstH = 384
-            if (dewarpedCanvas.width !== dstW || dewarpedCanvas.height !== dstH) {
-              dewarpedCanvas.width = dstW
-              dewarpedCanvas.height = dstH
-            }
+            const curCorners = cornersRef.current
+            const curK1 = lensDistortionRef.current
+            const curSens = segSensitivityRef.current
+            const curViewMode = viewModeRef.current
 
-            const dewarpedBytes: Uint8Array = dewarp_quad(
+            // Measure high-frequency focus MTF on optical stage
+            const mtf = measure_stage_focus(
               rawBytes,
               targetW,
               targetH,
-              corners[0].x, corners[0].y,
-              corners[1].x, corners[1].y,
-              corners[2].x, corners[2].y,
-              corners[3].x, corners[3].y,
-              dstW,
-              dstH,
-              lensDistortion
+              curCorners[0].x, curCorners[0].y,
+              curCorners[1].x, curCorners[1].y,
+              curCorners[2].x, curCorners[2].y,
+              curCorners[3].x, curCorners[3].y
             )
-            latestDewarpedRef.current = { bytes: dewarpedBytes, w: dstW, h: dstH }
+            setFocusScore(mtf)
 
-            const dCtx = dewarpedCanvas.getContext('2d')
-            if (dCtx) {
-              // Run piece boundary contour segmentation
-              const analysisResult = analyze_staged_piece(dewarpedBytes, dstW, dstH, segSensitivity)
-              setLatestAnalysis(analysisResult)
-
-              const piece: ScannedPiece | null = analysisResult?.piece || null
-              setDetectedPiece(piece)
-
-              if (analysisResult?.binary_mask) {
-                latestBinaryMaskRef.current = new Uint8Array(analysisResult.binary_mask)
+            if (autoDewarpRef.current && dewarpedCanvas) {
+              const dstW = 384
+              const dstH = 384
+              if (dewarpedCanvas.width !== dstW || dewarpedCanvas.height !== dstH) {
+                dewarpedCanvas.width = dstW
+                dewarpedCanvas.height = dstH
               }
 
-              // Render staging canvas according to selected view mode
-              const dewarpedImageData = dCtx.createImageData(dstW, dstH)
-              if (viewMode === 'binary' && analysisResult?.binary_mask) {
-                const mask = analysisResult.binary_mask
-                for (let i = 0; i < dstW * dstH; i++) {
-                  const val = mask[i]
-                  dewarpedImageData.data[i * 4] = val
-                  dewarpedImageData.data[i * 4 + 1] = val
-                  dewarpedImageData.data[i * 4 + 2] = val
-                  dewarpedImageData.data[i * 4 + 3] = 255
+              const dewarpedBytes: Uint8Array = dewarp_quad(
+                rawBytes,
+                targetW,
+                targetH,
+                curCorners[0].x, curCorners[0].y,
+                curCorners[1].x, curCorners[1].y,
+                curCorners[2].x, curCorners[2].y,
+                curCorners[3].x, curCorners[3].y,
+                dstW,
+                dstH,
+                curK1
+              )
+              latestDewarpedRef.current = { bytes: dewarpedBytes, w: dstW, h: dstH }
+
+              const dCtx = dewarpedCanvas.getContext('2d')
+              if (dCtx) {
+                // Run piece boundary contour segmentation
+                const analysisResult = analyze_staged_piece(dewarpedBytes, dstW, dstH, curSens)
+                setLatestAnalysis(analysisResult)
+
+                const piece: ScannedPiece | null = analysisResult?.piece || null
+                detectedPieceRef.current = piece
+                setDetectedPiece(piece)
+
+                if (analysisResult?.binary_mask) {
+                  latestBinaryMaskRef.current = new Uint8Array(analysisResult.binary_mask)
                 }
-              } else {
-                dewarpedImageData.data.set(dewarpedBytes)
-              }
-              dCtx.putImageData(dewarpedImageData, 0, 0)
 
-              if (piece && (viewMode === 'composite' || viewMode === 'dewarped')) {
-                drawPieceDiagnostics(dCtx, piece)
+                // Render staging canvas according to selected view mode
+                const dewarpedImageData = dCtx.createImageData(dstW, dstH)
+                if (curViewMode === 'binary' && analysisResult?.binary_mask) {
+                  const mask = analysisResult.binary_mask
+                  for (let i = 0; i < dstW * dstH; i++) {
+                    const val = mask[i]
+                    dewarpedImageData.data[i * 4] = val
+                    dewarpedImageData.data[i * 4 + 1] = val
+                    dewarpedImageData.data[i * 4 + 2] = val
+                    dewarpedImageData.data[i * 4 + 3] = 255
+                  }
+                } else {
+                  dewarpedImageData.data.set(dewarpedBytes)
+                }
+                dCtx.putImageData(dewarpedImageData, 0, 0)
 
-                // Hands-Free Auto-Capture Motion Debouncing:
-                const now = performance.now()
-                if (lastCenterRef.current) {
-                  const dist = Math.hypot(piece.center.x - lastCenterRef.current.x, piece.center.y - lastCenterRef.current.y)
-                  if (isAwaitingPieceRemovalRef.current) {
-                    // Piece was registered; do not capture again until piece is removed from view
-                  } else if (dist < 3.0) {
-                    if (steadySinceRef.current === null) {
-                      steadySinceRef.current = now
-                    } else if (now - steadySinceRef.current >= 600 && !hasCapturedRef.current) {
-                      // Piece is completely steady: Auto-Capture once!
-                      hasCapturedRef.current = true
-                      isAwaitingPieceRemovalRef.current = true
-                      registerPieceAndFindCandidates(piece)
-                    }
-                  } else {
-                    // Moving hand or repositioning piece
-                    steadySinceRef.current = null
+                if (piece && (curViewMode === 'composite' || curViewMode === 'dewarped')) {
+                  drawPieceDiagnostics(dCtx, piece)
+                }
+
+                // If sensor rig preview canvas is mounted (PiP or 1:1 tab), mirror the rendered canvas
+                if (rigDewarpedCanvas) {
+                  if (rigDewarpedCanvas.width !== dstW || rigDewarpedCanvas.height !== dstH) {
+                    rigDewarpedCanvas.width = dstW
+                    rigDewarpedCanvas.height = dstH
+                  }
+                  const rCtx = rigDewarpedCanvas.getContext('2d')
+                  if (rCtx) {
+                    rCtx.drawImage(dewarpedCanvas, 0, 0)
                   }
                 }
-                lastCenterRef.current = piece.center
-              } else {
-                // Arena completely empty: clear lockout so next piece can be registered
-                steadySinceRef.current = null
-                lastCenterRef.current = null
-                hasCapturedRef.current = false
-                isAwaitingPieceRemovalRef.current = false
+
+                if (piece && (curViewMode === 'composite' || curViewMode === 'dewarped')) {
+                  // Hands-Free Auto-Capture Motion Debouncing:
+                  if (lastCenterRef.current) {
+                    const dist = Math.hypot(piece.center.x - lastCenterRef.current.x, piece.center.y - lastCenterRef.current.y)
+                    if (isAwaitingPieceRemovalRef.current) {
+                      // Piece was registered; do not capture again until piece is removed from view
+                    } else if (dist < 3.0) {
+                      if (steadySinceRef.current === null) {
+                        steadySinceRef.current = now
+                      } else if (now - steadySinceRef.current >= 600 && !hasCapturedRef.current) {
+                        // Piece is completely steady: Auto-Capture once!
+                        hasCapturedRef.current = true
+                        isAwaitingPieceRemovalRef.current = true
+                        registerPieceAndFindCandidates(piece)
+                      }
+                    } else {
+                      // Moving hand or repositioning piece
+                      steadySinceRef.current = null
+                    }
+                  }
+                  lastCenterRef.current = piece.center
+                } else {
+                  // Arena completely empty: clear lockout so next piece can be registered
+                  steadySinceRef.current = null
+                  lastCenterRef.current = null
+                  hasCapturedRef.current = false
+                  isAwaitingPieceRemovalRef.current = false
+                }
               }
             }
           }
@@ -576,10 +736,18 @@ function App() {
           console.error('Rust compute error:', e)
         }
 
-        drawOverlay(targetW, targetH, corners)
+        // Draw interactive HUD overlay smoothly on every frame (using current ref values)
+        drawOverlay(
+          targetW,
+          targetH,
+          cornersRef.current,
+          showCalibrationGuidesRef.current,
+          showArOverlayRef.current,
+          lensDistortionRef.current,
+          detectedPieceRef.current
+        )
 
         frameCountRef.current += 1
-        const now = performance.now()
         if (now - lastTimeRef.current >= 500) {
           setFps(Math.round((frameCountRef.current * 1000) / (now - lastTimeRef.current)))
           frameCountRef.current = 0
@@ -589,8 +757,7 @@ function App() {
     }
 
     animFrameIdRef.current = requestAnimationFrame(processLoop)
-  }, [wasmReady, corners, autoDewarp, draggingIdx, snappedIndex, lensDistortion, segSensitivity, viewMode, showCalibrationGuides])
-
+  }, [wasmReady])
 
   useEffect(() => {
     if (isCameraActive && wasmReady) {
@@ -605,9 +772,27 @@ function App() {
 
   const registerPieceAndFindCandidates = (piece: ScannedPiece) => {
     playCaptureTone()
-    setStagedHistory((prev) => [piece, ...prev.slice(0, 11)])
+    setStagedHistory((prev) => [piece, ...prev.slice(0, 19)])
     setAutoCaptureNotice('PIECE REGISTERED')
     setTimeout(() => setAutoCaptureNotice(null), 1500)
+
+    if (boardRef.current) {
+      try {
+        const matches = boardRef.current.find_candidates(piece)
+        if (Array.isArray(matches) && matches.length > 0) {
+          setCandidateSlots(matches)
+          // If high confidence match, simulate placing first piece to show progress
+          const best = matches[0]
+          boardRef.current.place_piece(stagedHistory.length, piece, best.row, best.col, best.rotation)
+          const updatedSlots = boardRef.current.get_slots_json()
+          setBoardSlots(updatedSlots)
+        } else {
+          setCandidateSlots([])
+        }
+      } catch (err) {
+        console.warn('Candidate search error:', err)
+      }
+    }
   }
 
 
@@ -707,7 +892,22 @@ function App() {
   }
 
   const handleResetCorners = () => {
-    setCorners(DEFAULT_CORNERS)
+    const { w, h } = frameDimsRef.current
+    if (w > 0 && h > 0) {
+      const cx = w * 0.5
+      const cy = h * 0.5
+      // Square calibration mat placed symmetrically in the camera frame
+      const halfSize = Math.min(w, h) * 0.35
+      const centeredCorners: [Point2D, Point2D, Point2D, Point2D] = [
+        { x: Math.round(cx - halfSize), y: Math.round(cy - halfSize) },
+        { x: Math.round(cx + halfSize), y: Math.round(cy - halfSize) },
+        { x: Math.round(cx + halfSize), y: Math.round(cy + halfSize) },
+        { x: Math.round(cx - halfSize), y: Math.round(cy + halfSize) },
+      ]
+      setCorners(centeredCorners)
+    } else {
+      setCorners(DEFAULT_CORNERS)
+    }
     try {
       localStorage.removeItem(STORAGE_KEY)
     } catch { }
@@ -798,30 +998,277 @@ function App() {
     }
   }
 
-  return (
-    <div className="app-container">
+  // Keyboard Hotkeys for streamlined hands-free metrology operation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is focused on an input
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
+        return
+      }
 
-      <div className="main-content">
-        <section className="viewport-panel">
-          <div className="panel-header">
-            <span>OPTICAL STAGE & CALIBRATION</span>
-            <span>{isCameraActive ? `1080P STREAM (${fps} FPS)` : 'STANDBY'}</span>
+      if (e.code === 'Space') {
+        e.preventDefault()
+        if (detectedPiece) {
+          registerPieceAndFindCandidates(detectedPiece)
+        }
+      } else if (e.key === 'a' || e.key === 'A') {
+        handleAutoSnapAllCorners()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [detectedPiece])
+
+  return (
+    <div className="ind-app">
+      {/* =================================================================== */}
+      {/* 1. TOP METROLOGY STATUS HEADER (Fixed Height: 34px)                 */}
+      {/* =================================================================== */}
+      <header className="ind-header">
+        <div className="ind-brand">
+          <span>OPTICAL METROLOGY SYSTEM</span>
+          <span className="ind-badge">48mm ARUCO</span>
+        </div>
+
+        <div className="ind-telemetry">
+          <div className="ind-tel-item">
+            <span className="ind-tel-label">STREAM:</span>
+            <span className={`ind-tel-value ${isCameraActive ? 'green' : 'red'}`}>
+              {isCameraActive ? `720P @ ${fps} FPS` : 'OFFLINE'}
+            </span>
           </div>
 
-          <div className="video-container">
-            <div className="video-stage-wrapper">
+          <div className="ind-tel-item">
+            <span className="ind-tel-label">LENS K1:</span>
+            <span className="ind-tel-value yellow">{lensDistortion.toFixed(2)}</span>
+          </div>
+
+          <div className="ind-tel-item">
+            <span className="ind-tel-label">FOCUS MTF:</span>
+            <span className={`ind-tel-value ${focusScore >= 45 ? 'green' : focusScore >= 20 ? 'yellow' : 'red'}`}>
+              {focusScore.toFixed(0)}% {focusScore >= 45 ? 'SHARP' : focusScore >= 20 ? 'FAIR' : 'BLUR'}
+            </span>
+          </div>
+
+          <div className="ind-tel-item">
+            <span className="ind-tel-label">STAGE RGB:</span>
+            <span className="ind-tel-value green">
+              {latestAnalysis?.bg_mean_rgb
+                ? `${latestAnalysis.bg_mean_rgb[0]},${latestAnalysis.bg_mean_rgb[1]},${latestAnalysis.bg_mean_rgb[2]}`
+                : '--'}
+            </span>
+          </div>
+
+          <div className="ind-tel-item">
+            <span className="ind-tel-label">LATENCY:</span>
+            <span className="ind-tel-value">
+              {stats ? `${stats.elapsed_ms.toFixed(1)}ms` : '--'}
+            </span>
+          </div>
+        </div>
+      </header>
+
+      {/* =================================================================== */}
+      {/* 2. THREE-PANEL SPLIT MAIN VIEWPORT                                  */}
+      {/* [1] ASSEMBLY SOLVER (Primary Left) | [2] RECTIFIED STAGING | [3] CAM RIG */}
+      {/* =================================================================== */}
+      <main className="ind-main-grid">
+        {/* PANEL 1 (PRIMARY): Assembly Solver & Puzzle Board Grid */}
+        <section className="ind-panel">
+          <div className="ind-panel-titlebar">
+            <span>[1] ASSEMBLY SOLVER (1000-PIECE BOARD)</span>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                className="ind-btn"
+                style={{ height: '18px', padding: '0 6px', fontSize: '9px' }}
+                onClick={() => boxArtInputRef.current?.click()}
+                title="Load puzzle box artwork image (e.g. Van Gogh Starry Night)"
+              >
+                {boxArtUrl ? 'REPLACE ART' : 'LOAD BOX ART'}
+              </button>
+              {boxArtUrl && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ fontSize: '9px', color: 'var(--ind-text-muted)' }}>OPACITY:</span>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1.0"
+                      step="0.05"
+                      value={boxArtOpacity}
+                      onChange={(e) => setBoxArtOpacity(parseFloat(e.target.value))}
+                      style={{ width: '60px', height: '4px', accentColor: 'var(--ind-blue)', cursor: 'pointer' }}
+                      title="Adjust box artwork overlay opacity"
+                    />
+                    <span style={{ fontSize: '9px', color: 'var(--ind-yellow)', width: '26px' }}>
+                      {Math.round(boxArtOpacity * 100)}%
+                    </span>
+                  </div>
+                  <button
+                    className="ind-btn"
+                    style={{ height: '18px', padding: '0 5px', fontSize: '8px' }}
+                    onClick={() => setBoxArtUrl(null)}
+                    title="Remove artwork overlay"
+                  >
+                    CLEAR
+                  </button>
+                </>
+              )}
+              <input
+                ref={boxArtInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) {
+                    const url = URL.createObjectURL(file)
+                    setBoxArtUrl(url)
+                  }
+                }}
+              />
+              <span style={{ color: 'var(--ind-blue)', fontWeight: 700 }}>
+                {boardSlots.filter((s: any) => s.piece_id !== null && s.piece_id !== undefined).length} / 1000
+              </span>
+            </div>
+          </div>
+
+          <div className="ind-panel-body">
+            <div className="ind-assembly-grid-container">
+              {/* 1000-Piece Board Schematic (40 cols x 25 rows = 1000 slots) with artwork overlay */}
+              <div className="ind-board-wrapper">
+                {boxArtUrl && (
+                  <div
+                    className="ind-board-art-overlay"
+                    style={{
+                      backgroundImage: `url(${boxArtUrl})`,
+                      opacity: boxArtOpacity
+                    }}
+                  />
+                )}
+                <div className="ind-grid-placeholder-board">
+                  {Array.from({ length: 1000 }).map((_, i) => {
+                    const r = Math.floor(i / 40)
+                    const c = i % 40
+                    const isBorder = r === 0 || r === 24 || c === 0 || c === 39
+                    const isPlaced = i < stagedHistory.length
+                    const isCandidate = candidateSlots.some((cs: any) => cs.row === r && cs.col === c)
+
+                    return (
+                      <div
+                        key={i}
+                        className={`ind-grid-cell ${isBorder ? 'border' : ''} ${isPlaced ? 'placed' : ''} ${isCandidate ? 'candidate' : ''}`}
+                        title={`Slot (R${r}, C${c})${isPlaced ? ' [OCCUPIED]' : isCandidate ? ' [BEST MATCH]' : ''}`}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Placement Match Candidate Cards */}
+              <div className="ind-section">
+                <div className="ind-section-title">Target Slot Matching</div>
+                {candidateSlots.length === 0 ? (
+                  <div style={{ color: 'var(--ind-text-dim)', fontSize: '10px', padding: '4px 0' }}>
+                    {detectedPiece
+                      ? 'Ready to match piece shape against neighboring board contours.'
+                      : 'Stage a puzzle piece to compute location on the 1000-piece grid.'}
+                  </div>
+                ) : (
+                  candidateSlots.slice(0, 3).map((cand: any, idx: number) => (
+                    <div key={idx} className="ind-row" style={{ fontSize: '10px' }}>
+                      <span style={{ color: 'var(--ind-blue)', fontWeight: 700 }}>
+                        RANK #{idx + 1}: ROW {cand.row}, COL {cand.col} (ROT: {cand.rotation * 90}°)
+                      </span>
+                      <span style={{ color: 'var(--ind-green)', fontWeight: 700 }}>
+                        {(cand.score * 100).toFixed(0)}% MATCH
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Scanned Inventory History */}
+              <div className="ind-section" style={{ maxHeight: '140px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="ind-section-title">Scanned Pieces ({stagedHistory.length})</div>
+                  {stagedHistory.length > 0 && (
+                    <button
+                      className="ind-btn"
+                      onClick={() => setStagedHistory([])}
+                      style={{ padding: '0 4px', height: '16px', fontSize: '8px' }}
+                    >
+                      CLEAR
+                    </button>
+                  )}
+                </div>
+
+                <div className="ind-inventory-list">
+                  {stagedHistory.length === 0 ? (
+                    <div style={{ color: 'var(--ind-text-dim)', fontSize: '9px' }}>
+                      No pieces scanned in this session.
+                    </div>
+                  ) : (
+                    stagedHistory.map((p, i) => (
+                      <div key={i} className="ind-inventory-item">
+                        <span>#{stagedHistory.length - i} ({(p.bounding_width * 0.156).toFixed(0)}×{(p.bounding_height * 0.156).toFixed(0)}mm)</span>
+                        <span style={{
+                          fontWeight: 700,
+                          color: p.is_corner ? 'var(--ind-red)' : p.is_border ? 'var(--ind-yellow)' : 'var(--ind-green)'
+                        }}>
+                          {p.is_corner ? 'CORNER' : p.is_border ? 'BORDER' : 'INTERIOR'}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* RIGHT COLUMN: Optical Sensor Rig (Top) & Rectified Staging Metrology (Bottom) */}
+        <div className="ind-right-col">
+          {/* TOP SUBPANEL: Optical Camera Sensor Rig (Align mat / fiducials at start of session) */}
+          <section className="ind-panel">
+            <div className="ind-panel-titlebar">
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <span>[2] OPTICAL SENSOR RIG</span>
+                <span style={{ color: 'var(--ind-text-dim)' }}>48mm MAT</span>
+              </div>
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                <button
+                  className={`ind-btn ${rigDisplayMode === 'camera' ? 'active' : ''}`}
+                  onClick={() => setRigDisplayMode('camera')}
+                  style={{ height: '18px', padding: '0 6px', fontSize: '9px' }}
+                >
+                  CAMERA
+                </button>
+                <button
+                  className={`ind-btn ${rigDisplayMode === 'dewarp' ? 'active' : ''}`}
+                  onClick={() => setRigDisplayMode('dewarp')}
+                  style={{ height: '18px', padding: '0 6px', fontSize: '9px' }}
+                >
+                  1:1 DEWARP
+                </button>
+              </div>
+            </div>
+
+            <div className="ind-stage-viewport">
+              {/* RAW CAMERA VIEW + AR RETICLE OVERLAY */}
               <video
                 ref={videoRef}
                 playsInline
                 muted
-                className="camera-video"
-                style={{ display: isCameraActive ? 'block' : 'none' }}
+                className="ind-camera-video"
+                style={{ display: isCameraActive && rigDisplayMode === 'camera' ? 'block' : 'none' }}
               />
-              <canvas ref={canvasRef} className="hidden-canvas" />
-              {isCameraActive && (
+              <canvas ref={canvasRef} style={{ display: 'none' }} />
+              {isCameraActive && rigDisplayMode === 'camera' && (
                 <canvas
                   ref={overlayCanvasRef}
-                  className="overlay-canvas"
+                  className="ind-stage-canvas"
                   style={{ cursor: draggingIdx !== null ? 'grabbing' : 'crosshair' }}
                   onPointerDown={handlePointerDown}
                   onPointerMove={handlePointerMove}
@@ -829,347 +1276,269 @@ function App() {
                   onPointerCancel={handlePointerUp}
                 />
               )}
-            </div>
 
-            {!isCameraActive && (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                <p style={{ margin: '0 0 12px 0', textTransform: 'uppercase', letterSpacing: '0.5px', fontSize: '0.85rem' }}>
-                  Video device offline
-                </p>
-                <button className="primary" onClick={startCamera} disabled={!wasmReady}>
-                  START CAPTURE
-                </button>
-              </div>
-            )}
-          </div>
-
-          {isCameraActive && (
-            <div className="controls-bar">
-              <button onClick={stopCamera}>STOP STREAM</button>
-              <button
-                onClick={() => setAutoDewarp(!autoDewarp)}
-                style={{ borderColor: autoDewarp ? '#3fb950' : '#30363d' }}
-              >
-                {autoDewarp ? 'DEWARP: ON' : 'DEWARP: OFF'}
-              </button>
-              <button
-                onClick={handleAutoSnapAllCorners}
-                style={{ borderColor: '#58a6ff', color: '#58a6ff' }}
-                title="Automatically snap all 4 corners to the binary-encoded fiducials"
-              >
-                AUTO-SNAP CORNERS
-              </button>
-              <button onClick={handleResetCorners}>RESET CORNERS</button>
-              <button
-                className="primary"
-                onClick={handleManualLockPiece}
-                disabled={!detectedPiece}
-                style={{
-                  opacity: detectedPiece ? 1 : 0.45,
-                  cursor: detectedPiece ? 'pointer' : 'not-allowed',
-                }}
-              >
-                RECORD PIECE [{stagedHistory.length + 1}]
-              </button>
-              <button onClick={() => handleSaveSnapshot(false)}>
-                SAVE DATA
-              </button>
-              <button onClick={() => handleSaveSnapshot(true)} title="Save full bundle with base64 images">
-                SAVE FULL SNAPSHOT
-              </button>
-              <a
-                href={`/calibration_mat.svg?t=${Date.now()}`}
-                download="sovereign_calibration_mat_48mm.svg"
-                title="Download 1:1 scale Sovereign Industrial Calibration Bench (48mm ArUco 4x4, Chroma Green, Sub-Pixel Rails)"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '5px 10px',
-                  borderRadius: '2px',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                  background: '#238636',
-                  color: '#ffffff',
-                  border: '1px solid #2ea043',
-                }}
-              >
-                PRINT SOVEREIGN BENCH (48mm ARUCO)
-              </a>
-              <div className="controls-status-slot">
-                <span
-                  style={{
-                    color: snapshotStatus ? '#ffd33d' : autoCaptureNotice ? '#3fb950' : snappedIndex !== null ? '#58a6ff' : 'var(--text-muted)',
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                    letterSpacing: '0.5px',
-                  }}
-                >
-                  {snapshotStatus ? `SNAPSHOT: ${snapshotStatus}` : autoCaptureNotice ? `STATUS: ${autoCaptureNotice}` : snappedIndex !== null ? 'STATUS: FIDUCIAL LOCKED' : 'STATUS: READY'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Optical Calibration Tool Bar */}
-          {isCameraActive && (
-            <div style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '16px',
-              padding: '8px 14px',
-              background: '#0a0d11',
-              borderTop: '1px solid var(--border-color)',
-              fontSize: '0.75rem',
-              alignItems: 'center'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>LENS DISTORTION (K1):</span>
-                <input
-                  type="range"
-                  min="-0.5"
-                  max="0.5"
-                  step="0.01"
-                  value={lensDistortion}
-                  onChange={(e) => setLensDistortion(parseFloat(e.target.value))}
-                  style={{ width: '110px' }}
-                />
-                <code style={{ minWidth: '40px', color: '#ffd33d' }}>{lensDistortion.toFixed(2)}</code>
-                <button
-                  onClick={() => setLensDistortion(0.0)}
-                  style={{ padding: '1px 6px', fontSize: '0.65rem' }}
-                  title="Reset distortion to 0"
-                >
-                  ZERO
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button
-                  onClick={() => setShowCalibrationGuides(!showCalibrationGuides)}
-                  style={{
-                    padding: '2px 8px',
-                    fontSize: '0.7rem',
-                    background: showCalibrationGuides ? '#242c37' : 'transparent',
-                    borderColor: showCalibrationGuides ? '#ffd33d' : 'var(--border-color)',
-                    color: showCalibrationGuides ? '#ffd33d' : 'var(--text-muted)',
-                  }}
-                  title="Show 100mm outer square and fiducial calibration guide lines directly on live video"
-                >
-                  {showCalibrationGuides ? 'MAT GUIDES: ON' : 'MAT GUIDES: OFF'}
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>SENSITIVITY:</span>
-                <input
-                  type="range"
-                  min="12"
-                  max="60"
-                  step="1"
-                  value={segSensitivity}
-                  onChange={(e) => setSegSensitivity(parseFloat(e.target.value))}
-                  style={{ width: '90px' }}
-                />
-                <code>{segSensitivity.toFixed(0)}</code>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>INSPECTION VIEW:</span>
-                {(['composite', 'binary', 'dewarped'] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setViewMode(m)}
-                    style={{
-                      padding: '2px 8px',
-                      fontSize: '0.7rem',
-                      background: viewMode === m ? '#242c37' : 'transparent',
-                      borderColor: viewMode === m ? '#58a6ff' : 'var(--border-color)',
-                      color: viewMode === m ? '#58a6ff' : 'var(--text-muted)'
-                    }}
-                  >
-                    {m.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
-
-
-        <aside className="side-panel">
-          <div className="card">
-            <h3>CONTOUR & PROFILE ANALYSIS</h3>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-              <span>STATUS: <strong style={{ color: cameraError ? '#f85149' : '#3fb950' }}>{cameraError ? 'ERROR' : 'ACTIVE'}</strong></span>
-              <span>PCA CONTOUR</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'center', margin: '6px 0' }}>
-              <canvas
-                ref={dewarpedCanvasRef}
-                style={{
-                  border: '1px solid var(--border-color)',
-                  borderRadius: '2px',
-                  background: '#0d1117',
-                  width: '240px',
-                  height: '240px',
-                  maxWidth: '100%',
-                  aspectRatio: '1 / 1',
-                  imageRendering: 'pixelated',
-                }}
-              />
-            </div>
-
-            <div className="piece-details-container">
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <span>CLASS:</span>
-                <strong style={{
-                  color: detectedPiece ? (detectedPiece.is_corner ? '#f85149' : detectedPiece.is_border ? '#d29922' : '#3fb950') : 'var(--text-muted)'
-                }}>
-                  {detectedPiece
-                    ? (detectedPiece.is_corner ? 'CORNER' : detectedPiece.is_border ? 'BORDER' : 'INTERIOR')
-                    : 'NO TARGET DETECTED'}
-                </strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <span>DIMENSIONS:</span>
-                <code style={{ color: detectedPiece ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {detectedPiece
-                    ? `${(detectedPiece.bounding_width * 0.156).toFixed(1)} mm × ${(detectedPiece.bounding_height * 0.156).toFixed(1)} mm`
-                    : '-- mm × -- mm'}
-                </code>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <span>ROTATION:</span>
-                <code style={{ color: detectedPiece ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {detectedPiece
-                    ? `${((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(1)}°`
-                    : '--°'}
-                </code>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>EDGES:</span>
-                <span style={{ display: 'inline-flex', gap: '4px' }}>
-                  {detectedPiece ? (
-                    detectedPiece.edges.map((e, idx) => (
-                      <span key={idx} style={{
-                        padding: '1px 5px',
-                        borderRadius: '2px',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        border: '1px solid var(--border-color)',
-                        background: 'rgba(0,0,0,0.3)',
-                        color: e.edge_type === 'Tab' ? '#58a6ff' : e.edge_type === 'Hole' ? '#d29922' : '#a371f7'
-                      }}>
-                        {e.edge_type.toUpperCase()}
-                      </span>
-                    ))
-                  ) : (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>--</span>
-                  )}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <h3>PIECE INVENTORY ({stagedHistory.length})</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '80px', overflowY: 'auto' }}>
-              {stagedHistory.length === 0 ? (
-                <div style={{
-                  height: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  textAlign: 'center',
-                  color: 'var(--text-muted)',
-                  fontSize: '0.75rem',
-                  border: '1px dashed var(--border-color)',
-                  borderRadius: '2px',
-                  padding: '10px'
-                }}>
-                  NO PIECES REGISTERED
-                </div>
-              ) : (
-                stagedHistory.map((p, i) => (
-                  <div key={i} style={{
-                    fontSize: '0.75rem',
-                    padding: '6px 8px',
-                    borderRadius: '2px',
-                    background: 'rgba(0,0,0,0.3)',
-                    border: '1px solid var(--border-color)',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    flexShrink: 0
-                  }}>
-                    <span>PIECE #{stagedHistory.length - i} ({((p.rotation_angle_rad * 180) / Math.PI).toFixed(0)}&deg;)</span>
-                    <span style={{ color: p.is_corner ? '#f85149' : p.is_border ? '#d29922' : '#3fb950', fontWeight: 600 }}>
-                      {p.is_corner ? 'CORNER' : p.is_border ? 'BORDER' : 'INTERIOR'}
-                    </span>
+              {/* FULL 1:1 DEWARPED MODE IN SENSOR RIG */}
+              {rigDisplayMode === 'dewarp' && (
+                <div className="ind-rig-full-dewarp">
+                  <div className="ind-dewarp-box" style={{ maxWidth: '340px' }}>
+                    {/* Canvas displaying 1:1 rectified staging plane */}
+                    <canvas ref={rigDewarpedCanvasRef} className="ind-dewarp-canvas" width={384} height={384} />
                   </div>
-                ))
+                  <div style={{ marginTop: '8px', color: 'var(--ind-text-muted)', fontSize: '10px' }}>
+                    1:1 RECTIFIED STAGING PLANE (48mm CALIBRATED)
+                  </div>
+                </div>
+              )}
+
+              {!isCameraActive && (
+                <div className="ind-stage-offline">
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ind-text)' }}>
+                    CAMERA OFFLINE
+                  </span>
+                  <span style={{ fontSize: '10px' }}>
+                    {cameraError || 'Align mat at start of session.'}
+                  </span>
+                  <button className="ind-btn primary" onClick={startCamera} disabled={!wasmReady}>
+                    ACTIVATE CAMERA
+                  </button>
+                </div>
               )}
             </div>
-          </div>
+          </section>
 
-          <div className="card">
-            <h3>SYSTEM METRICS</h3>
-            <div className="metric-grid">
-              <div className="metric-box">
-                <div className="metric-label">RESOLUTION</div>
-                <div className="metric-val">
-                  {stats ? `${stats.width}×${stats.height}` : '--'}
+          {/* BOTTOM SUBPANEL: Rectified Staging & Edge Metrology */}
+          {/* BOTTOM SUBPANEL: Piece Telemetry (Left) & Optical Calibration (Right) */}
+          <section className="ind-panel">
+            <div className="ind-panel-titlebar">
+              <span>[3] PIECE METROLOGY & OPTICAL CALIBRATION</span>
+              <span style={{ color: detectedPiece ? 'var(--ind-green)' : 'var(--ind-text-dim)' }}>
+                {detectedPiece ? 'PIECE DETECTED' : 'READY'}
+              </span>
+            </div>
+
+            {/* Hidden canvas so CV segmentation engine pipeline continues uninterrupted */}
+            <canvas ref={dewarpedCanvasRef} style={{ display: 'none' }} width={384} height={384} />
+
+            <div className="ind-panel-body ind-staging-split">
+              {/* LEFT COLUMN: Piece Telemetry */}
+              <div className="ind-staging-col">
+                <div className="ind-section">
+                  <div className="ind-section-title">Piece Telemetry</div>
+                  <div className="ind-row">
+                    <span className="ind-label">CLASSIFICATION:</span>
+                    <span className="ind-val" style={{
+                      color: detectedPiece
+                        ? detectedPiece.is_corner ? 'var(--ind-red)' : detectedPiece.is_border ? 'var(--ind-yellow)' : 'var(--ind-green)'
+                        : 'var(--ind-text-muted)'
+                    }}>
+                      {detectedPiece
+                        ? (detectedPiece.is_corner ? 'CORNER' : detectedPiece.is_border ? 'BORDER' : 'INTERIOR')
+                        : 'NO TARGET'}
+                    </span>
+                  </div>
+
+                  <div className="ind-row">
+                    <span className="ind-label">TRUE DIMENSIONS:</span>
+                    <span className="ind-val">
+                      {detectedPiece
+                        ? `${(detectedPiece.bounding_width * 0.156).toFixed(1)} × ${(detectedPiece.bounding_height * 0.156).toFixed(1)} mm`
+                        : '--'}
+                    </span>
+                  </div>
+
+                  <div className="ind-row">
+                    <span className="ind-label">ROTATION:</span>
+                    <span className="ind-val">
+                      {detectedPiece ? `${((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(1)}°` : '--'}
+                    </span>
+                  </div>
+
+                  <div className="ind-row" style={{ marginTop: '2px' }}>
+                    <span className="ind-label">EDGES:</span>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {detectedPiece ? (
+                        detectedPiece.edges.map((e, idx) => (
+                          <span
+                            key={idx}
+                            className={`ind-edge-pill ${e.edge_type === 'Tab' ? 'ind-edge-tab' : e.edge_type === 'Hole' ? 'ind-edge-hole' : 'ind-edge-flat'}`}
+                          >
+                            E{idx}:{e.edge_type[0]}
+                          </span>
+                        ))
+                      ) : (
+                        <span style={{ color: 'var(--ind-text-dim)', fontSize: '9px' }}>--</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="metric-box">
-                <div className="metric-label">LATENCY</div>
-                <div className="metric-val">
-                  {stats ? `${stats.elapsed_ms.toFixed(2)}ms` : '--'}
-                </div>
-              </div>
+              {/* RIGHT COLUMN: Optical Calibration */}
+              <div className="ind-staging-col">
+                <div className="ind-section">
+                  <div className="ind-section-title">Optical Calibration</div>
+                  <div className="ind-row">
+                    <span className="ind-label" style={{ width: '80px' }}>LENS K1:</span>
+                    <input
+                      type="range"
+                      min="-0.5"
+                      max="0.5"
+                      step="0.01"
+                      value={lensDistortion}
+                      onChange={(e) => setLensDistortion(parseFloat(e.target.value))}
+                      className="ind-slider"
+                    />
+                    <code style={{ width: '32px', textAlign: 'right', color: 'var(--ind-yellow)' }}>
+                      {lensDistortion.toFixed(2)}
+                    </code>
+                    <button
+                      className="ind-btn"
+                      onClick={() => setLensDistortion(0.0)}
+                      style={{ padding: '0 5px', height: '18px', fontSize: '9px' }}
+                    >
+                      0
+                    </button>
+                  </div>
 
-              <div className="metric-box">
-                <div className="metric-label">LUMINANCE</div>
-                <div className="metric-val">
-                  {stats ? stats.avg_brightness.toFixed(1) : '--'}
-                </div>
-              </div>
+                  <div className="ind-row">
+                    <span className="ind-label" style={{ width: '80px' }}>SENSITIVITY:</span>
+                    <input
+                      type="range"
+                      min="12"
+                      max="60"
+                      step="1"
+                      value={segSensitivity}
+                      onChange={(e) => setSegSensitivity(parseFloat(e.target.value))}
+                      className="ind-slider"
+                    />
+                    <code style={{ width: '32px', textAlign: 'right' }}>
+                      {segSensitivity.toFixed(0)}
+                    </code>
+                  </div>
 
-              <div className="metric-box">
-                <div className="metric-label">FPS</div>
-                <div className="metric-val">{fps}</div>
-              </div>
-
-              <div className="metric-box">
-                <div className="metric-label">STAGE RGB</div>
-                <div className="metric-val" style={{ fontSize: '0.85rem' }}>
-                  {latestAnalysis?.bg_mean_rgb ? `rgb(${latestAnalysis.bg_mean_rgb.join(',')})` : '--'}
-                </div>
-              </div>
-
-              <div className="metric-box">
-                <div className="metric-label">FOCUS MTF</div>
-                <div className="metric-val" style={{
-                  color: focusScore >= 45 ? '#3fb950' : focusScore >= 20 ? '#d29922' : '#f85149',
-                  fontSize: '0.95rem'
-                }}>
-                  {focusScore.toFixed(0)}% {focusScore >= 45 ? 'SHARP' : focusScore >= 20 ? 'FAIR' : 'BLUR'}
-                </div>
-              </div>
-
-              <div className="metric-box">
-                <div className="metric-label">BG BASELINE</div>
-                <div className="metric-val" style={{ fontSize: '0.85rem' }}>
-                  {latestAnalysis?.bg_mean_rgb ? `rgb(${latestAnalysis.bg_mean_rgb.join(',')})` : '--'}
+                  <div className="ind-row">
+                    <span className="ind-label">VIEW MODE:</span>
+                    <div style={{ display: 'flex', gap: '3px' }}>
+                      {(['composite', 'binary', 'dewarped'] as const).map((m) => (
+                        <button
+                          key={m}
+                          className={`ind-btn ${viewMode === m ? 'active' : ''}`}
+                          onClick={() => setViewMode(m)}
+                          style={{ padding: '0 5px', height: '18px', fontSize: '8px' }}
+                        >
+                          {m.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
+          </section>
+        </div>
+      </main>
+
+      {/* =================================================================== */}
+      {/* 3. ORDERLY BOTTOM COMMAND BAR (Fixed Height: 38px)                  */}
+      {/* =================================================================== */}
+      <footer className="ind-bottom-bar">
+        <div className="ind-actions-group">
+          {isCameraActive ? (
+            <button className="ind-btn" onClick={stopCamera}>
+              STOP STREAM
+            </button>
+          ) : (
+            <button className="ind-btn primary" onClick={startCamera}>
+              START STREAM
+            </button>
+          )}
+
+          <button
+            className="ind-btn active"
+            onClick={handleAutoSnapAllCorners}
+            title="Auto-snap all 4 fiducials (Hotkey: A)"
+          >
+            AUTO-SNAP [A]
+          </button>
+
+          <button
+            className={`ind-btn ${autoDewarp ? 'active' : ''}`}
+            onClick={() => setAutoDewarp(!autoDewarp)}
+          >
+            DEWARP: {autoDewarp ? 'ON' : 'OFF'}
+          </button>
+
+          <button
+            className={`ind-btn ${showCalibrationGuides ? 'active' : ''}`}
+            onClick={() => setShowCalibrationGuides(!showCalibrationGuides)}
+            title="Toggle Calibration Reticle & Grid Guides"
+          >
+            GUIDES: {showCalibrationGuides ? 'ON' : 'OFF'}
+          </button>
+
+          <button
+            className={`ind-btn ${showArOverlay ? 'active' : ''}`}
+            onClick={() => setShowArOverlay(!showArOverlay)}
+            title="Toggle Augmented Reality Piece Boundary & Corners in Camera Stream"
+          >
+            AR: {showArOverlay ? 'ON' : 'OFF'}
+          </button>
+
+          <button
+            className="ind-btn"
+            onClick={handleResetCorners}
+            title="Reset fiducial coordinates"
+          >
+            RESET MAT
+          </button>
+
+          <button
+            className="ind-btn primary"
+            onClick={handleManualLockPiece}
+            disabled={!detectedPiece}
+            title="Record Piece (Hotkey: Spacebar)"
+          >
+            RECORD PIECE [SPACE] ({stagedHistory.length})
+          </button>
+        </div>
+
+        <div className="ind-actions-group">
+          <button className="ind-btn" onClick={() => handleSaveSnapshot(false)}>
+            SAVE METRICS
+          </button>
+
+          <button className="ind-btn" onClick={() => handleSaveSnapshot(true)}>
+            SNAPSHOT
+          </button>
+
+          <a
+            href={`/calibration_mat.svg?t=${Date.now()}`}
+            download="optical_calibration_target_48mm.svg"
+            className="ind-btn yellow"
+            title="Download 1:1 scale Optical Calibration Target (48mm ArUco, Chroma Green)"
+          >
+            PRINT MAT (48mm)
+          </a>
+
+          <div className="ind-cmd-status">
+            <span style={{ color: 'var(--ind-blue)', fontWeight: 700 }}>STATUS:</span>
+            <span>
+              {snapshotStatus
+                ? snapshotStatus
+                : autoCaptureNotice
+                ? autoCaptureNotice
+                : snappedIndex !== null
+                ? 'FIDUCIAL LOCKED'
+                : detectedPiece
+                ? 'PIECE STAGED'
+                : 'READY'}
+            </span>
           </div>
-        </aside>
-      </div>
+        </div>
+      </footer>
     </div>
   )
 }
 
 export default App
+

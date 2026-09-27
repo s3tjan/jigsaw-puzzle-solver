@@ -1,255 +1,541 @@
+/* ========================================================================= */
+/* INDUSTRIAL OPTICAL METROLOGY WORKBENCH - STYLESYSTEM                      */
+/* Clean, functional, zero-bloat, 100vh fitted workbench                      */
+/* ========================================================================= */
+
 :root {
-  --bg-primary: #0a0d11;
-  --bg-secondary: #12161c;
-  --border-color: #242c37;
-  --accent-cyan: #388bfd;
-  --accent-green: #238636;
-  --accent-amber: #b08800;
-  --text-primary: #c5d1de;
-  --text-muted: #6b7785;
+  --ind-bg: #0f1217;
+  --ind-panel-bg: #161b22;
+  --ind-panel-header: #1c222b;
+  --ind-border: #30363d;
+  --ind-border-light: #444c56;
+
+  --ind-text: #e6edf3;
+  --ind-text-muted: #8b949e;
+  --ind-text-dim: #6e7681;
+
+  --ind-blue: #58a6ff;
+  --ind-green: #3fb950;
+  --ind-yellow: #d29922;
+  --ind-red: #f85149;
+  --ind-purple: #bc8cff;
+
+  --ind-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-body {
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
   margin: 0;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  font-size: 13px;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: var(--ind-bg);
+  color: var(--ind-text);
+  font-family: var(--ind-font-mono);
+  font-size: 11px;
+  user-select: none;
+}
+
+/* App Main Container: Fixed Full Screen Column */
+.ind-app {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ========================================================================= */
+/* 1. TOP METROLOGY STATUS HEADER (Fixed Height: 34px)                      */
+/* ========================================================================= */
+.ind-header {
+  height: 34px;
+  background: var(--ind-panel-header);
+  border-bottom: 1px solid var(--ind-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  flex-shrink: 0;
+}
+
+.ind-brand {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--ind-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ind-badge {
+  background: #21262d;
+  border: 1px solid var(--ind-border);
+  color: var(--ind-blue);
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.ind-telemetry {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 10px;
+}
+
+.ind-tel-item {
+  display: flex;
+  gap: 5px;
+}
+
+.ind-tel-label {
+  color: var(--ind-text-muted);
+}
+
+.ind-tel-value {
+  font-weight: 700;
+  color: var(--ind-text);
+}
+
+.ind-tel-value.green {
+  color: var(--ind-green);
+}
+
+.ind-tel-value.yellow {
+  color: var(--ind-yellow);
+}
+
+.ind-tel-value.red {
+  color: var(--ind-red);
+}
+
+.ind-tel-value.blue {
+  color: var(--ind-blue);
+}
+
+/* ========================================================================= */
+/* 2. THREE-PANEL SPLIT MAIN VIEW (Fills remainder of viewport)              */
+/* Section 1 (Assembly Board) is PRIMARY; Section 2 (Staging); Section 3 (Camera Rig) */
+/* ========================================================================= */
+.ind-main-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 0.75fr;
+  height: calc(100vh - 34px - 38px);
+  overflow: hidden;
+  background: var(--ind-border);
+  gap: 1px;
+  /* Crisp 1px panel separator */
+}
+
+/* Right stacked column containing Optical Sensor Rig (top) and Staging Metrology (bottom) */
+.ind-right-col {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  gap: 1px;
+  background: var(--ind-border);
+}
+
+.ind-right-col>.ind-panel:first-child {
+  flex: 0 0 55%;
+  min-height: 220px;
+}
+
+.ind-right-col>.ind-panel:last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.ind-panel {
+  background: var(--ind-panel-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.ind-panel-titlebar {
+  height: 28px;
+  background: var(--ind-panel-header);
+  border-bottom: 1px solid var(--ind-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--ind-text-muted);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ind-panel-body {
+  flex: 1;
+  overflow-y: auto;
   overflow-x: hidden;
-}
-
-.app-container {
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  gap: 10px;
 }
 
-.app-header {
-  padding: 10px 20px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-title {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.header-title h1 {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 1px;
-}
-
-.badge {
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 2px;
-  background: rgba(56, 139, 253, 0.1);
-  color: var(--accent-cyan);
-  border: 1px solid rgba(56, 139, 253, 0.4);
-  letter-spacing: 0.5px;
-}
-
-.main-content {
-  display: flex;
-  flex: 1;
-  padding: 20px;
-  gap: 20px;
-}
-
-@media (max-width: 900px) {
-  .main-content {
-    flex-direction: column;
-  }
-}
-
-.viewport-panel {
-  flex: 2;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.panel-header {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 700;
-  font-size: 0.75rem;
-  letter-spacing: 0.5px;
-  color: var(--text-primary);
-  background: rgba(0, 0, 0, 0.2);
-}
-
-.video-container {
+/* Panel 1: Video Viewport Stage */
+.ind-stage-viewport {
   position: relative;
-  flex: 1;
-  min-height: 300px;
-  background: #000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.video-stage-wrapper {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  max-width: 100%;
-  max-height: 100%;
-}
-
-.camera-video {
-  max-width: 100%;
-  max-height: 52vh;
-  display: block;
-}
-
-.hidden-canvas {
-  display: none;
-}
-
-.overlay-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 100%;
   height: 100%;
+  background: #090c10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.ind-camera-video {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.ind-stage-canvas {
+  position: absolute;
   pointer-events: auto;
   touch-action: none;
 }
 
-.controls-bar {
-  padding: 10px 14px;
-  border-top: 1px solid var(--border-color);
+.ind-stage-offline {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  background: #0e1217;
-  min-height: 52px;
-  box-sizing: border-box;
+  justify-content: center;
+  gap: 10px;
+  color: var(--ind-text-muted);
+  text-align: center;
+  padding: 20px;
 }
 
-.controls-status-slot {
+/* Full Dewarp Mode in Sensor Rig */
+.ind-rig-full-dewarp {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #090c10;
+  padding: 10px;
+}
+
+/* Subpanel 3: 2-column split (Piece Telemetry Left, Optical Calibration Right) */
+.ind-staging-split {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 10px !important;
+  overflow-y: auto;
+  align-items: stretch;
+}
+
+.ind-staging-col {
+  flex: 1 1 50%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ind-dewarp-box {
+  width: 100%;
+  max-width: 240px;
+  aspect-ratio: 1 / 1;
+  background: #000;
+  border: 1px solid var(--ind-border);
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.ind-dewarp-canvas {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  display: block;
+}
+
+.ind-section {
+  background: #1c222b;
+  border: 1px solid var(--ind-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ind-section-title {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--ind-blue);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.ind-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.ind-label {
+  color: var(--ind-text-muted);
+}
+
+.ind-val {
+  font-weight: 600;
+  color: var(--ind-text);
+}
+
+.ind-slider {
+  flex: 1;
+  accent-color: var(--ind-blue);
+  cursor: pointer;
+  height: 4px;
+}
+
+/* Edge badge pills */
+.ind-edge-pill {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.ind-edge-tab {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+  border-color: rgba(88, 166, 255, 0.4);
+}
+
+.ind-edge-hole {
+  background: rgba(210, 153, 34, 0.15);
+  color: #d29922;
+  border-color: rgba(210, 153, 34, 0.4);
+}
+
+.ind-edge-flat {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+  border-color: rgba(248, 81, 73, 0.4);
+}
+
+/* Panel: Assembly Grid & Placement Board */
+.ind-assembly-grid-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+.ind-board-wrapper {
+  flex: 1;
+  min-height: 280px;
+  position: relative;
+  background: #090c10;
+  border: 1px solid var(--ind-border);
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ind-board-art-overlay {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.65;
+  filter: contrast(1.05) saturate(1.1);
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.ind-grid-placeholder-board {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(40, 1fr);
+  grid-template-rows: repeat(25, 1fr);
+  gap: 1px;
+  padding: 4px;
+  background-color: transparent;
+  z-index: 1;
+}
+
+.ind-grid-cell {
+  background: rgba(13, 17, 23, 0.25);
+  border-radius: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  color: rgba(255, 255, 255, 0.4);
+  transition: all 0.15s ease;
+}
+
+.ind-grid-cell.border {
+  background: rgba(22, 27, 34, 0.4);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+}
+
+.ind-grid-cell.placed {
+  background: rgba(63, 185, 80, 0.7);
+  color: #ffffff;
+  font-weight: 700;
+  border: 1px solid #3fb950;
+  box-shadow: 0 0 4px rgba(63, 185, 80, 0.4);
+}
+
+.ind-grid-cell.candidate {
+  background: rgba(88, 166, 255, 0.85);
+  color: #ffffff;
+  outline: 2px solid #58a6ff;
+  font-weight: 800;
+  z-index: 2;
+  box-shadow: 0 0 8px rgba(88, 166, 255, 0.8);
+  animation: pulse 1.2s infinite alternate;
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.ind-inventory-list {
+  max-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ind-inventory-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 6px;
+  background: #161b22;
+  border: 1px solid var(--ind-border);
+  border-radius: 3px;
+  font-size: 9px;
+}
+
+/* ========================================================================= */
+/* 3. BOTTOM COMMAND BAR (Fixed Height: 38px)                                */
+/* ========================================================================= */
+.ind-bottom-bar {
+  height: 38px;
+  background: var(--ind-panel-header);
+  border-top: 1px solid var(--ind-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.ind-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Industrial Buttons */
+.ind-btn {
+  height: 24px;
+  padding: 0 10px;
+  background: #21262d;
+  color: var(--ind-text);
+  border: 1px solid var(--ind-border);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  font-family: inherit;
-}
-
-button {
-  background: #181d24;
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  padding: 6px 12px;
-  border-radius: 2px;
-  cursor: pointer;
-  font-family: inherit;
-  font-weight: 600;
-  font-size: 0.75rem;
-  letter-spacing: 0.5px;
-  transition: background 0.15s, border-color 0.15s;
+  gap: 5px;
+  text-decoration: none;
   white-space: nowrap;
 }
 
-button:hover {
-  background: #222933;
-  border-color: #3f4c5d;
+.ind-btn:hover:not(:disabled) {
+  background: #30363d;
+  border-color: var(--ind-border-light);
+  color: #fff;
 }
 
-button.primary {
-  background: #1b4b27;
-  border-color: #2ea043;
-  color: #edf7ed;
+.ind-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
-button.primary:hover {
+.ind-btn.primary {
   background: #238636;
+  border-color: #2ea043;
+  color: #ffffff;
 }
 
-.side-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 300px;
+.ind-btn.primary:hover:not(:disabled) {
+  background: #2ea043;
 }
 
-.card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 2px;
-  padding: 10px;
-  box-sizing: border-box;
+.ind-btn.active {
+  background: #1f6feb;
+  border-color: #388bfd;
+  color: #ffffff;
 }
 
-.card h3 {
-  margin: 0 0 6px 0;
-  font-size: 0.75rem;
-  letter-spacing: 0.5px;
-  font-weight: 700;
-  color: var(--text-primary);
+.ind-btn.yellow {
+  color: var(--ind-yellow);
+  border-color: rgba(210, 153, 34, 0.5);
 }
 
-.piece-details-container {
-  min-height: 85px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.piece-placeholder {
+.ind-cmd-status {
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 90px;
-  text-align: center;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px dashed var(--border-color);
-  border-radius: 2px;
-  padding: 8px;
-}
-
-.metric-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.metric-box {
-  background: #090c0f;
-  border: 1px solid var(--border-color);
-  padding: 8px 10px;
-  border-radius: 2px;
-}
-
-.metric-label {
-  font-size: 0.65rem;
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
-  margin-bottom: 2px;
-  font-weight: 600;
-}
-
-.metric-val {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  font-family: inherit;
+  gap: 6px;
+  font-size: 10px;
+  background: #0d1117;
+  padding: 3px 8px;
+  border: 1px solid var(--ind-border);
+  border-radius: 3px;
+  min-width: 180px;
 }

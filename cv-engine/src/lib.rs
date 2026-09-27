@@ -143,6 +143,36 @@ pub fn undistort_point(x: f32, y: f32, w: f32, h: f32, k1: f32) -> Vec<f32> {
     vec![p.x, p.y]
 }
 
+/// Compute inverse 3x3 homography matrix mapping rectified stage coordinates (0..dst_w, 0..dst_h)
+/// back to perspective/sensor coordinates.
+#[wasm_bindgen]
+pub fn compute_inverse_homography(
+    p0_x: f32, p0_y: f32,
+    p1_x: f32, p1_y: f32,
+    p2_x: f32, p2_y: f32,
+    p3_x: f32, p3_y: f32,
+    dst_w: f32, dst_h: f32,
+    w: f32, h: f32,
+    k1: f32,
+) -> Option<Vec<f64>> {
+    let src_corners = [
+        homography::undistort_point(Point2D { x: p0_x, y: p0_y }, w, h, k1),
+        homography::undistort_point(Point2D { x: p1_x, y: p1_y }, w, h, k1),
+        homography::undistort_point(Point2D { x: p2_x, y: p2_y }, w, h, k1),
+        homography::undistort_point(Point2D { x: p3_x, y: p3_y }, w, h, k1),
+    ];
+    let dst_corners = [
+        Point2D { x: 0.0, y: 0.0 },
+        Point2D { x: dst_w, y: 0.0 },
+        Point2D { x: dst_w, y: dst_h },
+        Point2D { x: 0.0, y: dst_h },
+    ];
+    let h_mat = Homography::from_4_points(&src_corners, &dst_corners)?;
+    let inv_h = h_mat.invert()?;
+    Some(inv_h.h.to_vec())
+}
+
+
 
 
 /// Result of staged piece analysis including geometry, metrics, and binary mask for visual diagnostics
