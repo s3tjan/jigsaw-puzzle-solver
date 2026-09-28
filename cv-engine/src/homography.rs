@@ -5,13 +5,6 @@ pub struct Point2D {
     pub y: f32,
 }
 
-/// Represents a detected marker with an ID and 4 corner points
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct Marker {
-    pub id: u32,
-    pub corners: [Point2D; 4], // Top-Left, Top-Right, Bottom-Right, Bottom-Left
-}
-
 /// 3x3 Homography Matrix for projective transformation
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Homography {

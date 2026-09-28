@@ -288,32 +288,88 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     cx /= n as f32;
     cy /= n as f32;
 
-    // 1. Compute Principal Orientation via 2D Covariance Matrix
-    let mut cov_xx = 0.0;
-    let mut cov_xy = 0.0;
-    let mut cov_yy = 0.0;
+    // 1. Detect physical straight line segments (die-cut flat border edges)
+    // If a piece has a manufactured flat cut, its points are strictly collinear (std_res < 0.60px)
+    // over a span >= 40 points with chord length > 45px.
+    let mut best_line: Option<(usize, usize, f32)> = None; // (start_idx, end_idx, angle)
+    let max_span = (n / 3).min(90);
 
-    for p in contour {
-        let dx = p.x - cx;
-        let dy = p.y - cy;
-        cov_xx += dx * dx;
-        cov_xy += dx * dy;
-        cov_yy += dy * dy;
+    for span in (40..=max_span).step_by(5) {
+        for i in 0..n {
+            let mut sum_x = 0.0f32;
+            let mut sum_y = 0.0f32;
+            for k in 0..span {
+                let pt = contour[(i + k) % n];
+                sum_x += pt.x;
+                sum_y += pt.y;
+            }
+            let mx = sum_x / (span as f32);
+            let my = sum_y / (span as f32);
+
+            let mut cxx = 0.0f32;
+            let mut cyy = 0.0f32;
+            let mut cxy = 0.0f32;
+            for k in 0..span {
+                let pt = contour[(i + k) % n];
+                let dx = pt.x - mx;
+                let dy = pt.y - my;
+                cxx += dx * dx;
+                cyy += dy * dy;
+                cxy += dx * dy;
+            }
+            cxx /= span as f32;
+            cyy /= span as f32;
+            cxy /= span as f32;
+
+            let tr = cxx + cyy;
+            let det = cxx * cyy - cxy * cxy;
+            let diff = (tr * tr - 4.0 * det).max(0.0).sqrt();
+            let std_res = (0.5 * (tr - diff)).max(0.0).sqrt();
+
+            let p0 = contour[i];
+            let p1 = contour[(i + span) % n];
+            let chord = ((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y)).sqrt();
+
+            if std_res < 0.60 && chord > 45.0 {
+                if best_line.is_none() || span > best_line.unwrap().0 {
+                    let angle = (p1.y - p0.y).atan2(p1.x - p0.x);
+                    best_line = Some((span, i, angle));
+                }
+            }
+        }
     }
 
-    let theta = 0.5 * (2.0 * cov_xy).atan2(cov_xx - cov_yy);
+    // 2. Compute Coordinate Frame Angle:
+    // If a physical straight line exists, align directly to it.
+    // Otherwise, fall back to global 2D contour covariance PCA.
+    let base_theta = if let Some((_, _, line_angle)) = best_line {
+        line_angle
+    } else {
+        let mut cov_xx = 0.0f32;
+        let mut cov_xy = 0.0f32;
+        let mut cov_yy = 0.0f32;
+        for p in contour {
+            let dx = p.x - cx;
+            let dy = p.y - cy;
+            cov_xx += dx * dx;
+            cov_xy += dx * dy;
+            cov_yy += dy * dy;
+        }
+        0.5 * (2.0 * cov_xy).atan2(cov_xx - cov_yy)
+    };
+
+    let mut theta = base_theta;
+    while theta <= -std::f32::consts::FRAC_PI_4 {
+        theta += std::f32::consts::FRAC_PI_2;
+    }
+    while theta > std::f32::consts::FRAC_PI_4 {
+        theta -= std::f32::consts::FRAC_PI_2;
+    }
     let cos_t = theta.cos();
     let sin_t = theta.sin();
 
-    // 2. Uniform Geometric Corner Detection:
-    // Every jigsaw piece has a core rectangular body with 4 physical corners.
-    // In the rotated PCA frame (u, v), the 4 physical corners correspond to the 4 quadrant extrema:
-    // Top-Left (min u+v), Top-Right (max u-v), Bottom-Right (max u+v), Bottom-Left (min u-v).
-    // To be immune to tabs protruding outward or blanks going inward, we project points into
-    // the 4 quadrant sectors and find the corner vertex that maximizes distance from centroid
-    // while conforming to local curvature turning.
-
-    let k_span = (n as i32 / 28).clamp(5, 12);
+    // 3. Corner Scoring in Aligned Frame:
+    let k_span = (n as i32 / 24).clamp(6, 14);
     let mut corner_scores = vec![0.0f32; n];
 
     for i in 0..n {
@@ -329,22 +385,27 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let len1 = (v1x * v1x + v1y * v1y).sqrt().max(1e-4);
         let len2 = (v2x * v2x + v2y * v2y).sqrt().max(1e-4);
 
-        // Dot product between incoming and outgoing tangent vectors:
-        // A sharp ~90 degree outer corner has dot product ~ 0.0, turning ~ pi/2
         let dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
         let cross = (v1x * v2y - v1y * v2x) / (len1 * len2);
 
-        // Distance from piece centroid
         let dist_c = ((curr.x - cx) * (curr.x - cx) + (curr.y - cy) * (curr.y - cy)).sqrt();
 
-        // High score for convex outer corner vertices (positive cross turn, low dot product)
+        let dx = curr.x - cx;
+        let dy = curr.y - cy;
+        let u = (dx * cos_t + dy * sin_t).abs();
+        let v = (-dx * sin_t + dy * cos_t).abs();
+
+        let ratio = (u.min(v) / u.max(v).max(1e-3)).min(1.0);
+        let diagonal_balance = ratio.powf(2.0);
+
         let convexity = cross.max(0.0);
         let sharpness = (1.0 - dot).max(0.0);
-        corner_scores[i] = dist_c * (1.0 + convexity * 1.5 + sharpness * 0.8);
+        corner_scores[i] = dist_c * diagonal_balance * (1.0 + convexity * 2.0 + sharpness * 1.5);
     }
 
-    // Partition contour into 4 angular quadrants relative to PCA principal axes
-    let mut quad_candidates: [Vec<(usize, f32)>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    // 4. Find Best Candidate in each of the 4 Spatially Fixed Quadrants:
+    let mut best_q_idx = [0usize; 4];
+    let mut best_q_score = [-1.0f32; 4];
 
     for (i, p) in contour.iter().enumerate() {
         let dx = p.x - cx;
@@ -352,58 +413,49 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let u = dx * cos_t + dy * sin_t;
         let v = -dx * sin_t + dy * cos_t;
 
-        // Angle in PCA frame in [-PI, PI]
-        let angle = v.atan2(u);
-
-        // Assign to 4 quadrants centered at -3pi/4, -pi/4, pi/4, 3pi/4
-        let q = if angle >= -std::f32::consts::PI && angle < -std::f32::consts::FRAC_PI_2 {
-            0 // Top-Left quadrant
-        } else if angle >= -std::f32::consts::FRAC_PI_2 && angle < 0.0 {
-            1 // Top-Right quadrant
-        } else if angle >= 0.0 && angle < std::f32::consts::FRAC_PI_2 {
-            2 // Bottom-Right quadrant
+        let q = if u < 0.0 && v < 0.0 {
+            0 // TL
+        } else if u >= 0.0 && v < 0.0 {
+            1 // TR
+        } else if u >= 0.0 && v >= 0.0 {
+            2 // BR
         } else {
-            3 // Bottom-Left quadrant
+            3 // BL
         };
 
-        quad_candidates[q].push((i, corner_scores[i]));
-    }
-
-    let mut raw_corners = [0usize; 4];
-    for q in 0..4 {
-        if quad_candidates[q].is_empty() {
-            return None;
+        if corner_scores[i] > best_q_score[q] {
+            best_q_score[q] = corner_scores[i];
+            best_q_idx[q] = i;
         }
-        // Pick highest scoring corner vertex in this quadrant
-        quad_candidates[q].sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        raw_corners[q] = quad_candidates[q][0].0;
     }
 
-    // Sort corners sequentially along the contour
-    raw_corners.sort();
-
-    // Verify minimum separation between corners (at least 12% of perimeter each)
-    let min_sep = (n as f32 * 0.12) as usize;
-    for i in 0..4 {
-        let diff = (raw_corners[(i + 1) % 4] + n - raw_corners[i]) % n;
-        if diff < min_sep {
-            return None; // Degenerate corner collapse
+    // Ensure all 4 quadrants found a distinct corner
+    for q in 0..4 {
+        if best_q_score[q] < 0.0 {
+            return None;
         }
     }
 
     let corners = [
-        contour[raw_corners[0]],
-        contour[raw_corners[1]],
-        contour[raw_corners[2]],
-        contour[raw_corners[3]],
+        contour[best_q_idx[0]], // TL
+        contour[best_q_idx[1]], // TR
+        contour[best_q_idx[2]], // BR
+        contour[best_q_idx[3]], // BL
     ];
 
-    // 3. Partition 4 Edges and Classify
     let mut edges_vec = Vec::with_capacity(4);
 
+    let mut fwd_corner_span = 0usize;
     for e in 0..4 {
-        let start_i = raw_corners[e];
-        let end_i = raw_corners[(e + 1) % 4];
+        let s = best_q_idx[e];
+        let next_e = best_q_idx[(e + 1) % 4];
+        fwd_corner_span += (next_e + n - s) % n;
+    }
+    let is_forward_winding = fwd_corner_span < (n * 2);
+
+    for e in 0..4 {
+        let start_i = best_q_idx[e];
+        let end_i = best_q_idx[(e + 1) % 4];
 
         let mut samples = Vec::new();
         let mut curr = start_i;
@@ -444,18 +496,6 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let center_dy = cy - mid_y;
         let center_signed_dist = (center_dx * base_dy - center_dy * base_dx) / base_len;
 
-        let rel_depth = max_signed_dist.abs() / base_len;
-
-        // Clean edge classification:
-        // A true Flat boundary edge has low relative deviation (< 0.13) and low standard deviation (< 3.8px)
-        let edge_type = if rel_depth < 0.13 && std_dev < 3.8 {
-            EdgeType::Flat
-        } else if (max_signed_dist * center_signed_dist) > 0.0 {
-            EdgeType::Hole
-        } else {
-            EdgeType::Tab
-        };
-
         // Resample edge into 100 normalized points
         let mut norm_profile = Vec::with_capacity(100);
         let n_s = samples.len();
@@ -481,7 +521,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         }
 
         edges_vec.push(PieceEdge {
-            edge_type,
+            edge_type: EdgeType::Tab, // placeholder, resolved in Pass 2 below
             start_corner: p_start,
             end_corner: p_end,
             curvature_depth: max_signed_dist,
@@ -489,6 +529,85 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             normalized_profile: norm_profile,
             fourier_descriptor: fourier,
         });
+    }
+
+    // Pass 2: Self-Referencing Relative Edge Classification (Option 1)
+    // Real puzzle pieces cut by a die press have tabs/holes that protrude significantly further
+    // than any natural cut curve. We rank the 4 edges by their combined protrusion score (rel_depth * 10 + std_dev).
+    let mut scores: [(usize, f32); 4] = [
+        (0, 0.0), (1, 0.0), (2, 0.0), (3, 0.0)
+    ];
+
+    for (i, edge) in edges_vec.iter().enumerate() {
+        let b_dx = edge.end_corner.x - edge.start_corner.x;
+        let b_dy = edge.end_corner.y - edge.start_corner.y;
+        let b_len = (b_dx * b_dx + b_dy * b_dy).sqrt().max(1.0);
+        let rel_d = edge.curvature_depth.abs() / b_len;
+
+        let n = edge.curve_samples.len().max(1) as f32;
+        let mut sum_d = 0.0f32;
+        let mut sum_d2 = 0.0f32;
+        for s in &edge.curve_samples {
+            let d = ((s.x - edge.start_corner.x) * b_dy - (s.y - edge.start_corner.y) * b_dx) / b_len;
+            sum_d += d;
+            sum_d2 += d * d;
+        }
+        let mean = sum_d / n;
+        let std_dev = (sum_d2 / n - mean * mean).max(0.0).sqrt();
+
+        // Combined flatness metric: low = flat, high = tab or hole
+        let s = rel_d * 10.0 + std_dev;
+        scores[i] = (i, s);
+    }
+
+    scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Determine flat edges:
+    // If a physical straight line cut was detected, the lowest scoring edge is a true Flat edge.
+    // If NO straight line exists on the contour, the piece is an Interior piece unless
+    // an edge has an unmistakably flat profile (s0 < 4.0).
+    let has_straight_line = best_line.is_some();
+    let mut is_flat = [false; 4];
+    let s0 = scores[0].1;
+    let s1 = scores[1].1;
+    let s2 = scores[2].1;
+    let s3 = scores[3].1;
+
+    if has_straight_line {
+        // True physical flat cut present
+        if s0 < 8.8 && (s3 - s0 >= 1.8 || s0 < 4.0) {
+            is_flat[scores[0].0] = true;
+        }
+        // Corner piece: second lowest edge is also a flat cut
+        if is_flat[scores[0].0] && s1 < 8.8 && (s2 - s1 >= 1.2 || s1 < 4.0) {
+            is_flat[scores[1].0] = true;
+        }
+    } else {
+        // Pure interior piece: only classify as Flat if score is unconditionally flat
+        if s0 < 4.0 {
+            is_flat[scores[0].0] = true;
+        }
+    }
+
+    for (i, edge) in edges_vec.iter_mut().enumerate() {
+        if is_flat[i] {
+            edge.edge_type = EdgeType::Flat;
+        } else {
+            let mid_x = (edge.start_corner.x + edge.end_corner.x) * 0.5;
+            let mid_y = (edge.start_corner.y + edge.end_corner.y) * 0.5;
+            let center_dx = cx - mid_x;
+            let center_dy = cy - mid_y;
+            let base_dx = edge.end_corner.x - edge.start_corner.x;
+            let base_dy = edge.end_corner.y - edge.start_corner.y;
+            let base_len = (base_dx * base_dx + base_dy * base_dy).sqrt().max(1.0);
+            let center_signed_dist = (center_dx * base_dy - center_dy * base_dx) / base_len;
+
+            if (edge.curvature_depth * center_signed_dist) > 0.0 {
+                edge.edge_type = EdgeType::Hole;
+            } else {
+                edge.edge_type = EdgeType::Tab;
+            }
+        }
     }
 
     let flat_count = edges_vec.iter().filter(|e| e.edge_type == EdgeType::Flat).count();

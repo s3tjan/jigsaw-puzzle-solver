@@ -1,4 +1,4 @@
-pub mod aruco;
+pub mod fiducial;
 pub mod contour;
 pub mod homography;
 
@@ -16,7 +16,7 @@ pub fn snap_fiducial_corner(
     seed_y: f32,
     radius: i32,
 ) -> Vec<f32> {
-    let refined = aruco::refine_fiducial_centroid(pixels, width, height, seed_x, seed_y, radius);
+    let refined = fiducial::refine_fiducial_centroid(pixels, width, height, seed_x, seed_y, radius);
     vec![refined.x, refined.y]
 }
 
@@ -37,7 +37,7 @@ pub fn measure_stage_focus(
         Point2D { x: p2_x, y: p2_y },
         Point2D { x: p3_x, y: p3_y },
     ];
-    aruco::compute_focus_mtf(pixels, width, height, &corners)
+    fiducial::compute_focus_mtf(pixels, width, height, &corners)
 }
 
 /// Result of staged piece analysis
@@ -112,37 +112,65 @@ pub fn analyze_staged_piece(
     let w = width as usize;
     let h = height as usize;
 
-    // 1. Sample Background Mean RGB from the safe peripheral margin of the white paper stage
-    let mut bg_r_sum: u64 = 0;
-    let mut bg_g_sum: u64 = 0;
-    let mut bg_b_sum: u64 = 0;
-    let mut bg_count: u64 = 0;
+    // 1. Robust Background Sampling from the 4 outer peripheral margins:
+    // Samples 12px strips along Top, Bottom, Left, and Right.
+    // Instead of a simple average (which gets distorted if a piece is placed near an edge),
+    // we collect luminance values and use the 85th percentile (brightest ~15% rejection of shadows/piece).
+    let margin_px = ((w.min(h) as f32) * 0.05).max(8.0) as usize;
+    let mut perimeter_pixels: Vec<(u8, u8, u8, u8)> = Vec::with_capacity(w * 4); // (r, g, b, lum)
 
-    let margin_y = (height as f32 * 0.06) as usize;
-    let margin_x = (width as f32 * 0.06) as usize;
-
-    for y in 2..margin_y {
-        for x in margin_x..(w - margin_x) {
+    // Top & Bottom strips
+    for x in margin_px..(w - margin_px) {
+        for y in 2..margin_px {
             let idx = (y * w + x) * 4;
-            bg_r_sum += dewarped_pixels[idx] as u64;
-            bg_g_sum += dewarped_pixels[idx + 1] as u64;
-            bg_b_sum += dewarped_pixels[idx + 2] as u64;
-            bg_count += 1;
+            let r = dewarped_pixels[idx];
+            let g = dewarped_pixels[idx + 1];
+            let b = dewarped_pixels[idx + 2];
+            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
+            perimeter_pixels.push((r, g, b, lum));
+        }
+        for y in (h - margin_px)..(h - 2) {
+            let idx = (y * w + x) * 4;
+            let r = dewarped_pixels[idx];
+            let g = dewarped_pixels[idx + 1];
+            let b = dewarped_pixels[idx + 2];
+            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
+            perimeter_pixels.push((r, g, b, lum));
         }
     }
-    for y in (h - margin_y)..(h - 2) {
-        for x in margin_x..(w - margin_x) {
+
+    // Left & Right strips
+    for y in margin_px..(h - margin_px) {
+        for x in 2..margin_px {
             let idx = (y * w + x) * 4;
-            bg_r_sum += dewarped_pixels[idx] as u64;
-            bg_g_sum += dewarped_pixels[idx + 1] as u64;
-            bg_b_sum += dewarped_pixels[idx + 2] as u64;
-            bg_count += 1;
+            let r = dewarped_pixels[idx];
+            let g = dewarped_pixels[idx + 1];
+            let b = dewarped_pixels[idx + 2];
+            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
+            perimeter_pixels.push((r, g, b, lum));
+        }
+        for x in (w - margin_px)..(w - 2) {
+            let idx = (y * w + x) * 4;
+            let r = dewarped_pixels[idx];
+            let g = dewarped_pixels[idx + 1];
+            let b = dewarped_pixels[idx + 2];
+            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
+            perimeter_pixels.push((r, g, b, lum));
         }
     }
 
-    let bg_r = if bg_count > 0 { (bg_r_sum / bg_count) as f32 } else { 240.0 };
-    let bg_g = if bg_count > 0 { (bg_g_sum / bg_count) as f32 } else { 240.0 };
-    let bg_b = if bg_count > 0 { (bg_b_sum / bg_count) as f32 } else { 240.0 };
+    // Sort by luminance and pick the 85th percentile (clean white paper background)
+    perimeter_pixels.sort_by_key(|p| p.3);
+    let sample_idx = (perimeter_pixels.len() as f32 * 0.85) as usize;
+    let bg_ref = if !perimeter_pixels.is_empty() {
+        perimeter_pixels[sample_idx.min(perimeter_pixels.len() - 1)]
+    } else {
+        (240, 240, 240, 240)
+    };
+
+    let bg_r = bg_ref.0 as f32;
+    let bg_g = bg_ref.1 as f32;
+    let bg_b = bg_ref.2 as f32;
 
     // 2. Compute Color/Luminance Distance from background:
     // Works whether background is white paper (bg_lum > 180) or dark card (bg_lum < 80)

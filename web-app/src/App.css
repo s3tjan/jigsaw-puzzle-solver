@@ -139,6 +139,10 @@ html, body, #root {
   display: block;
 }
 
+.camera-video.mirrored {
+  transform: scaleX(-1);
+}
+
 .camera-overlay {
   position: absolute;
   top: 50%;
@@ -146,6 +150,10 @@ html, body, #root {
   transform: translate(-50%, -50%);
   pointer-events: auto;
   cursor: crosshair;
+}
+
+.camera-overlay.mirrored {
+  transform: translate(-50%, -50%) scaleX(-1);
 }
 
 .camera-empty {
@@ -168,8 +176,10 @@ html, body, #root {
 }
 
 .piece-canvas-wrapper {
-  width: 280px;
-  height: 280px;
+  width: 384px;
+  height: 384px;
+  max-width: 90vw;
+  max-height: 90vw;
   background: #000;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -177,6 +187,7 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .piece-canvas {

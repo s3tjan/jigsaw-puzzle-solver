@@ -56,6 +56,13 @@ export default function App() {
     return saved ? parseFloat(saved) : 0.0
   })
   const [sensitivity, setSensitivity] = useState<number>(25.0)
+  const [isMirror, setIsMirror] = useState<boolean>(() => {
+    return localStorage.getItem('jigsaw_mirror') === 'true'
+  })
+
+  useEffect(() => {
+    localStorage.setItem('jigsaw_mirror', isMirror.toString())
+  }, [isMirror])
 
   const [corners, setCorners] = useState<[Point2D, Point2D, Point2D, Point2D]>(() => {
     try {
@@ -81,12 +88,15 @@ export default function App() {
 
   const latestPixelsRef = useRef<{ bytes: Uint8Array; w: number; h: number } | null>(null)
   const lastCvTimeRef = useRef<number>(0)
+  const pieceHistoryRef = useRef<ScannedPiece[]>([])
   const cornersRef = useRef(corners)
   cornersRef.current = corners
   const lensK1Ref = useRef(lensDistortion)
   lensK1Ref.current = lensDistortion
   const sensRef = useRef(sensitivity)
   sensRef.current = sensitivity
+  const isMirrorRef = useRef(isMirror)
+  isMirrorRef.current = isMirror
 
   useEffect(() => {
     try {
@@ -220,10 +230,10 @@ export default function App() {
     if (!ctx) return
     ctx.clearRect(0, 0, w, h)
 
-    // 1. Draw boundary quad connecting the 4 corners
+    // 1. Draw boundary quad connecting the 4 corners (classic CV green)
     ctx.beginPath()
-    ctx.strokeStyle = '#00e5ff'
-    ctx.lineWidth = 1.8
+    ctx.strokeStyle = '#00e676'
+    ctx.lineWidth = 2.0
     const SAMPLES = 16
     for (let side = 0; side < 4; side++) {
       const p1 = undistortPt(pts[side].x, pts[side].y, w, h, lensK1)
@@ -245,12 +255,12 @@ export default function App() {
     pts.forEach((pt, i) => {
       const isDragging = i === draggingIdx
       const isSnapped = i === snappedIdx
-      const color = isDragging ? '#ff9100' : isSnapped ? '#00e676' : '#00e5ff'
+      const color = isDragging ? '#ff9100' : isSnapped ? '#00e676' : '#00e676'
 
       ctx.beginPath()
-      ctx.arc(pt.x, pt.y, 14, 0, Math.PI * 2)
+      ctx.arc(pt.x, pt.y, 16, 0, Math.PI * 2)
       ctx.strokeStyle = color
-      ctx.lineWidth = isDragging ? 2.5 : 1.5
+      ctx.lineWidth = isDragging ? 3.0 : 2.0
       ctx.stroke()
 
       ctx.beginPath()
@@ -262,87 +272,142 @@ export default function App() {
       // Crosshair ticks
       ctx.beginPath()
       ctx.strokeStyle = color
-      ctx.lineWidth = 1.0
-      ctx.moveTo(pt.x - 18, pt.y)
-      ctx.lineTo(pt.x - 5, pt.y)
-      ctx.moveTo(pt.x + 5, pt.y)
-      ctx.lineTo(pt.x + 18, pt.y)
-      ctx.moveTo(pt.x, pt.y - 18)
-      ctx.lineTo(pt.x, pt.y - 5)
-      ctx.moveTo(pt.x, pt.y + 5)
-      ctx.lineTo(pt.x, pt.y + 18)
+      ctx.lineWidth = 1.5
+      ctx.moveTo(pt.x - 20, pt.y)
+      ctx.lineTo(pt.x - 6, pt.y)
+      ctx.moveTo(pt.x + 6, pt.y)
+      ctx.lineTo(pt.x + 20, pt.y)
+      ctx.moveTo(pt.x, pt.y - 20)
+      ctx.lineTo(pt.x, pt.y - 6)
+      ctx.moveTo(pt.x, pt.y + 6)
+      ctx.lineTo(pt.x, pt.y + 20)
       ctx.stroke()
 
-      // Corner Label
-      ctx.font = 'bold 10px monospace'
+      // Corner Label (Bold, High Contrast)
+      ctx.font = 'bold 12px monospace'
+      ctx.fillStyle = '#0d1117'
+      ctx.fillRect(pt.x + 14, pt.y - 18, 36, 16)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.0
+      ctx.strokeRect(pt.x + 14, pt.y - 18, 36, 16)
       ctx.fillStyle = color
-      ctx.fillText(labels[i], pt.x + 16, pt.y - 6)
+      ctx.fillText(labels[i], pt.x + 17, pt.y - 5)
     })
   }
 
   // Draw Diagnostic Overlay on 1:1 Piece Canvas
   const drawPieceDiagnostics = (ctx: CanvasRenderingContext2D, piece: ScannedPiece) => {
-    // 1. Draw smooth continuous outer boundary
+    // 1. Draw crisp continuous outer boundary (clean green line, no blur or glow)
     if (piece.contour_points.length > 0) {
+      ctx.save()
       ctx.beginPath()
       ctx.moveTo(piece.contour_points[0].x, piece.contour_points[0].y)
       for (let i = 1; i < piece.contour_points.length; i++) {
         ctx.lineTo(piece.contour_points[i].x, piece.contour_points[i].y)
       }
       ctx.closePath()
-      ctx.strokeStyle = '#00e5ff'
+
+      ctx.strokeStyle = '#00e676'
       ctx.lineWidth = 2.0
       ctx.stroke()
-      ctx.fillStyle = 'rgba(0, 229, 255, 0.08)'
+
+      ctx.fillStyle = 'rgba(0, 230, 118, 0.05)'
       ctx.fill()
+      ctx.restore()
     }
 
+    // Clean, readable, non-neon colors:
+    // Flat: Purple (#9c27b0), Tab: Blue (#1976d2), Hole: Amber (#f57c00)
     const edgeColors: Record<string, string> = {
-      Tab: '#388bfd',  // Blue
-      Hole: '#d29922', // Amber
-      Flat: '#a371f7', // Purple
+      Tab: '#1976d2',
+      Hole: '#f57c00',
+      Flat: '#9c27b0',
     }
 
-    // 2. Draw 4 Core Baseline Chords with Edge Badges
+    // 2. Draw 4 Core Baseline Chords with smart outward-offset badges
     piece.edges.forEach((edge, i) => {
-      const color = edgeColors[edge.edge_type] || '#ffffff'
+      const color = edgeColors[edge.edge_type] || '#333333'
 
+      ctx.save()
       ctx.beginPath()
       ctx.moveTo(edge.start_corner.x, edge.start_corner.y)
       ctx.lineTo(edge.end_corner.x, edge.end_corner.y)
       ctx.strokeStyle = color
-      ctx.lineWidth = 1.2
-      ctx.setLineDash([3, 3])
+      ctx.lineWidth = 2.0
+      ctx.setLineDash([6, 4])
       ctx.stroke()
-      ctx.setLineDash([])
+      ctx.restore()
 
+      // Calculate unit normal vector pointing away from piece center (outward)
       const midX = (edge.start_corner.x + edge.end_corner.x) * 0.5
       const midY = (edge.start_corner.y + edge.end_corner.y) * 0.5
-      const label = `E${i}:${edge.edge_type}`
+      const toMidX = midX - piece.center.x
+      const toMidY = midY - piece.center.y
+      const toMidDist = Math.hypot(toMidX, toMidY) || 1.0
+      const normX = toMidX / toMidDist
+      const normY = toMidY / toMidDist
 
-      ctx.font = 'bold 9px monospace'
+      // Offset badge outward by 20px so it never obscures the edge contour or tab
+      const badgeX = midX + normX * 20.0
+      const badgeY = midY + normY * 20.0
+      const label = `E${i}: ${edge.edge_type}`
+
+      ctx.font = 'bold 11px monospace'
       const tw = ctx.measureText(label).width
-      ctx.fillStyle = 'rgba(13, 17, 23, 0.85)'
-      ctx.fillRect(midX - tw / 2 - 3, midY - 6, tw + 6, 12)
-      ctx.strokeStyle = color
-      ctx.lineWidth = 1.0
-      ctx.strokeRect(midX - tw / 2 - 3, midY - 6, tw + 6, 12)
-      ctx.fillStyle = color
-      ctx.fillText(label, midX - tw / 2, midY + 3)
-    })
+      const bw = tw + 14
+      const bh = 18
 
-    // 3. Draw 4 Core Physical Corners (C0..C3)
-    piece.corners.forEach((pt, i) => {
+      ctx.fillStyle = 'rgba(20, 25, 30, 0.92)'
       ctx.beginPath()
-      ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2)
-      ctx.fillStyle = '#ff3d00'
+      ctx.roundRect(badgeX - bw / 2, badgeY - bh / 2, bw, bh, 3)
       ctx.fill()
-      ctx.strokeStyle = '#ffffff'
+      ctx.strokeStyle = color
       ctx.lineWidth = 1.5
       ctx.stroke()
+
       ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, badgeX, badgeY)
+    })
+
+    // 3. Draw 4 Core Physical Corners (C0..C3) (solid white pins with dark borders)
+    piece.corners.forEach((pt, i) => {
+      // Solid outer ring
+      ctx.beginPath()
+      ctx.arc(pt.x, pt.y, 6.0, 0, Math.PI * 2)
+      ctx.fillStyle = '#d32f2f' // Solid red pin
+      ctx.fill()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 2.0
+      ctx.stroke()
+
+      // Center white dot
+      ctx.beginPath()
+      ctx.arc(pt.x, pt.y, 2.0, 0, Math.PI * 2)
+      ctx.fillStyle = '#ffffff'
+      ctx.fill()
+
+      // Outward offset for corner label
+      const toCX = pt.x - piece.center.x
+      const toCY = pt.y - piece.center.y
+      const toCDist = Math.hypot(toCX, toCY) || 1.0
+      const tagX = pt.x + (toCX / toCDist) * 18.0
+      const tagY = pt.y + (toCY / toCDist) * 18.0
+
       ctx.font = 'bold 10px monospace'
-      ctx.fillText(`C${i}`, pt.x + 7, pt.y - 4)
+      ctx.fillStyle = 'rgba(20, 25, 30, 0.90)'
+      ctx.beginPath()
+      ctx.roundRect(tagX - 11, tagY - 8, 22, 16, 2)
+      ctx.fill()
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1.0
+      ctx.stroke()
+
+      ctx.fillStyle = '#ffffff'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(`C${i}`, tagX, tagY)
     })
   }
 
@@ -368,7 +433,15 @@ export default function App() {
 
         const ctx = canvas.getContext('2d', { willReadFrequently: true })
         if (ctx) {
-          ctx.drawImage(video, 0, 0, targetW, targetH)
+          if (isMirrorRef.current) {
+            ctx.save()
+            ctx.translate(targetW, 0)
+            ctx.scale(-1, 1)
+            ctx.drawImage(video, 0, 0, targetW, targetH)
+            ctx.restore()
+          } else {
+            ctx.drawImage(video, 0, 0, targetW, targetH)
+          }
           const imgData = ctx.getImageData(0, 0, targetW, targetH)
           const rawBytes = new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength)
           latestPixelsRef.current = { bytes: rawBytes, w: targetW, h: targetH }
@@ -408,8 +481,64 @@ export default function App() {
 
               // Piece boundary & corner analysis
               const result = analyze_staged_piece(dewarped, dstW, dstH, curSens)
-              const piece: ScannedPiece | null = result?.piece || null
-              setDetectedPiece(piece)
+              const rawPiece: ScannedPiece | null = result?.piece || null
+
+              // Multi-Frame Stability Consensus Filter:
+              // Maintains a sliding window (5 frames) of scanned piece geometries.
+              // If the piece is moved/removed, the buffer resets immediately.
+              // If the piece is steady, we take the mode of classification and median of corner coordinates.
+              let stablePiece: ScannedPiece | null = null
+
+              if (rawPiece) {
+                const history = pieceHistoryRef.current
+                // Check if rawPiece is roughly at the same location as previous frames (< 8px movement)
+                const isContinuous = history.length > 0 &&
+                  Math.hypot(rawPiece.center.x - history[0].center.x, rawPiece.center.y - history[0].center.y) < 8.0
+
+                if (!isContinuous) {
+                  pieceHistoryRef.current = [rawPiece]
+                  stablePiece = rawPiece
+                } else {
+                  history.unshift(rawPiece)
+                  if (history.length > 5) history.pop()
+
+                  // Consensus Edge Types (majority vote per cardinal edge)
+                  const consensusEdges = rawPiece.edges.map((edge, eIdx) => {
+                    const votes: Record<string, number> = { Flat: 0, Tab: 0, Hole: 0 }
+                    for (const hp of history) {
+                      votes[hp.edges[eIdx].edge_type] = (votes[hp.edges[eIdx].edge_type] || 0) + 1
+                    }
+                    const bestType = (Object.keys(votes) as ('Flat' | 'Tab' | 'Hole')[]).reduce((a, b) =>
+                      votes[a] >= votes[b] ? a : b
+                    )
+                    return { ...edge, edge_type: bestType }
+                  }) as [PieceEdge, PieceEdge, PieceEdge, PieceEdge]
+
+                  const flatCount = consensusEdges.filter(e => e.edge_type === 'Flat').length
+                  const isCorner = flatCount === 2
+                  const isBorder = flatCount === 1
+
+                  // Median Corner Smoothing (eliminates 1-2px sensor noise jitter)
+                  const medianCorners = [0, 1, 2, 3].map((cIdx) => {
+                    const xs = history.map(hp => hp.corners[cIdx].x).sort((a, b) => a - b)
+                    const ys = history.map(hp => hp.corners[cIdx].y).sort((a, b) => a - b)
+                    const mid = Math.floor(xs.length / 2)
+                    return { x: xs[mid], y: ys[mid] }
+                  }) as [Point2D, Point2D, Point2D, Point2D]
+
+                  stablePiece = {
+                    ...rawPiece,
+                    corners: medianCorners,
+                    edges: consensusEdges,
+                    is_corner: isCorner,
+                    is_border: isBorder,
+                  }
+                }
+              } else {
+                pieceHistoryRef.current = []
+              }
+
+              setDetectedPiece(stablePiece)
 
               // Render rectified piece view
               if (pCanvas) {
@@ -423,8 +552,8 @@ export default function App() {
                   pImg.data.set(dewarped)
                   pCtx.putImageData(pImg, 0, 0)
 
-                  if (piece) {
-                    drawPieceDiagnostics(pCtx, piece)
+                  if (stablePiece) {
+                    drawPieceDiagnostics(pCtx, stablePiece)
                   }
                 }
               }
@@ -458,8 +587,12 @@ export default function App() {
     const rect = canvas.getBoundingClientRect()
     const scaleX = canvas.width / rect.width
     const scaleY = canvas.height / rect.height
+    let rawX = (e.clientX - rect.left) * scaleX
+    if (isMirrorRef.current) {
+      rawX = canvas.width - rawX
+    }
     return {
-      x: (e.clientX - rect.left) * scaleX,
+      x: rawX,
       y: (e.clientY - rect.top) * scaleY,
     }
   }
@@ -470,7 +603,7 @@ export default function App() {
     for (let i = 0; i < 4; i++) {
       if (Math.hypot(corners[i].x - pt.x, corners[i].y - pt.y) <= HIT_RADIUS) {
         setDraggingIdx(i)
-        ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+          ; (e.target as HTMLElement).setPointerCapture(e.pointerId)
         return
       }
     }
@@ -489,7 +622,7 @@ export default function App() {
       const idx = draggingIdx
       setDraggingIdx(null)
       try {
-        ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+        ; (e.target as HTMLElement).releasePointerCapture(e.pointerId)
       } catch { }
 
       // Sub-pixel snap on release
@@ -524,6 +657,32 @@ export default function App() {
     if (detectedPiece) {
       setScannedPieces((prev) => [detectedPiece, ...prev])
     }
+  }
+
+  // Lightweight Snapshot Export (<150 KB JPEG + JSON diagnostics) for debugging
+  const handleExportSnapshot = () => {
+    const pCanvas = pieceCanvasRef.current
+    if (!pCanvas) return
+
+    // Convert 384x384 canvas directly to lightweight JPEG (~30-50 KB)
+    const dataUrl = pCanvas.toDataURL('image/jpeg', 0.85)
+
+    const snapshotPayload = {
+      timestamp: new Date().toISOString(),
+      piece: detectedPiece,
+      lensDistortion,
+      sensitivity,
+      corners,
+      imageJpegBase64: dataUrl,
+    }
+
+    const blob = new Blob([JSON.stringify(snapshotPayload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `piece_snapshot_${Date.now()}.json`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   // Keyboard shortcut Space to capture
@@ -573,6 +732,13 @@ export default function App() {
               ) : (
                 <button className="btn small primary" onClick={startCamera}>START CAMERA</button>
               )}
+              <button
+                className={`btn small ${isMirror ? 'primary' : ''}`}
+                onClick={() => setIsMirror(!isMirror)}
+                title="Toggle horizontal mirror"
+              >
+                {isMirror ? 'MIRRORED' : 'MIRROR'}
+              </button>
               <button className="btn small" onClick={handleSnapAll} title="Snap fiducial corners to nearest target">
                 SNAP CORNERS
               </button>
@@ -580,12 +746,18 @@ export default function App() {
           </div>
 
           <div className="panel-view">
-            <video ref={videoRef} playsInline muted className="camera-video" style={{ display: isCameraActive ? 'block' : 'none' }} />
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              className={`camera-video ${isMirror ? 'mirrored' : ''}`}
+              style={{ display: isCameraActive ? 'block' : 'none' }}
+            />
             <canvas ref={canvasRef} style={{ display: 'none' }} />
             {isCameraActive && (
               <canvas
                 ref={overlayCanvasRef}
-                className="camera-overlay"
+                className={`camera-overlay ${isMirror ? 'mirrored' : ''}`}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
@@ -605,9 +777,19 @@ export default function App() {
         <section className="workbench-panel">
           <div className="panel-header">
             <span>[2] DETECTED PIECE &amp; METRICS</span>
-            <span className={detectedPiece ? 'green' : 'muted'}>
-              {detectedPiece ? 'TARGET IN STAGE' : 'NO PIECE'}
-            </span>
+            <div className="panel-actions">
+              <button
+                className="btn small"
+                disabled={!detectedPiece}
+                onClick={handleExportSnapshot}
+                title="Save lightweight JSON + JPEG diagnostic snapshot (<100KB)"
+              >
+                SAVE SNAPSHOT
+              </button>
+              <span className={detectedPiece ? 'green' : 'muted'} style={{ marginLeft: 6 }}>
+                {detectedPiece ? 'TARGET IN STAGE' : 'NO PIECE'}
+              </span>
+            </div>
           </div>
 
           <div className="panel-body">

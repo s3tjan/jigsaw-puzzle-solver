@@ -1,22 +1,7 @@
 use crate::homography::Point2D;
 
-/// A detected calibration quad with ordered corners (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct MatCorners {
-    pub top_left: Point2D,
-    pub top_right: Point2D,
-    pub bottom_right: Point2D,
-    pub bottom_left: Point2D,
-}
-
-impl MatCorners {
-    pub fn as_array(&self) -> [Point2D; 4] {
-        [self.top_left, self.top_right, self.bottom_right, self.bottom_left]
-    }
-}
-
 /// Refines a seed point by snapping to the nearest high-contrast circular/bullseye fiducial centroid
-/// within a localized search radius (e.g. 24 pixels). Uses intensity-inverted centroid weighting.
+/// within a localized search radius (e.g. 24-32 pixels). Uses intensity-inverted centroid weighting.
 pub fn refine_fiducial_centroid(
     pixels: &[u8],
     width: u32,
@@ -77,7 +62,7 @@ pub fn refine_fiducial_centroid(
                     let g = pixels[idx + 1] as u32;
                     let b = pixels[idx + 2] as u32;
                     let lum = (r * 299 + g * 587 + b * 114) / 1000;
-                    
+
                     let darkness_norm = (max_lum.saturating_sub(lum)) as f64 / contrast_range;
                     let weight = darkness_norm * darkness_norm * darkness_norm;
 

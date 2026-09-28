@@ -2,17 +2,13 @@
   <defs>
     <style>
       .sheet-bg { fill: #ffffff; }
-      /* Staging Arena - 96mm x 96mm Pure White Staging Box */
-      .staging-arena { fill: #ffffff; stroke: #888888; stroke-width: 0.35; stroke-dasharray: 2 2; }
+      /* Pure White Staging Box Guide */
+      .staging-arena { fill: #ffffff; stroke: #cccccc; stroke-width: 0.25; stroke-dasharray: 2 2; }
       
-      /* Precision Corner Fiducials */
+      /* High-Contrast Fiducials */
       .fiducial-disc { fill: #000000; }
       .fiducial-cross { stroke: #000000; stroke-width: 0.4; }
-
-      /* Typography */
-      .txt-title { font-family: ui-monospace, monospace; font-size: 4.2px; font-weight: bold; fill: #111111; letter-spacing: 0.5px; }
-      .txt-sub { font-family: ui-monospace, monospace; font-size: 2.4px; fill: #444444; }
-      .txt-dim { font-family: ui-monospace, monospace; font-size: 2.0px; fill: #666666; }
+      .txt-dim { font-family: ui-monospace, monospace; font-size: 2.2px; fill: #444444; }
       .txt-badge { font-family: ui-monospace, monospace; font-size: 1.8px; font-weight: bold; fill: #ffffff; }
     </style>
   </defs>
@@ -21,55 +17,33 @@
   <rect width="215.9" height="279.4" class="sheet-bg" />
 
   <!-- =================================================================== -->
-  <!-- 1. HEADER & VERIFICATION CALIPER                                    -->
+  <!-- 1. 100.00 mm VERIFICATION CALIPER                                   -->
   <!-- =================================================================== -->
-  <g id="header-section" transform="translate(107.95, 35)">
-    <text x="0" y="0" text-anchor="middle" class="txt-title">JIGSAW SOLVER STAGING MAT (US LETTER)</text>
-    <text x="0" y="5.0" text-anchor="middle" class="txt-sub">100.00 mm FIDUCIAL QUAD / WHITE FIELD</text>
-
-    <!-- 100.00 mm Physical Print Verification Caliper -->
-    <g transform="translate(-50, 14)">
+  <g id="caliper" transform="translate(107.95, 42)">
+    <g transform="translate(-50, 0)">
       <line x1="0" y1="0" x2="100" y2="0" stroke="#000000" stroke-width="0.8" />
       <line x1="0" y1="-3.5" x2="0" y2="3.5" stroke="#000000" stroke-width="0.8" />
       <line x1="25" y1="-2" x2="25" y2="2" stroke="#000000" stroke-width="0.4" />
       <line x1="50" y1="-3" x2="50" y2="3" stroke="#000000" stroke-width="0.6" />
       <line x1="75" y1="-2" x2="75" y2="2" stroke="#000000" stroke-width="0.4" />
       <line x1="100" y1="-3.5" x2="100" y2="3.5" stroke="#000000" stroke-width="0.8" />
-      <text x="0" y="7.5" text-anchor="middle" class="txt-dim">0</text>
-      <text x="50" y="7.5" text-anchor="middle" class="txt-dim">50</text>
-      <text x="100" y="7.5" text-anchor="middle" class="txt-dim">100.00 mm</text>
+      <text x="0" y="6.5" text-anchor="middle" class="txt-dim">0</text>
+      <text x="50" y="6.5" text-anchor="middle" class="txt-dim">50</text>
+      <text x="100" y="6.5" text-anchor="middle" class="txt-dim">100.00 mm</text>
     </g>
   </g>
 
   <!-- =================================================================== -->
-  <!-- 2. OPTICAL STAGE (Center: 107.95 mm, 150.0 mm)                      -->
-  <!-- Staging Arena: 96mm x 96mm (x: 59.95 to 155.95, y: 102 to 198)     -->
-  <!-- Fiducial Centers: 100.00 mm span (x: 57.95 to 157.95, y: 100 to 200)-->
+  <!-- 2. STAGING ARENA & 4 CORNER FIDUCIALS                               -->
+  <!-- Center: (107.95 mm, 150.0 mm)                                       -->
+  <!-- Staging Arena: 96mm x 96mm (100% clean blank white field)           -->
+  <!-- Fiducial Centers: 100.00 mm span                                    -->
   <!-- =================================================================== -->
   <g id="optical-stage">
-    <!-- Central Staging Arena (96mm x 96mm clean white field) -->
-    <rect x="59.95" y="102" width="96" height="96" class="staging-arena" rx="0.5" />
+    <!-- Outer boundary guide of the staging arena (subtle 0.25mm dashed hairline) -->
+    <rect x="59.95" y="102" width="96" height="96" class="staging-arena" />
 
-    <!-- Corner guides for piece centering -->
-    <path d="M 64 109 L 64 105 L 68 105" stroke="#888888" stroke-width="0.3" fill="none" opacity="0.4" />
-    <path d="M 152 109 L 152 105 L 148 105" stroke="#888888" stroke-width="0.3" fill="none" opacity="0.4" />
-    <path d="M 64 191 L 64 195 L 68 195" stroke="#888888" stroke-width="0.3" fill="none" opacity="0.4" />
-    <path d="M 152 191 L 152 195 L 148 195" stroke="#888888" stroke-width="0.3" fill="none" opacity="0.4" />
-
-    <!-- Center Reticle (Ultra-fine 0.15mm crosshair for camera alignment) -->
-    <line x1="104.95" y1="150" x2="110.95" y2="150" stroke="#888888" stroke-width="0.2" opacity="0.3" />
-    <line x1="107.95" y1="147" x2="107.95" y2="153" stroke="#888888" stroke-width="0.2" opacity="0.3" />
-    <circle cx="107.95" cy="150" r="1.5" fill="none" stroke="#888888" stroke-width="0.2" opacity="0.3" />
-
-    <!-- ================================================================= -->
-    <!-- 4 PRECISION CORNER FIDUCIALS (100.00 mm SPAN)                     -->
-    <!-- Top-Left:     ( 57.95, 100.00)                                    -->
-    <!-- Top-Right:    (157.95, 100.00)                                    -->
-    <!-- Bottom-Right: (157.95, 200.00)                                    -->
-    <!-- Bottom-Left:  ( 57.95, 200.00)                                    -->
-    <!-- ================================================================= -->
-
-    <!-- FIDUCIAL 0: TOP-LEFT (57.95, 100) -->
+    <!-- FIDUCIAL 0: TOP-LEFT (57.95, 100.00) -->
     <g id="fiducial-0" transform="translate(57.95, 100)">
       <circle cx="0" cy="0" r="7.0" fill="#ffffff" stroke="#000000" stroke-width="0.4" />
       <circle cx="0" cy="0" r="5.5" class="fiducial-disc" />
@@ -81,7 +55,7 @@
       <text x="-6.5" y="-9.2" text-anchor="middle" class="txt-badge">TL 0</text>
     </g>
 
-    <!-- FIDUCIAL 1: TOP-RIGHT (157.95, 100) -->
+    <!-- FIDUCIAL 1: TOP-RIGHT (157.95, 100.00) -->
     <g id="fiducial-1" transform="translate(157.95, 100)">
       <circle cx="0" cy="0" r="7.0" fill="#ffffff" stroke="#000000" stroke-width="0.4" />
       <circle cx="0" cy="0" r="5.5" class="fiducial-disc" />
@@ -93,7 +67,7 @@
       <text x="6.5" y="-9.2" text-anchor="middle" class="txt-badge">TR 1</text>
     </g>
 
-    <!-- FIDUCIAL 2: BOTTOM-RIGHT (157.95, 200) -->
+    <!-- FIDUCIAL 2: BOTTOM-RIGHT (157.95, 200.00) -->
     <g id="fiducial-2" transform="translate(157.95, 200)">
       <circle cx="0" cy="0" r="7.0" fill="#ffffff" stroke="#000000" stroke-width="0.4" />
       <circle cx="0" cy="0" r="5.5" class="fiducial-disc" />
@@ -105,7 +79,7 @@
       <text x="6.5" y="10.8" text-anchor="middle" class="txt-badge">BR 2</text>
     </g>
 
-    <!-- FIDUCIAL 3: BOTTOM-LEFT (57.95, 200) -->
+    <!-- FIDUCIAL 3: BOTTOM-LEFT (57.95, 200.00) -->
     <g id="fiducial-3" transform="translate(57.95, 200)">
       <circle cx="0" cy="0" r="7.0" fill="#ffffff" stroke="#000000" stroke-width="0.4" />
       <circle cx="0" cy="0" r="5.5" class="fiducial-disc" />
@@ -116,13 +90,5 @@
       <rect x="-10" y="8" width="7" height="4" fill="#000000" rx="0.5" />
       <text x="-6.5" y="10.8" text-anchor="middle" class="txt-badge">BL 3</text>
     </g>
-  </g>
-
-  <!-- =================================================================== -->
-  <!-- 3. FOOTER INSTRUCTIONS                                              -->
-  <!-- =================================================================== -->
-  <g transform="translate(107.95, 248)">
-    <text x="0" y="0" text-anchor="middle" class="txt-sub">US LETTER SPECIFICATION (8.5 × 11 in): 100.00 mm FIDUCIAL QUAD</text>
-    <text x="0" y="4.5" text-anchor="middle" class="txt-dim">Print at 100% scale (Do not fit to page / Do not scale)</text>
   </g>
 </svg>
