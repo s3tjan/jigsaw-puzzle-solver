@@ -1,287 +1,128 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">
+<svg xmlns="http://www.w3.org/2000/svg" width="8.5in" height="11in" viewBox="0 0 215.9 279.4">
   <defs>
     <style>
       .sheet-bg { fill: #ffffff; }
-      /* Pure Industrial Chroma Green Mat Field (#00A859 / Pantone 354C) */
-      .chroma-mat { fill: #00A859; stroke: #004d25; stroke-width: 0.5; }
-      .staging-boundary { fill: none; stroke: #ffffff; stroke-width: 0.35; stroke-dasharray: 2 2; opacity: 0.55; }
-      .calib-rail-black { fill: #111111; }
-      .calib-rail-white { fill: #ffffff; }
-      .aruco-black { fill: #000000; }
-      .aruco-white { fill: #ffffff; }
-      .txt-header { font-family: monospace; font-size: 3.4px; font-weight: bold; fill: #111111; letter-spacing: 0.6px; }
-      .txt-meta { font-family: monospace; font-size: 2.2px; fill: #333333; }
-      .txt-badge { font-family: monospace; font-size: 1.8px; font-weight: bold; fill: #ffffff; }
-      .ruler-main { stroke: #111111; stroke-width: 0.6; }
-      .ruler-tick { stroke: #333333; stroke-width: 0.35; }
+      /* Staging Arena - 96mm x 96mm Pure White Staging Box */
+      .staging-arena { fill: #ffffff; stroke: #888888; stroke-width: 0.35; stroke-dasharray: 2 2; }
+      
+      /* Precision Corner Fiducials */
+      .fiducial-disc { fill: #000000; }
+      .fiducial-cross { stroke: #000000; stroke-width: 0.4; }
+
+      /* Typography */
+      .txt-title { font-family: ui-monospace, monospace; font-size: 4.2px; font-weight: bold; fill: #111111; letter-spacing: 0.5px; }
+      .txt-sub { font-family: ui-monospace, monospace; font-size: 2.4px; fill: #444444; }
+      .txt-dim { font-family: ui-monospace, monospace; font-size: 2.0px; fill: #666666; }
+      .txt-badge { font-family: ui-monospace, monospace; font-size: 1.8px; font-weight: bold; fill: #ffffff; }
     </style>
   </defs>
 
-  <!-- Sheet Background (A4: 210mm x 297mm) -->
-  <rect width="210" height="297" class="sheet-bg" />
+  <!-- Sheet Background (US Letter: 8.5in x 11in = 215.9mm x 279.4mm) -->
+  <rect width="215.9" height="279.4" class="sheet-bg" />
 
   <!-- =================================================================== -->
-  <!-- 1. 48.00 mm VERIFICATION CALIPER                                    -->
+  <!-- 1. HEADER & VERIFICATION CALIPER                                    -->
   <!-- =================================================================== -->
-  <g transform="translate(105, 55)">
-    <!-- 48.00 mm Precision Caliper Rule for Physical Print Verification -->
-    <g transform="translate(-24, 0)">
-      <line x1="0" y1="0" x2="48" y2="0" class="ruler-main" stroke-width="0.8" />
-      <line x1="0" y1="0" x2="0" y2="-4" class="ruler-main" stroke-width="0.8" />
-      <line x1="12" y1="0" x2="12" y2="-2.5" class="ruler-tick" />
-      <line x1="24" y1="0" x2="24" y2="-3.2" class="ruler-tick" stroke-width="0.5" />
-      <line x1="36" y1="0" x2="36" y2="-2.5" class="ruler-tick" />
-      <line x1="48" y1="0" x2="48" y2="-4" class="ruler-main" stroke-width="0.8" />
-      <text x="0" y="4.0" text-anchor="middle" class="txt-meta">0</text>
-      <text x="24" y="4.0" text-anchor="middle" class="txt-meta">24</text>
-      <text x="48" y="4.0" text-anchor="middle" class="txt-meta">48.00 mm</text>
+  <g id="header-section" transform="translate(107.95, 35)">
+    <text x="0" y="0" text-anchor="middle" class="txt-title">JIGSAW SOLVER STAGING MAT (US LETTER)</text>
+    <text x="0" y="5.0" text-anchor="middle" class="txt-sub">100.00 mm FIDUCIAL QUAD / WHITE FIELD</text>
+
+    <!-- 100.00 mm Physical Print Verification Caliper -->
+    <g transform="translate(-50, 14)">
+      <line x1="0" y1="0" x2="100" y2="0" stroke="#000000" stroke-width="0.8" />
+      <line x1="0" y1="-3.5" x2="0" y2="3.5" stroke="#000000" stroke-width="0.8" />
+      <line x1="25" y1="-2" x2="25" y2="2" stroke="#000000" stroke-width="0.4" />
+      <line x1="50" y1="-3" x2="50" y2="3" stroke="#000000" stroke-width="0.6" />
+      <line x1="75" y1="-2" x2="75" y2="2" stroke="#000000" stroke-width="0.4" />
+      <line x1="100" y1="-3.5" x2="100" y2="3.5" stroke="#000000" stroke-width="0.8" />
+      <text x="0" y="7.5" text-anchor="middle" class="txt-dim">0</text>
+      <text x="50" y="7.5" text-anchor="middle" class="txt-dim">50</text>
+      <text x="100" y="7.5" text-anchor="middle" class="txt-dim">100.00 mm</text>
     </g>
   </g>
 
   <!-- =================================================================== -->
-  <!-- 2. SOVEREIGN INSPECTION RIG (Centered at 105.0 mm, 148.5 mm)        -->
-  <!-- Outer Frame: 64.0 mm x 64.0 mm (x: 73 to 137, y: 116.5 to 180.5)    -->
-  <!-- ArUco Marker Centers: 48.00 mm apart at (81.0, 124.5) to (129.0, 172.5) -->
+  <!-- 2. OPTICAL STAGE (Center: 107.95 mm, 150.0 mm)                      -->
+  <!-- Staging Arena: 96mm x 96mm (x: 59.95 to 155.95, y: 102 to 198)     -->
+  <!-- Fiducial Centers: 100.00 mm span (x: 57.95 to 157.95, y: 100 to 200)-->
   <!-- =================================================================== -->
-  <g id="sovereign-rig">
-    <!-- Outer Border Plate -->
-    <rect x="73" y="116.5" width="64" height="64" fill="#ffffff" stroke="#111111" stroke-width="0.5" rx="1.5" />
+  <g id="optical-stage">
+    <!-- Central Staging Arena (96mm x 96mm clean white field) -->
+    <rect x="59.95" y="102" width="96" height="96" class="staging-arena" rx="0.5" />
 
-    <!-- Pure Matte Chroma Green Staging Stage (54mm x 54mm) - UNBROKEN CLEAN FIELD -->
-    <rect x="78" y="121.5" width="54" height="54" class="chroma-mat" rx="0.5" />
+    <!-- Corner guides for piece centering -->
+    <path d="M 64 109 L 64 105 L 68 105" stroke="#888888" stroke-width="0.3" fill="none" opacity="0.4" />
+    <path d="M 152 109 L 152 105 L 148 105" stroke="#888888" stroke-width="0.3" fill="none" opacity="0.4" />
+    <path d="M 64 191 L 64 195 L 68 195" stroke="#888888" stroke-width="0.3" fill="none" opacity="0.4" />
+    <path d="M 152 191 L 152 195 L 148 195" stroke="#888888" stroke-width="0.3" fill="none" opacity="0.4" />
 
-    <!-- Center Stage Alignment Reticle (Micro hairline 0.15mm at 105, 148.5) -->
-    <line x1="102" y1="148.5" x2="108" y2="148.5" stroke="#ffffff" stroke-width="0.2" opacity="0.45" />
-    <line x1="105" y1="145.5" x2="105" y2="151.5" stroke="#ffffff" stroke-width="0.2" opacity="0.45" />
-    <circle cx="105" cy="148.5" r="1.5" fill="none" stroke="#ffffff" stroke-width="0.2" opacity="0.45" />
-
-    <!-- Exterior Alignment Pointer Ticks (Located OUTSIDE the active green arena) -->
-    <!-- Top tick (x=105, y=117.5 to 120.5) -->
-    <polygon points="103.5,117.5 106.5,117.5 105,120.5" fill="#111111" />
-    <!-- Bottom tick (x=105, y=179.5 to 176.5) -->
-    <polygon points="103.5,179.5 106.5,179.5 105,176.5" fill="#111111" />
-    <!-- Left tick (y=148.5, x=74.5 to 77.5) -->
-    <polygon points="74.5,147.0 74.5,150.0 77.5,148.5" fill="#111111" />
-    <!-- Right tick (y=148.5, x=135.5 to 132.5) -->
-    <polygon points="135.5,147.0 135.5,150.0 132.5,148.5" fill="#111111" />
+    <!-- Center Reticle (Ultra-fine 0.15mm crosshair for camera alignment) -->
+    <line x1="104.95" y1="150" x2="110.95" y2="150" stroke="#888888" stroke-width="0.2" opacity="0.3" />
+    <line x1="107.95" y1="147" x2="107.95" y2="153" stroke="#888888" stroke-width="0.2" opacity="0.3" />
+    <circle cx="107.95" cy="150" r="1.5" fill="none" stroke="#888888" stroke-width="0.2" opacity="0.3" />
 
     <!-- ================================================================= -->
-    <!-- CONTINUOUS SUB-PIXEL CALIBRATION RAILS (2mm Checkerboard Ribs)    -->
-    <!-- Between Tag 0 and Tag 1 (Top: x=85 to x=125, y=123.5 to 125.5)   -->
-    <!-- Between Tag 3 and Tag 2 (Bottom: x=85 to x=125, y=171.5 to 173.5)-->
-    <!-- Between Tag 0 and Tag 3 (Left: y=128.5 to y=168.5, x=80 to 82)    -->
-    <!-- Between Tag 1 and Tag 2 (Right: y=128.5 to y=168.5, x=128 to 130) -->
-    <!-- ================================================================= -->
-    <!-- Top Rail (20 squares of 2.0mm x 2.0mm) -->
-    <g id="top-rail">
-      <!-- 20 alternating 2x2mm blocks -->
-      <rect x="85" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="87" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="89" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="91" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="93" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="95" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="97" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="99" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="101" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="103" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="105" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="107" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="109" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="111" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="113" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="115" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="117" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="119" y="123.5" width="2" height="2" class="calib-rail-white"/>
-      <rect x="121" y="123.5" width="2" height="2" class="calib-rail-black"/>
-      <rect x="123" y="123.5" width="2" height="2" class="calib-rail-white"/>
-    </g>
-
-    <!-- Bottom Rail (20 squares of 2.0mm x 2.0mm) -->
-    <g id="bottom-rail">
-      <rect x="85" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="87" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="89" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="91" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="93" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="95" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="97" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="99" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="101" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="103" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="105" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="107" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="109" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="111" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="113" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="115" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="117" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="119" y="167.0" width="2" height="2" class="calib-rail-white"/>
-      <rect x="121" y="167.0" width="2" height="2" class="calib-rail-black"/>
-      <rect x="123" y="167.0" width="2" height="2" class="calib-rail-white"/>
-    </g>
-
-    <!-- Left Rail (18 squares of 2.0mm x 2.0mm: y=129.0 to y=165.0) -->
-    <g id="left-rail">
-      <rect x="80" y="129" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="131" width="2" height="2" class="calib-rail-white"/>
-      <rect x="80" y="133" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="135" width="2" height="2" class="calib-rail-white"/>
-      <rect x="80" y="137" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="139" width="2" height="2" class="calib-rail-white"/>
-      <rect x="80" y="141" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="143" width="2" height="2" class="calib-rail-white"/>
-      <rect x="80" y="145" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="147" width="2" height="2" class="calib-rail-white"/>
-      <rect x="80" y="149" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="151" width="2" height="2" class="calib-rail-white"/>
-      <rect x="80" y="153" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="155" width="2" height="2" class="calib-rail-white"/>
-      <rect x="80" y="157" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="159" width="2" height="2" class="calib-rail-white"/>
-      <rect x="80" y="161" width="2" height="2" class="calib-rail-black"/>
-      <rect x="80" y="163" width="2" height="2" class="calib-rail-white"/>
-    </g>
-
-    <!-- Right Rail (18 squares of 2.0mm x 2.0mm: y=129.0 to y=165.0) -->
-    <g id="right-rail">
-      <rect x="128" y="129" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="131" width="2" height="2" class="calib-rail-white"/>
-      <rect x="128" y="133" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="135" width="2" height="2" class="calib-rail-white"/>
-      <rect x="128" y="137" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="139" width="2" height="2" class="calib-rail-white"/>
-      <rect x="128" y="141" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="143" width="2" height="2" class="calib-rail-white"/>
-      <rect x="128" y="145" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="147" width="2" height="2" class="calib-rail-white"/>
-      <rect x="128" y="149" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="151" width="2" height="2" class="calib-rail-white"/>
-      <rect x="128" y="153" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="155" width="2" height="2" class="calib-rail-white"/>
-      <rect x="128" y="157" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="159" width="2" height="2" class="calib-rail-white"/>
-      <rect x="128" y="161" width="2" height="2" class="calib-rail-black"/>
-      <rect x="128" y="163" width="2" height="2" class="calib-rail-white"/>
-    </g>
-
-    <!-- Slanted-Edge MTF Focus Patch on Upper Rail Margin (ISO 12233) -->
-    <!-- Positioned at x=112.5, y=118.5 completely clear of top center tick at x=105 and plate top edge at 116.5 -->
-    <g transform="translate(112.5, 118.5)">
-      <polygon points="0,0 7,0 7,2.6 0,2.6" fill="#ffffff" stroke="#111111" stroke-width="0.25" />
-      <polygon points="0,0 3.2,0 3.5,2.6 0,2.6" fill="#111111" />
-      <text x="3.5" y="-0.6" text-anchor="middle" fill="#111111" font-family="monospace" font-size="1.1px" font-weight="bold">MTF</text>
-    </g>
-
-    <!-- ================================================================= -->
-    <!-- 3. FOUR DISTINCT STANDARD ArUco 4x4 (6x6 Grid with 1-cell border) -->
-    <!-- Standard ArUco 4x4 (50 dictionary): Size: 7.2mm x 7.2mm (1.2mm/bit)-->
-    <!-- Marker Center-to-Center: exactly 48.00 mm                          -->
-    <!-- Top-Left Center:     (81.0, 124.5) => Top-Left: (77.4, 120.9)     -->
-    <!-- Top-Right Center:    (129.0, 124.5) => Top-Left: (125.4, 120.9)   -->
-    <!-- Bottom-Right Center: (129.0, 172.5) => Top-Left: (125.4, 168.9)   -->
-    <!-- Bottom-Left Center:  (81.0, 172.5) => Top-Left: (77.4, 168.9)    -->
+    <!-- 4 PRECISION CORNER FIDUCIALS (100.00 mm SPAN)                     -->
+    <!-- Top-Left:     ( 57.95, 100.00)                                    -->
+    <!-- Top-Right:    (157.95, 100.00)                                    -->
+    <!-- Bottom-Right: (157.95, 200.00)                                    -->
+    <!-- Bottom-Left:  ( 57.95, 200.00)                                    -->
     <!-- ================================================================= -->
 
-    <!-- TAG 0: ArUco 4x4_50 ID 0 (Top-Left) -->
-    <!-- Inner 4x4 matrix for ID 0: [1,0,1,1; 0,1,0,0; 0,1,0,0; 1,0,1,1] -->
-    <g transform="translate(77.4, 120.9)">
-      <!-- White quiet zone buffer border -->
-      <rect x="-0.6" y="-0.6" width="8.4" height="8.4" fill="#ffffff" />
-      <!-- Black outer 1-cell border: 7.2mm x 7.2mm -->
-      <rect x="0" y="0" width="7.2" height="7.2" class="aruco-black" />
-      <!-- Inner 4x4 cells (each 1.2mm x 1.2mm): Row 1 (y=1.2) -->
-      <rect x="1.2" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="3.6" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="4.8" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 2 (y=2.4) -->
-      <rect x="2.4" y="2.4" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 3 (y=3.6) -->
-      <rect x="2.4" y="3.6" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 4 (y=4.8) -->
-      <rect x="1.2" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="3.6" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="4.8" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Sub-pixel center crosshairs for optical alignment -->
-      <line x1="3.6" y1="-1" x2="3.6" y2="8.2" stroke="#ff3333" stroke-width="0.15" opacity="0.6" />
-      <line x1="-1" y1="3.6" x2="8.2" y2="3.6" stroke="#ff3333" stroke-width="0.15" opacity="0.6" />
-      <text x="3.6" y="-1.5" text-anchor="middle" font-family="monospace" font-size="1.8px" font-weight="bold" fill="#111111">ID: 0 [TL]</text>
+    <!-- FIDUCIAL 0: TOP-LEFT (57.95, 100) -->
+    <g id="fiducial-0" transform="translate(57.95, 100)">
+      <circle cx="0" cy="0" r="7.0" fill="#ffffff" stroke="#000000" stroke-width="0.4" />
+      <circle cx="0" cy="0" r="5.5" class="fiducial-disc" />
+      <circle cx="0" cy="0" r="3.2" fill="#ffffff" />
+      <circle cx="0" cy="0" r="1.4" class="fiducial-disc" />
+      <line x1="-8" y1="0" x2="8" y2="0" class="fiducial-cross" />
+      <line x1="0" y1="-8" x2="0" y2="8" class="fiducial-cross" />
+      <rect x="-10" y="-12" width="7" height="4" fill="#000000" rx="0.5" />
+      <text x="-6.5" y="-9.2" text-anchor="middle" class="txt-badge">TL 0</text>
     </g>
 
-    <!-- TAG 1: ArUco 4x4_50 ID 1 (Top-Right) -->
-    <!-- Inner 4x4 matrix for ID 1: [1,0,1,0; 1,0,0,1; 0,1,1,0; 0,1,0,0] -->
-    <g transform="translate(125.4, 120.9)">
-      <rect x="-0.6" y="-0.6" width="8.4" height="8.4" fill="#ffffff" />
-      <rect x="0" y="0" width="7.2" height="7.2" class="aruco-black" />
-      <!-- Row 1 -->
-      <rect x="1.2" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="3.6" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 2 -->
-      <rect x="1.2" y="2.4" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="4.8" y="2.4" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 3 -->
-      <rect x="2.4" y="3.6" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="3.6" y="3.6" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 4 -->
-      <rect x="2.4" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Sub-pixel crosshairs -->
-      <line x1="3.6" y1="-1" x2="3.6" y2="8.2" stroke="#ff3333" stroke-width="0.15" opacity="0.6" />
-      <line x1="-1" y1="3.6" x2="8.2" y2="3.6" stroke="#ff3333" stroke-width="0.15" opacity="0.6" />
-      <text x="3.6" y="-1.5" text-anchor="middle" font-family="monospace" font-size="1.8px" font-weight="bold" fill="#111111">ID: 1 [TR]</text>
+    <!-- FIDUCIAL 1: TOP-RIGHT (157.95, 100) -->
+    <g id="fiducial-1" transform="translate(157.95, 100)">
+      <circle cx="0" cy="0" r="7.0" fill="#ffffff" stroke="#000000" stroke-width="0.4" />
+      <circle cx="0" cy="0" r="5.5" class="fiducial-disc" />
+      <circle cx="0" cy="0" r="3.2" fill="#ffffff" />
+      <circle cx="0" cy="0" r="1.4" class="fiducial-disc" />
+      <line x1="-8" y1="0" x2="8" y2="0" class="fiducial-cross" />
+      <line x1="0" y1="-8" x2="0" y2="8" class="fiducial-cross" />
+      <rect x="3" y="-12" width="7" height="4" fill="#000000" rx="0.5" />
+      <text x="6.5" y="-9.2" text-anchor="middle" class="txt-badge">TR 1</text>
     </g>
 
-    <!-- TAG 2: ArUco 4x4_50 ID 2 (Bottom-Right) -->
-    <!-- Inner 4x4 matrix for ID 2: [1,1,0,0; 1,0,1,1; 0,0,1,0; 0,1,1,1] -->
-    <g transform="translate(125.4, 168.9)">
-      <rect x="-0.6" y="-0.6" width="8.4" height="8.4" fill="#ffffff" />
-      <rect x="0" y="0" width="7.2" height="7.2" class="aruco-black" />
-      <!-- Row 1 -->
-      <rect x="1.2" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="2.4" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 2 -->
-      <rect x="1.2" y="2.4" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="3.6" y="2.4" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="4.8" y="2.4" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 3 -->
-      <rect x="3.6" y="3.6" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 4 -->
-      <rect x="2.4" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="3.6" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="4.8" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Sub-pixel crosshairs -->
-      <line x1="3.6" y1="-1" x2="3.6" y2="8.2" stroke="#ff3333" stroke-width="0.15" opacity="0.6" />
-      <line x1="-1" y1="3.6" x2="8.2" y2="3.6" stroke="#ff3333" stroke-width="0.15" opacity="0.6" />
-      <text x="3.6" y="9.8" text-anchor="middle" font-family="monospace" font-size="1.8px" font-weight="bold" fill="#111111">ID: 2 [BR]</text>
+    <!-- FIDUCIAL 2: BOTTOM-RIGHT (157.95, 200) -->
+    <g id="fiducial-2" transform="translate(157.95, 200)">
+      <circle cx="0" cy="0" r="7.0" fill="#ffffff" stroke="#000000" stroke-width="0.4" />
+      <circle cx="0" cy="0" r="5.5" class="fiducial-disc" />
+      <circle cx="0" cy="0" r="3.2" fill="#ffffff" />
+      <circle cx="0" cy="0" r="1.4" class="fiducial-disc" />
+      <line x1="-8" y1="0" x2="8" y2="0" class="fiducial-cross" />
+      <line x1="0" y1="-8" x2="0" y2="8" class="fiducial-cross" />
+      <rect x="3" y="8" width="7" height="4" fill="#000000" rx="0.5" />
+      <text x="6.5" y="10.8" text-anchor="middle" class="txt-badge">BR 2</text>
     </g>
 
-    <!-- TAG 3: ArUco 4x4_50 ID 3 (Bottom-Left) -->
-    <!-- Inner 4x4 matrix for ID 3: [0,1,0,1; 1,1,0,0; 1,0,0,1; 0,1,0,1] -->
-    <g transform="translate(77.4, 168.9)">
-      <rect x="-0.6" y="-0.6" width="8.4" height="8.4" fill="#ffffff" />
-      <rect x="0" y="0" width="7.2" height="7.2" class="aruco-black" />
-      <!-- Row 1 -->
-      <rect x="2.4" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="4.8" y="1.2" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 2 -->
-      <rect x="1.2" y="2.4" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="2.4" y="2.4" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 3 -->
-      <rect x="1.2" y="3.6" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="4.8" y="3.6" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Row 4 -->
-      <rect x="2.4" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <rect x="4.8" y="4.8" width="1.2" height="1.2" class="aruco-white" />
-      <!-- Sub-pixel crosshairs -->
-      <line x1="3.6" y1="-1" x2="3.6" y2="8.2" stroke="#ff3333" stroke-width="0.15" opacity="0.6" />
-      <line x1="-1" y1="3.6" x2="8.2" y2="3.6" stroke="#ff3333" stroke-width="0.15" opacity="0.6" />
-      <text x="3.6" y="9.8" text-anchor="middle" font-family="monospace" font-size="1.8px" font-weight="bold" fill="#111111">ID: 3 [BL]</text>
+    <!-- FIDUCIAL 3: BOTTOM-LEFT (57.95, 200) -->
+    <g id="fiducial-3" transform="translate(57.95, 200)">
+      <circle cx="0" cy="0" r="7.0" fill="#ffffff" stroke="#000000" stroke-width="0.4" />
+      <circle cx="0" cy="0" r="5.5" class="fiducial-disc" />
+      <circle cx="0" cy="0" r="3.2" fill="#ffffff" />
+      <circle cx="0" cy="0" r="1.4" class="fiducial-disc" />
+      <line x1="-8" y1="0" x2="8" y2="0" class="fiducial-cross" />
+      <line x1="0" y1="-8" x2="0" y2="8" class="fiducial-cross" />
+      <rect x="-10" y="8" width="7" height="4" fill="#000000" rx="0.5" />
+      <text x="-6.5" y="10.8" text-anchor="middle" class="txt-badge">BL 3</text>
     </g>
   </g>
 
   <!-- =================================================================== -->
-  <!-- 4. METRIC GROUND TRUTH FOOTER                                       -->
+  <!-- 3. FOOTER INSTRUCTIONS                                              -->
   <!-- =================================================================== -->
-  <g transform="translate(105, 196)">
-    <text x="0" y="0" text-anchor="middle" class="txt-meta" font-weight="bold">TAG SPAN: [ID 0 to ID 1] = 48.00 mm | [ID 0 to ID 3] = 48.00 mm</text>
+  <g transform="translate(107.95, 248)">
+    <text x="0" y="0" text-anchor="middle" class="txt-sub">US LETTER SPECIFICATION (8.5 × 11 in): 100.00 mm FIDUCIAL QUAD</text>
+    <text x="0" y="4.5" text-anchor="middle" class="txt-dim">Print at 100% scale (Do not fit to page / Do not scale)</text>
   </g>
 </svg>

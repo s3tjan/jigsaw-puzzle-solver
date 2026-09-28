@@ -1,73 +1,10 @@
 pub mod aruco;
-pub mod board;
 pub mod contour;
 pub mod homography;
-pub mod mating;
 
 use wasm_bindgen::prelude::*;
-pub use board::WasmPuzzleBoard;
 use homography::{dewarp_image, Homography, Point2D};
 use contour::{trace_piece_contour, partition_edges_and_classify, ScannedPiece};
-
-#[derive(serde::Serialize)]
-pub struct FrameAnalysis {
-    pub width: u32,
-    pub height: u32,
-    pub avg_brightness: f32,
-    pub elapsed_ms: f64,
-}
-
-#[wasm_bindgen]
-pub fn greet(name: &str) -> String {
-    console_error_panic_hook::set_once();
-    format!("Hello from Rust, {}! WASM is working perfectly!", name)
-}
-
-/// Process a video frame: takes an RGBA byte slice, computes metrics and returns JSON
-#[wasm_bindgen]
-pub fn process_frame(pixels: &[u8], width: u32, height: u32) -> Result<JsValue, JsValue> {
-    let expected_len = (width * height * 4) as usize;
-    if pixels.len() < expected_len {
-        return Err(JsValue::from_str("Pixel buffer too small"));
-    }
-
-    let start = web_sys::window()
-        .and_then(|w| w.performance())
-        .map(|p| p.now())
-        .unwrap_or(0.0);
-
-    let mut sum_brightness: u64 = 0;
-    let total_pixels = (width * height) as usize;
-
-    for i in 0..total_pixels {
-        let offset = i * 4;
-        let r = pixels[offset] as u64;
-        let g = pixels[offset + 1] as u64;
-        let b = pixels[offset + 2] as u64;
-        let lum = (r * 299 + g * 587 + b * 114) / 1000;
-        sum_brightness += lum;
-    }
-
-    let avg = if total_pixels > 0 {
-        (sum_brightness as f64 / total_pixels as f64) as f32
-    } else {
-        0.0
-    };
-
-    let end = web_sys::window()
-        .and_then(|w| w.performance())
-        .map(|p| p.now())
-        .unwrap_or(0.0);
-
-    let analysis = FrameAnalysis {
-        width,
-        height,
-        avg_brightness: avg,
-        elapsed_ms: end - start,
-    };
-
-    serde_wasm_bindgen::to_value(&analysis).map_err(|e| JsValue::from_str(&e.to_string()))
-}
 
 /// Snaps a manual seed coordinate to the exact sub-pixel center of the nearest fiducial bullseye
 #[wasm_bindgen]
@@ -81,53 +18,6 @@ pub fn snap_fiducial_corner(
 ) -> Vec<f32> {
     let refined = aruco::refine_fiducial_centroid(pixels, width, height, seed_x, seed_y, radius);
     vec![refined.x, refined.y]
-}
-
-/// Automatically detects and snaps all 4 calibration mat corners
-#[wasm_bindgen]
-pub fn auto_detect_mat_quad(
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    p0_x: f32, p0_y: f32,
-    p1_x: f32, p1_y: f32,
-    p2_x: f32, p2_y: f32,
-    p3_x: f32, p3_y: f32,
-) -> Vec<f32> {
-    let current = [
-        Point2D { x: p0_x, y: p0_y },
-        Point2D { x: p1_x, y: p1_y },
-        Point2D { x: p2_x, y: p2_y },
-        Point2D { x: p3_x, y: p3_y },
-    ];
-    let detected = aruco::auto_detect_mat_corners(pixels, width, height, &current);
-    vec![
-        detected[0].x, detected[0].y,
-        detected[1].x, detected[1].y,
-        detected[2].x, detected[2].y,
-        detected[3].x, detected[3].y,
-    ]
-}
-
-/// Automatically computes optimal lens radial distortion k1 [-0.35, +0.35]
-/// using straight rail plumbline deviation.
-#[wasm_bindgen]
-pub fn auto_calibrate_lens_k1(
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    p0_x: f32, p0_y: f32,
-    p1_x: f32, p1_y: f32,
-    p2_x: f32, p2_y: f32,
-    p3_x: f32, p3_y: f32,
-) -> f32 {
-    let corners = [
-        Point2D { x: p0_x, y: p0_y },
-        Point2D { x: p1_x, y: p1_y },
-        Point2D { x: p2_x, y: p2_y },
-        Point2D { x: p3_x, y: p3_y },
-    ];
-    aruco::auto_calibrate_lens_k1(pixels, width, height, &corners)
 }
 
 /// Measures real-time optical focus MTF score [0, 100]% using high-frequency gradient energy
@@ -150,68 +40,18 @@ pub fn measure_stage_focus(
     aruco::compute_focus_mtf(pixels, width, height, &corners)
 }
 
-/// Apply radial lens distortion to a point for visual calibration overlay alignment
-#[wasm_bindgen]
-pub fn distort_point(x: f32, y: f32, w: f32, h: f32, k1: f32) -> Vec<f32> {
-    let p = homography::apply_radial_distortion(Point2D { x, y }, w, h, k1);
-    vec![p.x, p.y]
-}
-
-/// Invert radial lens distortion for a point
-#[wasm_bindgen]
-pub fn undistort_point(x: f32, y: f32, w: f32, h: f32, k1: f32) -> Vec<f32> {
-    let p = homography::undistort_point(Point2D { x, y }, w, h, k1);
-    vec![p.x, p.y]
-}
-
-/// Compute inverse 3x3 homography matrix mapping rectified stage coordinates (0..dst_w, 0..dst_h)
-/// back to perspective/sensor coordinates.
-#[wasm_bindgen]
-pub fn compute_inverse_homography(
-    p0_x: f32, p0_y: f32,
-    p1_x: f32, p1_y: f32,
-    p2_x: f32, p2_y: f32,
-    p3_x: f32, p3_y: f32,
-    dst_w: f32, dst_h: f32,
-    w: f32, h: f32,
-    k1: f32,
-) -> Option<Vec<f64>> {
-    let src_corners = [
-        homography::undistort_point(Point2D { x: p0_x, y: p0_y }, w, h, k1),
-        homography::undistort_point(Point2D { x: p1_x, y: p1_y }, w, h, k1),
-        homography::undistort_point(Point2D { x: p2_x, y: p2_y }, w, h, k1),
-        homography::undistort_point(Point2D { x: p3_x, y: p3_y }, w, h, k1),
-    ];
-    let inset = dst_w * 0.085;
-    let dst_corners = [
-        Point2D { x: -inset, y: -inset },
-        Point2D { x: dst_w + inset, y: -inset },
-        Point2D { x: dst_w + inset, y: dst_h + inset },
-        Point2D { x: -inset, y: dst_h + inset },
-    ];
-    let h_mat = Homography::from_4_points(&src_corners, &dst_corners)?;
-    let inv_h = h_mat.invert()?;
-    Some(inv_h.h.to_vec())
-}
-
-
-
-
-/// Result of staged piece analysis including geometry, metrics, and binary mask for visual diagnostics
+/// Result of staged piece analysis
 #[derive(serde::Serialize)]
 pub struct AnalysisResult {
     pub piece: Option<ScannedPiece>,
     pub binary_mask: Vec<u8>,
     pub bg_mean_rgb: [u8; 3],
-    pub stage_reflectance_rgb: [u8; 3],
     pub fg_pixels: usize,
     pub threshold_used: u8,
 }
 
-/// Dewarp the specified 4-point quadrilateral from src_pixels into a rectified dst_w x dst_h RGBA buffer
-/// with optional radial lens distortion correction (k1).
-/// Inset crops inward by 7.5% so only the clean Chroma-Green staging arena is captured,
-/// completely excluding outer checkerboard rails and ArUco marker boundaries.
+/// Dewarp the specified 4-point quadrilateral from src_pixels into a rectified dst_w x dst_h RGBA buffer.
+/// Inset crops inward by 2% (100mm fiducials to 96mm stage) so only the clean staging arena is captured.
 #[wasm_bindgen]
 pub fn dewarp_quad(
     src_pixels: &[u8],
@@ -235,9 +75,7 @@ pub fn dewarp_quad(
         homography::undistort_point(Point2D { x: p3_x, y: p3_y }, src_w_f, src_h_f, k1),
     ];
 
-    // Inset mapping: Marker centers (48mm) map to (-inset, -inset) .. (dst + inset, dst + inset)
-    // so (0,0)..(dst_w, dst_h) captures strictly the pure green inner stage!
-    let inset = dst_w as f32 * 0.085;
+    let inset = dst_w as f32 * 0.02;
     let dst_corners = [
         Point2D { x: -inset, y: -inset },
         Point2D { x: dst_w as f32 + inset, y: -inset },
@@ -257,8 +95,8 @@ pub fn dewarp_quad(
     Ok(dst_buffer)
 }
 
-/// Scans, segments, and analyzes the puzzle piece from a rectified RGBA buffer using
-/// color-opponency Chroma-Green segmentation with neutral fallback.
+/// Scans, segments, and analyzes the puzzle piece from a rectified RGBA buffer.
+/// Robust against white bond paper background: pieces have distinct contrast from the white floor.
 #[wasm_bindgen]
 pub fn analyze_staged_piece(
     dewarped_pixels: &[u8],
@@ -274,20 +112,26 @@ pub fn analyze_staged_piece(
     let w = width as usize;
     let h = height as usize;
 
-    // 1. Sample Background Mean RGB from the safe peripheral margin of the staging mat (y: 3%..10%, x: 20%..80%)
-    // This samples the pure Chroma Green (#00A859) stage arena, avoiding ArUco tags and outer borders.
+    // 1. Sample Background Mean RGB from the safe peripheral margin of the white paper stage
     let mut bg_r_sum: u64 = 0;
     let mut bg_g_sum: u64 = 0;
     let mut bg_b_sum: u64 = 0;
     let mut bg_count: u64 = 0;
 
-    let sample_y_min = (height as f32 * 0.03) as usize;
-    let sample_y_max = (height as f32 * 0.10) as usize;
-    let sample_x_min = (width as f32 * 0.20) as usize;
-    let sample_x_max = (width as f32 * 0.80) as usize;
+    let margin_y = (height as f32 * 0.06) as usize;
+    let margin_x = (width as f32 * 0.06) as usize;
 
-    for y in sample_y_min..sample_y_max {
-        for x in sample_x_min..sample_x_max {
+    for y in 2..margin_y {
+        for x in margin_x..(w - margin_x) {
+            let idx = (y * w + x) * 4;
+            bg_r_sum += dewarped_pixels[idx] as u64;
+            bg_g_sum += dewarped_pixels[idx + 1] as u64;
+            bg_b_sum += dewarped_pixels[idx + 2] as u64;
+            bg_count += 1;
+        }
+    }
+    for y in (h - margin_y)..(h - 2) {
+        for x in margin_x..(w - margin_x) {
             let idx = (y * w + x) * 4;
             bg_r_sum += dewarped_pixels[idx] as u64;
             bg_g_sum += dewarped_pixels[idx + 1] as u64;
@@ -296,98 +140,44 @@ pub fn analyze_staged_piece(
         }
     }
 
-    let bg_r = if bg_count > 0 { (bg_r_sum / bg_count) as f32 } else { 0.0 };
-    let bg_g = if bg_count > 0 { (bg_g_sum / bg_count) as f32 } else { 168.0 };
-    let bg_b = if bg_count > 0 { (bg_b_sum / bg_count) as f32 } else { 89.0 };
+    let bg_r = if bg_count > 0 { (bg_r_sum / bg_count) as f32 } else { 240.0 };
+    let bg_g = if bg_count > 0 { (bg_g_sum / bg_count) as f32 } else { 240.0 };
+    let bg_b = if bg_count > 0 { (bg_b_sum / bg_count) as f32 } else { 240.0 };
 
-    let is_chroma_green = bg_g > 50.0 && bg_g > bg_r * 1.25 && bg_g > bg_b * 1.25;
-
-    // 3. Compute Delta Image:
-    // If Chroma Green stage: compute true color opponency in HSV / Normalized Green ratio.
-    // Jigsaw puzzle pieces (black, white, blue, yellow, red, patterned) have low saturation or completely different hue.
-    // 3. Compute Delta Image:
-    // Dynamic sensitivity scaling:
-    // `sensitivity` slider in App ranges from 12 to 60 (default 30).
-    // Let sens_factor scale the color distance threshold and hue acceptance band.
-    let sens = sensitivity.clamp(10.0, 70.0);
+    // 2. Compute Color/Luminance Distance from background:
+    // Works whether background is white paper (bg_lum > 180) or dark card (bg_lum < 80)
     let mut delta_img = vec![0u8; total_pixels];
-
-    // Dynamic hue window based on sensitivity:
-    // Higher sensitivity -> tighter hue window (detects subtle differences from green).
-    // Lower sensitivity -> wider hue window (ignores bond paper ink variations).
-    let hue_half_width = (52.0 - (sens - 30.0) * 0.4).clamp(35.0, 65.0);
-    let green_center_hue = 125.0;
-    let min_hue = green_center_hue - hue_half_width;
-    let max_hue = green_center_hue + hue_half_width;
-    let sat_min = (0.24 - (sens - 30.0) * 0.002).clamp(0.16, 0.32);
 
     for i in 0..total_pixels {
         let r = dewarped_pixels[i * 4] as f32;
         let g = dewarped_pixels[i * 4 + 1] as f32;
         let b = dewarped_pixels[i * 4 + 2] as f32;
 
-        let dist = if is_chroma_green {
-            let max_c = r.max(g).max(b);
-            let min_c = r.min(g).min(b);
-            let delta = max_c - min_c;
-            
-            let hue = if delta < 1e-4 {
-                0.0
-            } else if max_c == g {
-                60.0 * (((b - r) / delta) + 2.0)
-            } else if max_c == r {
-                60.0 * (((g - b) / delta).rem_euclid(6.0))
-            } else {
-                60.0 * (((r - g) / delta) + 4.0)
-            };
+        let dr = r - bg_r;
+        let dg = g - bg_g;
+        let db = b - bg_b;
 
-            let sat = if max_c > 1.0 { delta / max_c } else { 0.0 };
-
-            if hue >= min_hue && hue <= max_hue && sat > sat_min {
-                // Background stage pixel
-                let dg = (g - bg_g).abs() * 0.2;
-                dg.min(15.0)
-            } else {
-                // Piece pixel: non-green color or desaturated
-                let hue_err = if hue < min_hue {
-                    (min_hue - hue).min(180.0)
-                } else if hue > max_hue {
-                    (hue - max_hue).min(180.0)
-                } else {
-                    0.0
-                };
-                let sat_err = (sat_min - sat).max(0.0) * 200.0;
-                let lum_delta = ((r - bg_r).abs() + (g - bg_g).abs() + (b - bg_b).abs()) * 0.35;
-                (hue_err * 1.5 + sat_err + lum_delta + 25.0).clamp(0.0, 255.0)
-            }
-        } else {
-            let dr = r - bg_r;
-            let dg = g - bg_g;
-            let db = b - bg_b;
-            (dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114).sqrt().min(255.0)
-        };
-        delta_img[i] = dist as u8;
+        // Euclidean perceptual color distance
+        let dist = (dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114).sqrt();
+        delta_img[i] = dist.clamp(0.0, 255.0) as u8;
     }
 
     let mut smoothed_delta = vec![0u8; total_pixels];
     contour::gaussian_blur_3x3(&delta_img, width, height, &mut smoothed_delta);
 
-    // 4. Thresholding:
-    // Threshold directly maps to user sensitivity slider:
-    // At sens=15: thresh ~ 45 (very conservative, only blatant foreground)
-    // At sens=30: thresh ~ 30 (nominal balanced)
-    // At sens=50: thresh ~ 18 (high sensitivity for pale or subtle pieces)
-    let thresh_val = (60.0 - sens * 0.75).clamp(12.0, 55.0) as u8;
+    // 3. Thresholding:
+    // Sens slider: 10 to 60 (nominal 25).
+    // Threshold directly scales to contrast difference:
+    // sens=15 -> thresh=38; sens=25 -> thresh=27; sens=45 -> thresh=16
+    let sens = sensitivity.clamp(10.0, 60.0);
+    let thresh_val = (48.0 - sens * 0.55).clamp(12.0, 48.0) as u8;
 
     let mut binary = vec![0u8; total_pixels];
     let mut foreground_count = 0;
 
-    let margin_frac = 0.025f32;
-    let margin_y_px = (h as f32 * margin_frac) as usize;
-    let margin_x_px = (w as f32 * margin_frac) as usize;
-
-    for y in margin_y_px..(h - margin_y_px) {
-        for x in margin_x_px..(w - margin_x_px) {
+    let border_cut = 3usize;
+    for y in border_cut..(h - border_cut) {
+        for x in border_cut..(w - border_cut) {
             let idx = y * w + x;
             if smoothed_delta[idx] >= thresh_val {
                 binary[idx] = 255;
@@ -396,16 +186,14 @@ pub fn analyze_staged_piece(
         }
     }
 
-    // Apply morphological closing to bridge specular highlights and cardboard surface textures
+    // Morphological closing
     let mut closed_binary = vec![0u8; total_pixels];
     contour::morphological_close_3x3(&binary, width, height, &mut closed_binary);
 
-    // 5. Trace Boundary Contour & Hand / Obstruction filter:
-    // If foreground pixels occupy > 60% of the entire staging area, or if it touches outer edges extensively,
-    // a user hand, arm, or shadow is obstructing the stage. Suppress piece output cleanly!
-    let is_obstructed = foreground_count > (total_pixels * 58 / 100);
+    // Obstruction / Hand filter: >55% or <0.3% of the stage
+    let is_obstructed = foreground_count > (total_pixels * 55 / 100);
 
-    let piece_profile = if !is_obstructed && foreground_count >= total_pixels / 250 {
+    let piece_profile = if !is_obstructed && foreground_count >= total_pixels / 300 {
         trace_piece_contour(&closed_binary, width, height)
             .and_then(|c| partition_edges_and_classify(&c))
     } else {
@@ -417,7 +205,6 @@ pub fn analyze_staged_piece(
         piece: piece_profile,
         binary_mask: closed_binary,
         bg_mean_rgb: bg_rgb,
-        stage_reflectance_rgb: bg_rgb,
         fg_pixels: foreground_count,
         threshold_used: thresh_val,
     };
