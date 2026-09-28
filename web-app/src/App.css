@@ -85,11 +85,11 @@ html, body, #root {
 .red { color: var(--red) !important; }
 .muted { color: var(--text-muted) !important; }
 
-/* Main Workbench */
+/* Main Workbench: Fixed 3-Column Studio Layout */
 .main-workbench {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(360px, 1fr) 416px 360px;
   gap: 1px;
   background: var(--border);
   min-height: 0;
@@ -102,6 +102,7 @@ html, body, #root {
   min-height: 0;
   overflow: hidden;
 }
+
 
 .panel-header {
   height: 32px;
@@ -178,8 +179,7 @@ html, body, #root {
 .piece-canvas-wrapper {
   width: 384px;
   height: 384px;
-  max-width: 90vw;
-  max-height: 90vw;
+  flex-shrink: 0;
   background: #000;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -189,6 +189,7 @@ html, body, #root {
   justify-content: center;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
+
 
 .piece-canvas {
   width: 100%;

@@ -1007,27 +1007,18 @@ export default function App() {
           </div>
         </section>
 
-        {/* Right: Rectified Piece Diagnostics */}
-        <section className="workbench-panel">
+        {/* Center: Rectified Dewarp Canvas (strictly 384x384, never resized) */}
+        <section className="workbench-panel" style={{ width: 416, flexShrink: 0 }}>
           <div className="panel-header">
-            <span>[2] DETECTED PIECE &amp; METRICS</span>
+            <span>[2] RECTIFIED PIECE INSPECTION</span>
             <div className="panel-actions">
-              <button
-                className="btn small"
-                disabled={!detectedPiece}
-                onClick={handleExportSnapshot}
-                title="Save lightweight JSON + JPEG diagnostic snapshot (<100KB)"
-              >
-                SAVE SNAPSHOT
-              </button>
-              <span className={detectedPiece ? 'green' : 'muted'} style={{ marginLeft: 6 }}>
+              <span className={detectedPiece ? 'green' : 'muted'}>
                 {detectedPiece ? 'TARGET IN STAGE' : 'NO PIECE'}
               </span>
             </div>
           </div>
 
-          <div className="panel-body">
-            {/* Piece Canvas with optional interactive corner dragging */}
+          <div className="panel-body" style={{ alignItems: 'center', justifyContent: 'flex-start', padding: 16 }}>
             <div className="piece-canvas-wrapper">
               <canvas
                 ref={pieceCanvasRef}
@@ -1041,12 +1032,44 @@ export default function App() {
               />
             </div>
 
-            {/* Standard Mode vs Ground-Truth Labeling Mode */}
+            <div style={{ display: 'flex', gap: 8, width: 384, marginTop: 12 }}>
+              <button
+                className="btn small"
+                disabled={!detectedPiece}
+                onClick={handleExportSnapshot}
+                style={{ flex: 1 }}
+                title="Save lightweight JSON + JPEG diagnostic snapshot (<100KB)"
+              >
+                SAVE SNAPSHOT
+              </button>
+              <button
+                className="btn primary small"
+                disabled={!detectedPiece}
+                onClick={handleRecordPiece}
+                style={{ flex: 1 }}
+                title="Add to session piece list"
+              >
+                RECORD PIECE
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Right: Dedicated Benchmark Ground-Truth Station */}
+        <section className="workbench-panel" style={{ width: 360, flexShrink: 0 }}>
+          <div className="panel-header">
+            <span>[3] GROUND TRUTH STATION</span>
+            <div className="panel-actions">
+              <span className="badge" style={{ background: '#2b6cb0' }}>BENCHMARK #{gtSavedCount}</span>
+            </div>
+          </div>
+
+          <div className="panel-body" style={{ padding: 12, gap: 10, alignItems: 'stretch' }}>
             {!isGtMode ? (
-              <>
-                <div className="piece-data-card">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%', justifyContent: 'space-between' }}>
+                <div className="piece-data-card" style={{ width: '100%', maxWidth: 'none' }}>
                   <div className="data-row">
-                    <span className="data-label">TYPE:</span>
+                    <span className="data-label">AUTO TYPE:</span>
                     <span className={`data-val ${detectedPiece ? (detectedPiece.is_corner ? 'red' : detectedPiece.is_border ? 'yellow' : 'green') : ''}`}>
                       {detectedPiece ? (detectedPiece.is_corner ? 'CORNER' : detectedPiece.is_border ? 'BORDER' : 'INTERIOR') : '--'}
                     </span>
@@ -1069,12 +1092,12 @@ export default function App() {
                   </div>
 
                   <div className="data-row">
-                    <span className="data-label">EDGES:</span>
+                    <span className="data-label">AUTO EDGES:</span>
                     <div className="edge-pills">
                       {detectedPiece ? (
                         detectedPiece.edges.map((e, idx) => (
                           <span key={idx} className={`pill ${e.edge_type.toLowerCase()}`}>
-                            E{idx}: {e.edge_type}
+                            E{idx + 1}: {e.edge_type}
                           </span>
                         ))
                       ) : (
@@ -1084,35 +1107,25 @@ export default function App() {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: 6, width: '100%', maxWidth: 320 }}>
-                  <button
-                    className="btn primary record-btn"
-                    disabled={!detectedPiece}
-                    onClick={handleRecordPiece}
-                    title="Add to session piece list"
-                  >
-                    RECORD PIECE
-                  </button>
-                  <button
-                    className="btn record-btn"
-                    style={{ background: '#1a365d', borderColor: '#3182ce', color: '#63b3ed' }}
-                    disabled={!detectedPiece}
-                    onClick={handleFreezeGroundTruth}
-                    title="Freeze and label Ground Truth for test harness [SPACE]"
-                  >
-                    LABEL GROUND TRUTH [SPACE]
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="gt-editor-card">
-                <div className="gt-header">
-                  <span>GROUND TRUTH EDITOR</span>
-                  <span className="badge" style={{ background: '#2b6cb0' }}>BENCHMARK #{gtSavedCount + 1}</span>
+                <div style={{ background: '#161b22', padding: 12, borderRadius: 4, border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  <strong style={{ color: '#fff' }}>Ground Truth Benchmark:</strong>
+                  <br />
+                  Freeze the current frame to accurately place corners and specify edges for regression testing.
                 </div>
 
+                <button
+                  className="btn primary"
+                  style={{ padding: 10, fontSize: 11, background: '#1a365d', borderColor: '#3182ce', color: '#63b3ed' }}
+                  disabled={!detectedPiece}
+                  onClick={handleFreezeGroundTruth}
+                >
+                  START LABELING [SPACE]
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  Drag <b>cyan corner pins (C1..C4)</b> on the canvas to place corners on the body shoulders:
+                  Drag <b>cyan pins (C1..C4)</b> on preview or click a corner below to reposition:
                 </div>
 
                 {/* Corner Coordinates & Reposition Controls */}
@@ -1132,7 +1145,7 @@ export default function App() {
                         justifyContent: 'space-between',
                         alignItems: 'center',
                       }}
-                      title={`Click to highlight C${i + 1} for positioning`}
+                      title={`Click to place C${i + 1}`}
                     >
                       <b style={{ color: draggingGtCorner === i ? '#00e5ff' : 'var(--text)' }}>C{i + 1}</b>
                       <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
@@ -1140,8 +1153,8 @@ export default function App() {
                   ))}
                 </div>
 
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                  Verify the 4 edge spans between corners:
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                  Set true physical edge characteristics:
                 </div>
 
                 <div className="gt-edge-list">
@@ -1180,18 +1193,19 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="gt-actions">
+                <div className="gt-actions" style={{ marginTop: 8 }}>
                   <button className="btn" onClick={handleExitGtMode}>
                     CANCEL [ESC]
                   </button>
                   <button className="btn primary" onClick={handleSaveGroundTruth}>
-                    SAVE TO BENCHMARK [SPACE]
+                    SAVE [SPACE]
                   </button>
                 </div>
               </div>
             )}
           </div>
         </section>
+
 
       </main>
 
