@@ -140,6 +140,9 @@ export default function App() {
   gtEdgesRef.current = gtEdges
   const draggingGtCornerRef = useRef(draggingGtCorner)
   draggingGtCornerRef.current = draggingGtCorner
+  const gtFrozenPixelsRef = useRef<Uint8Array | null>(null)
+  const latestDewarpedRef = useRef<Uint8Array | null>(null)
+
 
 
   useEffect(() => {
@@ -526,66 +529,64 @@ export default function App() {
                 dstW, dstH, curK1
               )
 
-              // Piece boundary & corner analysis
-              const result = analyze_staged_piece(dewarped, dstW, dstH, curSens)
-              const rawPiece: ScannedPiece | null = result?.piece || null
+              latestDewarpedRef.current = new Uint8Array(dewarped)
 
-              // Multi-Frame Stability Consensus Filter:
-              // Maintains a sliding window (5 frames) of scanned piece geometries.
-              // If the piece is moved/removed, the buffer resets immediately.
-              // If the piece is steady, we take the mode of classification and median of corner coordinates.
-              let stablePiece: ScannedPiece | null = null
+              // Piece boundary & corner analysis (only update live piece if not in GT mode)
+              if (!isGtModeRef.current) {
+                const result = analyze_staged_piece(dewarped, dstW, dstH, curSens)
+                const rawPiece: ScannedPiece | null = result?.piece || null
 
-              if (rawPiece) {
-                const history = pieceHistoryRef.current
-                // Check if rawPiece is roughly at the same location as previous frames (< 8px movement)
-                const isContinuous = history.length > 0 &&
-                  Math.hypot(rawPiece.center.x - history[0].center.x, rawPiece.center.y - history[0].center.y) < 8.0
+                // Multi-Frame Stability Consensus Filter:
+                let stablePiece: ScannedPiece | null = null
 
-                if (!isContinuous) {
-                  pieceHistoryRef.current = [rawPiece]
-                  stablePiece = rawPiece
-                } else {
-                  history.unshift(rawPiece)
-                  if (history.length > 5) history.pop()
+                if (rawPiece) {
+                  const history = pieceHistoryRef.current
+                  const isContinuous = history.length > 0 &&
+                    Math.hypot(rawPiece.center.x - history[0].center.x, rawPiece.center.y - history[0].center.y) < 8.0
 
-                  // Consensus Edge Types (majority vote per cardinal edge)
-                  const consensusEdges = rawPiece.edges.map((edge, eIdx) => {
-                    const votes: Record<string, number> = { Flat: 0, Tab: 0, Hole: 0 }
-                    for (const hp of history) {
-                      votes[hp.edges[eIdx].edge_type] = (votes[hp.edges[eIdx].edge_type] || 0) + 1
+                  if (!isContinuous) {
+                    pieceHistoryRef.current = [rawPiece]
+                    stablePiece = rawPiece
+                  } else {
+                    history.unshift(rawPiece)
+                    if (history.length > 5) history.pop()
+
+                    const consensusEdges = rawPiece.edges.map((edge, eIdx) => {
+                      const votes: Record<string, number> = { Flat: 0, Tab: 0, Hole: 0 }
+                      for (const hp of history) {
+                        votes[hp.edges[eIdx].edge_type] = (votes[hp.edges[eIdx].edge_type] || 0) + 1
+                      }
+                      const bestType = (Object.keys(votes) as ('Flat' | 'Tab' | 'Hole')[]).reduce((a, b) =>
+                        votes[a] >= votes[b] ? a : b
+                      )
+                      return { ...edge, edge_type: bestType }
+                    }) as [PieceEdge, PieceEdge, PieceEdge, PieceEdge]
+
+                    const flatCount = consensusEdges.filter(e => e.edge_type === 'Flat').length
+                    const isCorner = flatCount === 2
+                    const isBorder = flatCount === 1
+
+                    const medianCorners = [0, 1, 2, 3].map((cIdx) => {
+                      const xs = history.map(hp => hp.corners[cIdx].x).sort((a, b) => a - b)
+                      const ys = history.map(hp => hp.corners[cIdx].y).sort((a, b) => a - b)
+                      const mid = Math.floor(xs.length / 2)
+                      return { x: xs[mid], y: ys[mid] }
+                    }) as [Point2D, Point2D, Point2D, Point2D]
+
+                    stablePiece = {
+                      ...rawPiece,
+                      corners: medianCorners,
+                      edges: consensusEdges,
+                      is_corner: isCorner,
+                      is_border: isBorder,
                     }
-                    const bestType = (Object.keys(votes) as ('Flat' | 'Tab' | 'Hole')[]).reduce((a, b) =>
-                      votes[a] >= votes[b] ? a : b
-                    )
-                    return { ...edge, edge_type: bestType }
-                  }) as [PieceEdge, PieceEdge, PieceEdge, PieceEdge]
-
-                  const flatCount = consensusEdges.filter(e => e.edge_type === 'Flat').length
-                  const isCorner = flatCount === 2
-                  const isBorder = flatCount === 1
-
-                  // Median Corner Smoothing (eliminates 1-2px sensor noise jitter)
-                  const medianCorners = [0, 1, 2, 3].map((cIdx) => {
-                    const xs = history.map(hp => hp.corners[cIdx].x).sort((a, b) => a - b)
-                    const ys = history.map(hp => hp.corners[cIdx].y).sort((a, b) => a - b)
-                    const mid = Math.floor(xs.length / 2)
-                    return { x: xs[mid], y: ys[mid] }
-                  }) as [Point2D, Point2D, Point2D, Point2D]
-
-                  stablePiece = {
-                    ...rawPiece,
-                    corners: medianCorners,
-                    edges: consensusEdges,
-                    is_corner: isCorner,
-                    is_border: isBorder,
                   }
+                } else {
+                  pieceHistoryRef.current = []
                 }
-              } else {
-                pieceHistoryRef.current = []
-              }
 
-              setDetectedPiece(stablePiece)
+                setDetectedPiece(stablePiece)
+              }
 
               // Render rectified piece view
               if (pCanvas) {
@@ -595,12 +596,16 @@ export default function App() {
                 }
                 const pCtx = pCanvas.getContext('2d')
                 if (pCtx) {
+                  // In GT mode, display the exact frozen dewarped pixels so the image is 100% still and unaltered
+                  const pixelsToDraw = (isGtModeRef.current && gtFrozenPixelsRef.current)
+                    ? gtFrozenPixelsRef.current
+                    : dewarped
+
                   const pImg = pCtx.createImageData(dstW, dstH)
-                  pImg.data.set(dewarped)
+                  pImg.data.set(pixelsToDraw)
                   pCtx.putImageData(pImg, 0, 0)
 
                   if (isGtModeRef.current && gtFrozenPieceRef.current && gtCornersRef.current) {
-                    // In Ground-Truth mode: render frozen piece with interactive corners and user-toggled edges
                     const frozen = gtFrozenPieceRef.current
                     const activeCorners = gtCornersRef.current
                     const activeEdges = gtEdgesRef.current
@@ -616,8 +621,8 @@ export default function App() {
                       corners: activeCorners,
                       edges: mockEdges,
                     })
-                  } else if (stablePiece) {
-                    drawPieceDiagnostics(pCtx, stablePiece)
+                  } else if (detectedPiece) {
+                    drawPieceDiagnostics(pCtx, detectedPiece)
                   }
                 }
               }
@@ -625,6 +630,7 @@ export default function App() {
               console.warn('[CV] Frame processing error:', cvErr)
             }
           }
+
 
 
           // Draw camera overlay every frame
@@ -753,6 +759,9 @@ export default function App() {
   // Freeze current piece into ground truth workbench
   const handleFreezeGroundTruth = () => {
     if (!detectedPiece) return
+    if (latestDewarpedRef.current) {
+      gtFrozenPixelsRef.current = new Uint8Array(latestDewarpedRef.current)
+    }
     setGtFrozenPiece(detectedPiece)
     setGtCorners([...detectedPiece.corners] as [Point2D, Point2D, Point2D, Point2D])
     setGtEdges(detectedPiece.edges.map(e => e.edge_type) as ['Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole'])
@@ -762,11 +771,13 @@ export default function App() {
 
   const handleExitGtMode = () => {
     setIsGtMode(false)
+    gtFrozenPixelsRef.current = null
     setGtFrozenPiece(null)
     setGtCorners(null)
     setDraggingGtCorner(null)
     setGtSaveStatus(null)
   }
+
 
   const handleToggleEdgeType = (edgeIdx: number, type: 'Flat' | 'Tab' | 'Hole') => {
     setGtEdges(prev => {
