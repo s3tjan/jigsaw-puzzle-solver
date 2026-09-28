@@ -452,9 +452,10 @@ export default function App() {
       ctx.fillStyle = '#ffffff'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(`C${i}`, tagX, tagY)
+      ctx.fillText(`C${i + 1}`, tagX, tagY)
     })
   }
+
 
 
   // Main Render & CV Loop
@@ -784,16 +785,38 @@ export default function App() {
     const x = (e.clientX - rect.left) * (canvas.width / rect.width)
     const y = (e.clientY - rect.top) * (canvas.height / rect.height)
 
-    // Check if clicked near one of the 4 corners (< 20px)
+    // If a corner is already selected, clicking directly moves that corner to the clicked position
+    if (draggingGtCorner !== null && gtFrozenPiece) {
+      let bestPt = { x, y }
+      let minDist = 60.0
+      for (const p of gtFrozenPiece.contour_points) {
+        const d = Math.hypot(p.x - x, p.y - y)
+        if (d < minDist) {
+          minDist = d
+          bestPt = p
+        }
+      }
+      setGtCorners(prev => {
+        if (!prev) return prev
+        const next = [...prev] as [Point2D, Point2D, Point2D, Point2D]
+        next[draggingGtCorner] = bestPt
+        return next
+      })
+      setDraggingGtCorner(null)
+      return
+    }
+
+    // Check if clicked near one of the 4 corners (< 25px) to begin dragging
     for (let i = 0; i < 4; i++) {
       const dist = Math.hypot(gtCorners[i].x - x, gtCorners[i].y - y)
-      if (dist < 20.0) {
+      if (dist < 25.0) {
         setDraggingGtCorner(i)
         ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
         return
       }
     }
   }
+
 
   const handlePiecePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isGtMode || draggingGtCorner === null || !gtCorners || !gtFrozenPiece) return
@@ -1078,13 +1101,42 @@ export default function App() {
                 </div>
 
                 <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  Drag <b>cyan corner pins (C0..C3)</b> on canvas to align. Toggle edge classifications below:
+                  Drag <b>cyan corner pins (C1..C4)</b> on the canvas to place corners on the body shoulders:
+                </div>
+
+                {/* Corner Coordinates & Reposition Controls */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, background: '#161b22', padding: 6, borderRadius: 4, border: '1px solid var(--border)' }}>
+                  {gtCorners && gtCorners.map((pt, i) => (
+                    <div
+                      key={i}
+                      onClick={() => setDraggingGtCorner(draggingGtCorner === i ? null : i)}
+                      style={{
+                        padding: '4px 6px',
+                        background: draggingGtCorner === i ? '#00e5ff22' : '#21262d',
+                        border: `1px solid ${draggingGtCorner === i ? '#00e5ff' : 'var(--border)'}`,
+                        borderRadius: 3,
+                        cursor: 'pointer',
+                        fontSize: 9,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                      title={`Click to highlight C${i + 1} for positioning`}
+                    >
+                      <b style={{ color: draggingGtCorner === i ? '#00e5ff' : 'var(--text)' }}>C{i + 1}</b>
+                      <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                  Verify the 4 edge spans between corners:
                 </div>
 
                 <div className="gt-edge-list">
                   {gtEdges.map((type, idx) => (
                     <div key={idx} className={`gt-edge-item ${type.toLowerCase()}`}>
-                      <span className="gt-edge-label">Edge {idx} (C{idx}→C{(idx + 1) % 4}):</span>
+                      <span className="gt-edge-label">Edge {idx + 1} (C{idx + 1}→C{((idx + 1) % 4) + 1}):</span>
                       <div className="gt-edge-toggle">
                         {(['Tab', 'Hole', 'Flat'] as const).map((t) => (
                           <button
