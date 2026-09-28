@@ -109,6 +109,27 @@ pub fn auto_detect_mat_quad(
     ]
 }
 
+/// Automatically computes optimal lens radial distortion k1 [-0.35, +0.35]
+/// using straight rail plumbline deviation.
+#[wasm_bindgen]
+pub fn auto_calibrate_lens_k1(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    p0_x: f32, p0_y: f32,
+    p1_x: f32, p1_y: f32,
+    p2_x: f32, p2_y: f32,
+    p3_x: f32, p3_y: f32,
+) -> f32 {
+    let corners = [
+        Point2D { x: p0_x, y: p0_y },
+        Point2D { x: p1_x, y: p1_y },
+        Point2D { x: p2_x, y: p2_y },
+        Point2D { x: p3_x, y: p3_y },
+    ];
+    aruco::auto_calibrate_lens_k1(pixels, width, height, &corners)
+}
+
 /// Measures real-time optical focus MTF score [0, 100]% using high-frequency gradient energy
 #[wasm_bindgen]
 pub fn measure_stage_focus(
@@ -161,11 +182,12 @@ pub fn compute_inverse_homography(
         homography::undistort_point(Point2D { x: p2_x, y: p2_y }, w, h, k1),
         homography::undistort_point(Point2D { x: p3_x, y: p3_y }, w, h, k1),
     ];
+    let inset = dst_w * 0.085;
     let dst_corners = [
-        Point2D { x: 0.0, y: 0.0 },
-        Point2D { x: dst_w, y: 0.0 },
-        Point2D { x: dst_w, y: dst_h },
-        Point2D { x: 0.0, y: dst_h },
+        Point2D { x: -inset, y: -inset },
+        Point2D { x: dst_w + inset, y: -inset },
+        Point2D { x: dst_w + inset, y: dst_h + inset },
+        Point2D { x: -inset, y: dst_h + inset },
     ];
     let h_mat = Homography::from_4_points(&src_corners, &dst_corners)?;
     let inv_h = h_mat.invert()?;
@@ -188,6 +210,8 @@ pub struct AnalysisResult {
 
 /// Dewarp the specified 4-point quadrilateral from src_pixels into a rectified dst_w x dst_h RGBA buffer
 /// with optional radial lens distortion correction (k1).
+/// Inset crops inward by 7.5% so only the clean Chroma-Green staging arena is captured,
+/// completely excluding outer checkerboard rails and ArUco marker boundaries.
 #[wasm_bindgen]
 pub fn dewarp_quad(
     src_pixels: &[u8],
@@ -204,9 +228,6 @@ pub fn dewarp_quad(
     let src_w_f = src_w as f32;
     let src_h_f = src_h as f32;
 
-    // The user places corners on the distorted video image.
-    // In order for the planar homography H to model true perspective geometry (straight lines to straight lines),
-    // we first map the placed corners to rectilinear undistorted sensor plane coordinates.
     let src_corners = [
         homography::undistort_point(Point2D { x: p0_x, y: p0_y }, src_w_f, src_h_f, k1),
         homography::undistort_point(Point2D { x: p1_x, y: p1_y }, src_w_f, src_h_f, k1),
@@ -214,11 +235,14 @@ pub fn dewarp_quad(
         homography::undistort_point(Point2D { x: p3_x, y: p3_y }, src_w_f, src_h_f, k1),
     ];
 
+    // Inset mapping: Marker centers (48mm) map to (-inset, -inset) .. (dst + inset, dst + inset)
+    // so (0,0)..(dst_w, dst_h) captures strictly the pure green inner stage!
+    let inset = dst_w as f32 * 0.085;
     let dst_corners = [
-        Point2D { x: 0.0, y: 0.0 },
-        Point2D { x: dst_w as f32, y: 0.0 },
-        Point2D { x: dst_w as f32, y: dst_h as f32 },
-        Point2D { x: 0.0, y: dst_h as f32 },
+        Point2D { x: -inset, y: -inset },
+        Point2D { x: dst_w as f32 + inset, y: -inset },
+        Point2D { x: dst_w as f32 + inset, y: dst_h as f32 + inset },
+        Point2D { x: -inset, y: dst_h as f32 + inset },
     ];
 
     let h = Homography::from_4_points(&src_corners, &dst_corners)
@@ -281,8 +305,21 @@ pub fn analyze_staged_piece(
     // 3. Compute Delta Image:
     // If Chroma Green stage: compute true color opponency in HSV / Normalized Green ratio.
     // Jigsaw puzzle pieces (black, white, blue, yellow, red, patterned) have low saturation or completely different hue.
+    // 3. Compute Delta Image:
+    // Dynamic sensitivity scaling:
+    // `sensitivity` slider in App ranges from 12 to 60 (default 30).
+    // Let sens_factor scale the color distance threshold and hue acceptance band.
+    let sens = sensitivity.clamp(10.0, 70.0);
     let mut delta_img = vec![0u8; total_pixels];
-    let sens = sensitivity.clamp(8.0, 80.0);
+
+    // Dynamic hue window based on sensitivity:
+    // Higher sensitivity -> tighter hue window (detects subtle differences from green).
+    // Lower sensitivity -> wider hue window (ignores bond paper ink variations).
+    let hue_half_width = (52.0 - (sens - 30.0) * 0.4).clamp(35.0, 65.0);
+    let green_center_hue = 125.0;
+    let min_hue = green_center_hue - hue_half_width;
+    let max_hue = green_center_hue + hue_half_width;
+    let sat_min = (0.24 - (sens - 30.0) * 0.002).clamp(0.16, 0.32);
 
     for i in 0..total_pixels {
         let r = dewarped_pixels[i * 4] as f32;
@@ -290,7 +327,6 @@ pub fn analyze_staged_piece(
         let b = dewarped_pixels[i * 4 + 2] as f32;
 
         let dist = if is_chroma_green {
-            // Compute RGB to Hue & Saturation
             let max_c = r.max(g).max(b);
             let min_c = r.min(g).min(b);
             let delta = max_c - min_c;
@@ -307,19 +343,22 @@ pub fn analyze_staged_piece(
 
             let sat = if max_c > 1.0 { delta / max_c } else { 0.0 };
 
-            // Chroma Green stage has Hue in [85, 160] deg and Saturation > 0.35.
-            // If pixel is within green hue and saturated, it's stage (dist ~ 0).
-            // Any piece (black, white, blue, red, yellow) has either sat < 0.25 (white/gray/black) or hue outside green.
-            if hue >= 80.0 && hue <= 165.0 && sat > 0.32 {
-                // Background pixel
+            if hue >= min_hue && hue <= max_hue && sat > sat_min {
+                // Background stage pixel
                 let dg = (g - bg_g).abs() * 0.2;
-                dg.min(20.0)
+                dg.min(15.0)
             } else {
-                // Piece pixel: high contrast delta
-                let non_green_penalty = if hue < 75.0 || hue > 170.0 { 160.0 } else { 80.0 };
-                let desat_penalty = if sat < 0.28 { 140.0 } else { 0.0 };
-                let lum_delta = ((r - bg_r).abs() + (g - bg_g).abs() + (b - bg_b).abs()) * 0.4;
-                (non_green_penalty + desat_penalty + lum_delta).min(255.0)
+                // Piece pixel: non-green color or desaturated
+                let hue_err = if hue < min_hue {
+                    (min_hue - hue).min(180.0)
+                } else if hue > max_hue {
+                    (hue - max_hue).min(180.0)
+                } else {
+                    0.0
+                };
+                let sat_err = (sat_min - sat).max(0.0) * 200.0;
+                let lum_delta = ((r - bg_r).abs() + (g - bg_g).abs() + (b - bg_b).abs()) * 0.35;
+                (hue_err * 1.5 + sat_err + lum_delta + 25.0).clamp(0.0, 255.0)
             }
         } else {
             let dr = r - bg_r;
@@ -333,14 +372,17 @@ pub fn analyze_staged_piece(
     let mut smoothed_delta = vec![0u8; total_pixels];
     contour::gaussian_blur_3x3(&delta_img, width, height, &mut smoothed_delta);
 
-    // 4. Thresholding: Foreground is any pixel whose color delta exceeds sensitivity threshold
-    // Strictly isolate the active piece staging square: mask out outer 13% margins (fiducial markers,
-    // calibration scales, and tick marks all reside in the outer margins).
+    // 4. Thresholding:
+    // Threshold directly maps to user sensitivity slider:
+    // At sens=15: thresh ~ 45 (very conservative, only blatant foreground)
+    // At sens=30: thresh ~ 30 (nominal balanced)
+    // At sens=50: thresh ~ 18 (high sensitivity for pale or subtle pieces)
+    let thresh_val = (60.0 - sens * 0.75).clamp(12.0, 55.0) as u8;
+
     let mut binary = vec![0u8; total_pixels];
     let mut foreground_count = 0;
-    let thresh_val = if is_chroma_green { (sens * 0.85).max(12.0) as u8 } else { sens as u8 };
 
-    let margin_frac = 0.14f32;
+    let margin_frac = 0.025f32;
     let margin_y_px = (h as f32 * margin_frac) as usize;
     let margin_x_px = (w as f32 * margin_frac) as usize;
 
@@ -354,12 +396,16 @@ pub fn analyze_staged_piece(
         }
     }
 
-    // Apply morphological closing (3x3 dilation + erosion) to fuse small dropouts and bridge specular glare fractures
+    // Apply morphological closing to bridge specular highlights and cardboard surface textures
     let mut closed_binary = vec![0u8; total_pixels];
     contour::morphological_close_3x3(&binary, width, height, &mut closed_binary);
 
-    // 5. Trace Boundary Contour
-    let piece_profile = if foreground_count >= total_pixels / 250 {
+    // 5. Trace Boundary Contour & Hand / Obstruction filter:
+    // If foreground pixels occupy > 60% of the entire staging area, or if it touches outer edges extensively,
+    // a user hand, arm, or shadow is obstructing the stage. Suppress piece output cleanly!
+    let is_obstructed = foreground_count > (total_pixels * 58 / 100);
+
+    let piece_profile = if !is_obstructed && foreground_count >= total_pixels / 250 {
         trace_piece_contour(&closed_binary, width, height)
             .and_then(|c| partition_edges_and_classify(&c))
     } else {

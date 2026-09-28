@@ -8,6 +8,7 @@ import init, {
   measure_stage_focus,
   analyze_staged_piece,
   compute_inverse_homography,
+  auto_calibrate_lens_k1,
   WasmPuzzleBoard,
 } from './pkg/cv_engine'
 import './App.css'
@@ -390,11 +391,41 @@ function App() {
     // Draw the 4 interactive draggable corner handles on the fiducials
     // If guides are turned off, we also hide the handles unless actively dragging
     if (showGuides || draggingIdx !== null) {
+      // Draw Optical Center Alignment Reticle between the 4 corners
+      const centerMatX = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) * 0.25
+      const centerMatY = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) * 0.25
+
+      ctx.save()
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.65)'
+      ctx.lineWidth = 1.0
+      ctx.setLineDash([2, 2])
+      // Center crosshair
+      ctx.beginPath()
+      ctx.moveTo(centerMatX - 16, centerMatY)
+      ctx.lineTo(centerMatX + 16, centerMatY)
+      ctx.moveTo(centerMatX, centerMatY - 16)
+      ctx.lineTo(centerMatX, centerMatY + 16)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(centerMatX, centerMatY, 6, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.restore()
+
       const labels = ['P0: TL', 'P1: TR', 'P2: BR', 'P3: BL']
       pts.forEach((pt, i) => {
         const isDragging = i === draggingIdx
         const isSnapped = i === snappedIndex
         const activeColor = isDragging ? '#ff9100' : isSnapped ? '#00e676' : '#00e5ff'
+
+        // CV Search Basin Circle (radius ~32px showing auto-snap search radius)
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(pt.x, pt.y, 32, 0, Math.PI * 2)
+        ctx.strokeStyle = isSnapped ? 'rgba(0, 230, 118, 0.45)' : 'rgba(0, 229, 255, 0.25)'
+        ctx.lineWidth = 1.0
+        ctx.setLineDash([3, 3])
+        ctx.stroke()
+        ctx.restore()
 
         // Outer ring
         ctx.beginPath()
@@ -414,16 +445,12 @@ function App() {
         ctx.beginPath()
         ctx.strokeStyle = activeColor
         ctx.lineWidth = 1.2
-        // Left tick
         ctx.moveTo(pt.x - 18, pt.y)
         ctx.lineTo(pt.x - 5, pt.y)
-        // Right tick
         ctx.moveTo(pt.x + 5, pt.y)
         ctx.lineTo(pt.x + 18, pt.y)
-        // Top tick
         ctx.moveTo(pt.x, pt.y - 18)
         ctx.lineTo(pt.x, pt.y - 5)
-        // Bottom tick
         ctx.moveTo(pt.x, pt.y + 5)
         ctx.lineTo(pt.x, pt.y + 18)
         ctx.stroke()
@@ -441,59 +468,63 @@ function App() {
 
     // IN-SITU AUGMENTED REALITY PIECE OVERLAY (Rendered directly over the physical piece)
     if (piece && piece.contour_points.length > 0 && showAr) {
-      // Map dewarped contour points back to video coordinates using inverse homography
-      const invH = compute_inverse_homography(
-        pts[0].x, pts[0].y,
-        pts[1].x, pts[1].y,
-        pts[2].x, pts[2].y,
-        pts[3].x, pts[3].y,
-        384, 384,
-        w, h,
-        lensK1
-      )
+      try {
+        // Map dewarped contour points back to video coordinates using inverse homography
+        const invH = compute_inverse_homography(
+          pts[0].x, pts[0].y,
+          pts[1].x, pts[1].y,
+          pts[2].x, pts[2].y,
+          pts[3].x, pts[3].y,
+          384, 384,
+          w, h,
+          lensK1
+        )
 
-      if (invH && invH.length === 9) {
-        const mapStageToVideo = (px: number, py: number): Point2D => {
-          const denom = invH[6] * px + invH[7] * py + invH[8]
-          if (Math.abs(denom) < 1e-9) return { x: 0, y: 0 }
-          const inv_d = 1.0 / denom
-          const unX = (invH[0] * px + invH[1] * py + invH[2]) * inv_d
-          const unY = (invH[3] * px + invH[4] * py + invH[5]) * inv_d
-          return distortPt(unX, unY, w, h, lensK1)
-        }
+        if (invH && invH.length === 9) {
+          const mapStageToVideo = (px: number, py: number): Point2D => {
+            const denom = invH[6] * px + invH[7] * py + invH[8]
+            if (Math.abs(denom) < 1e-9) return { x: 0, y: 0 }
+            const inv_d = 1.0 / denom
+            const unX = (invH[0] * px + invH[1] * py + invH[2]) * inv_d
+            const unY = (invH[3] * px + invH[4] * py + invH[5]) * inv_d
+            return distortPt(unX, unY, w, h, lensK1)
+          }
 
-        // A. Draw Neon Green Augmented Boundary
-        ctx.beginPath()
-        const firstPt = mapStageToVideo(piece.contour_points[0].x, piece.contour_points[0].y)
-        ctx.moveTo(firstPt.x, firstPt.y)
-        for (let i = 1; i < piece.contour_points.length; i++) {
-          const vidPt = mapStageToVideo(piece.contour_points[i].x, piece.contour_points[i].y)
-          ctx.lineTo(vidPt.x, vidPt.y)
-        }
-        ctx.closePath()
-        ctx.strokeStyle = '#00e676'
-        ctx.lineWidth = 2.0
-        ctx.shadowColor = '#00e676'
-        ctx.shadowBlur = 6
-        ctx.stroke()
-        ctx.fillStyle = 'rgba(0, 230, 118, 0.08)'
-        ctx.fill()
-        ctx.shadowBlur = 0
-
-        // B. Draw Piece Corners (C0..C3)
-        piece.corners.forEach((cPt, i) => {
-          const vidCorner = mapStageToVideo(cPt.x, cPt.y)
+          // A. Draw Neon Green Augmented Boundary
           ctx.beginPath()
-          ctx.arc(vidCorner.x, vidCorner.y, 4, 0, Math.PI * 2)
-          ctx.fillStyle = '#ff3d00'
-          ctx.fill()
-          ctx.strokeStyle = '#ffffff'
-          ctx.lineWidth = 1.2
+          const firstPt = mapStageToVideo(piece.contour_points[0].x, piece.contour_points[0].y)
+          ctx.moveTo(firstPt.x, firstPt.y)
+          for (let i = 1; i < piece.contour_points.length; i++) {
+            const vidPt = mapStageToVideo(piece.contour_points[i].x, piece.contour_points[i].y)
+            ctx.lineTo(vidPt.x, vidPt.y)
+          }
+          ctx.closePath()
+          ctx.strokeStyle = '#00e676'
+          ctx.lineWidth = 2.0
+          ctx.shadowColor = '#00e676'
+          ctx.shadowBlur = 6
           ctx.stroke()
-          ctx.fillStyle = '#ffffff'
-          ctx.font = 'bold 9px monospace'
-          ctx.fillText(`C${i}`, vidCorner.x + 5, vidCorner.y - 3)
-        })
+          ctx.fillStyle = 'rgba(0, 230, 118, 0.08)'
+          ctx.fill()
+          ctx.shadowBlur = 0
+
+          // B. Draw Piece Corners (C0..C3)
+          piece.corners.forEach((cPt, i) => {
+            const vidCorner = mapStageToVideo(cPt.x, cPt.y)
+            ctx.beginPath()
+            ctx.arc(vidCorner.x, vidCorner.y, 4, 0, Math.PI * 2)
+            ctx.fillStyle = '#ff3d00'
+            ctx.fill()
+            ctx.strokeStyle = '#ffffff'
+            ctx.lineWidth = 1.2
+            ctx.stroke()
+            ctx.fillStyle = '#ffffff'
+            ctx.font = 'bold 9px monospace'
+            ctx.fillText(`C${i}`, vidCorner.x + 5, vidCorner.y - 3)
+          })
+        }
+      } catch (err) {
+        // Prevent singular homography matrix from interrupting render loop
       }
     }
   }
@@ -641,34 +672,42 @@ function App() {
                 dewarpedCanvas.height = dstH
               }
 
-              const dewarpedBytes: Uint8Array = dewarp_quad(
-                rawBytes,
-                targetW,
-                targetH,
-                curCorners[0].x, curCorners[0].y,
-                curCorners[1].x, curCorners[1].y,
-                curCorners[2].x, curCorners[2].y,
-                curCorners[3].x, curCorners[3].y,
-                dstW,
-                dstH,
-                curK1
-              )
-              latestDewarpedRef.current = { bytes: dewarpedBytes, w: dstW, h: dstH }
+              let dewarpedBytes: Uint8Array | null = null
+              let analysisResult: any = null
+              let piece: ScannedPiece | null = null
 
-              const dCtx = dewarpedCanvas.getContext('2d')
-              if (dCtx) {
+              try {
+                dewarpedBytes = dewarp_quad(
+                  rawBytes,
+                  targetW,
+                  targetH,
+                  curCorners[0].x, curCorners[0].y,
+                  curCorners[1].x, curCorners[1].y,
+                  curCorners[2].x, curCorners[2].y,
+                  curCorners[3].x, curCorners[3].y,
+                  dstW,
+                  dstH,
+                  curK1
+                )
+                latestDewarpedRef.current = { bytes: dewarpedBytes, w: dstW, h: dstH }
+
                 // Run piece boundary contour segmentation
-                const analysisResult = analyze_staged_piece(dewarpedBytes, dstW, dstH, curSens)
+                analysisResult = analyze_staged_piece(dewarpedBytes, dstW, dstH, curSens)
                 setLatestAnalysis(analysisResult)
-
-                const piece: ScannedPiece | null = analysisResult?.piece || null
+                piece = analysisResult?.piece || null
                 detectedPieceRef.current = piece
                 setDetectedPiece(piece)
 
                 if (analysisResult?.binary_mask) {
                   latestBinaryMaskRef.current = new Uint8Array(analysisResult.binary_mask)
                 }
+              } catch (cvErr) {
+                // Safeguard against singular matrix or memory buffer panic
+                console.warn('[CV] Frame processing skipped:', cvErr)
+              }
 
+              const dCtx = dewarpedCanvas.getContext('2d')
+              if (dCtx && dewarpedBytes) {
                 // Render staging canvas according to selected view mode
                 const dewarpedImageData = dCtx.createImageData(dstW, dstH)
                 if (curViewMode === 'binary' && analysisResult?.binary_mask) {
@@ -680,16 +719,26 @@ function App() {
                     dewarpedImageData.data[i * 4 + 2] = val
                     dewarpedImageData.data[i * 4 + 3] = 255
                   }
+                } else if (analysisResult?.binary_mask && (curViewMode === 'composite' || curViewMode === 'dewarped')) {
+                  // Chroma-key green background: set alpha = 0 for background pixels
+                  dewarpedImageData.data.set(dewarpedBytes)
+                  const mask = analysisResult.binary_mask
+                  for (let i = 0; i < dstW * dstH; i++) {
+                    if (mask[i] === 0) {
+                      dewarpedImageData.data[i * 4 + 3] = 0 // Transparent green mat background
+                    }
+                  }
                 } else {
                   dewarpedImageData.data.set(dewarpedBytes)
                 }
+                dCtx.clearRect(0, 0, dstW, dstH)
                 dCtx.putImageData(dewarpedImageData, 0, 0)
 
                 if (piece && (curViewMode === 'composite' || curViewMode === 'dewarped')) {
                   drawPieceDiagnostics(dCtx, piece)
                 }
 
-                // If sensor rig preview canvas is mounted (PiP or 1:1 tab), mirror the rendered canvas
+                // If sensor rig preview canvas is mounted, mirror the cleanly cleared canvas
                 if (rigDewarpedCanvas) {
                   if (rigDewarpedCanvas.width !== dstW || rigDewarpedCanvas.height !== dstH) {
                     rigDewarpedCanvas.width = dstW
@@ -697,6 +746,7 @@ function App() {
                   }
                   const rCtx = rigDewarpedCanvas.getContext('2d')
                   if (rCtx) {
+                    rCtx.clearRect(0, 0, dstW, dstH)
                     rCtx.drawImage(dewarpedCanvas, 0, 0)
                   }
                 }
@@ -723,7 +773,7 @@ function App() {
                   }
                   lastCenterRef.current = piece.center
                 } else {
-                  // Arena completely empty: clear lockout so next piece can be registered
+                  // Arena completely empty or hand swapped piece: clear lockout so next piece can be registered
                   steadySinceRef.current = null
                   lastCenterRef.current = null
                   hasCapturedRef.current = false
@@ -868,25 +918,54 @@ function App() {
 
   const handleAutoSnapAllCorners = () => {
     if (latestPixelsRef.current && wasmReady) {
-      const { bytes, w, h } = latestPixelsRef.current
-      const detected = auto_detect_mat_quad(
-        bytes,
-        w,
-        h,
-        corners[0].x, corners[0].y,
-        corners[1].x, corners[1].y,
-        corners[2].x, corners[2].y,
-        corners[3].x, corners[3].y
-      )
-      if (detected && detected.length >= 8) {
-        setCorners([
-          { x: detected[0], y: detected[1] },
-          { x: detected[2], y: detected[3] },
-          { x: detected[4], y: detected[5] },
-          { x: detected[6], y: detected[7] },
-        ])
-        setSnappedIndex(99)
-        setTimeout(() => setSnappedIndex(null), 1500)
+      try {
+        const { bytes, w, h } = latestPixelsRef.current
+        const detected = auto_detect_mat_quad(
+          bytes,
+          w,
+          h,
+          corners[0].x, corners[0].y,
+          corners[1].x, corners[1].y,
+          corners[2].x, corners[2].y,
+          corners[3].x, corners[3].y
+        )
+        if (detected && detected.length >= 8) {
+          setCorners([
+            { x: detected[0], y: detected[1] },
+            { x: detected[2], y: detected[3] },
+            { x: detected[4], y: detected[5] },
+            { x: detected[6], y: detected[7] },
+          ])
+          setSnappedIndex(99)
+          setTimeout(() => setSnappedIndex(null), 1500)
+        }
+      } catch (err) {
+        console.warn('Auto snap quad error:', err)
+      }
+    }
+  }
+
+  const handleAutoCalibrateK1 = () => {
+    if (latestPixelsRef.current && wasmReady) {
+      try {
+        const { bytes, w, h } = latestPixelsRef.current
+        const computedK1 = auto_calibrate_lens_k1(
+          bytes,
+          w,
+          h,
+          corners[0].x, corners[0].y,
+          corners[1].x, corners[1].y,
+          corners[2].x, corners[2].y,
+          corners[3].x, corners[3].y
+        )
+        if (!isNaN(computedK1) && isFinite(computedK1)) {
+          const rounded = Math.round(computedK1 * 100) / 100
+          setLensDistortion(rounded)
+          setSnappedIndex(99)
+          setTimeout(() => setSnappedIndex(null), 1200)
+        }
+      } catch (err) {
+        console.warn('Auto calibrate k1 error:', err)
       }
     }
   }
@@ -896,8 +975,8 @@ function App() {
     if (w > 0 && h > 0) {
       const cx = w * 0.5
       const cy = h * 0.5
-      // Square calibration mat placed symmetrically in the camera frame
-      const halfSize = Math.min(w, h) * 0.35
+      // Bounded within camera frame so corners never fall outside viewport
+      const halfSize = Math.min(w, h) * 0.32
       const centeredCorners: [Point2D, Point2D, Point2D, Point2D] = [
         { x: Math.round(cx - halfSize), y: Math.round(cy - halfSize) },
         { x: Math.round(cx + halfSize), y: Math.round(cy - halfSize) },
@@ -1394,9 +1473,18 @@ function App() {
                     <button
                       className="ind-btn"
                       onClick={() => setLensDistortion(0.0)}
+                      title="Reset Lens k1 distortion to 0.0"
                       style={{ padding: '0 5px', height: '18px', fontSize: '9px' }}
                     >
                       0
+                    </button>
+                    <button
+                      className="ind-btn"
+                      onClick={handleAutoCalibrateK1}
+                      title="Auto-calculate lens distortion k1 using straight mat borders"
+                      style={{ padding: '0 6px', height: '18px', fontSize: '8px', color: 'var(--ind-cyan)', borderColor: 'var(--ind-cyan)' }}
+                    >
+                      AUTO-CAL K1
                     </button>
                   </div>
 
@@ -1413,6 +1501,24 @@ function App() {
                     />
                     <code style={{ width: '32px', textAlign: 'right' }}>
                       {segSensitivity.toFixed(0)}
+                    </code>
+                  </div>
+
+                  {/* MTF Focus Live Indicator Bar */}
+                  <div className="ind-row">
+                    <span className="ind-label" style={{ width: '80px' }}>FOCUS MTF:</span>
+                    <div style={{ flex: 1, height: '8px', background: '#1c2128', borderRadius: '2px', overflow: 'hidden', border: '1px solid #30363d' }}>
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.min(100, Math.max(0, focusScore))}%`,
+                          backgroundColor: focusScore >= 45 ? '#2ea043' : focusScore >= 20 ? '#d29922' : '#f85149',
+                          transition: 'width 0.15s ease'
+                        }}
+                      />
+                    </div>
+                    <code style={{ width: '36px', textAlign: 'right', color: focusScore >= 45 ? '#2ea043' : focusScore >= 20 ? '#d29922' : '#f85149' }}>
+                      {focusScore.toFixed(0)}%
                     </code>
                   </div>
 
