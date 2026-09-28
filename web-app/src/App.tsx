@@ -142,6 +142,10 @@ export default function App() {
   draggingGtCornerRef.current = draggingGtCorner
   const gtFrozenPixelsRef = useRef<Uint8Array | null>(null)
   const latestDewarpedRef = useRef<Uint8Array | null>(null)
+  const detectedPieceRef = useRef<ScannedPiece | null>(null)
+  detectedPieceRef.current = detectedPiece
+
+
 
 
 
@@ -531,14 +535,14 @@ export default function App() {
 
               latestDewarpedRef.current = new Uint8Array(dewarped)
 
+              let livePiece: ScannedPiece | null = null
+
               // Piece boundary & corner analysis (only update live piece if not in GT mode)
               if (!isGtModeRef.current) {
                 const result = analyze_staged_piece(dewarped, dstW, dstH, curSens)
                 const rawPiece: ScannedPiece | null = result?.piece || null
 
                 // Multi-Frame Stability Consensus Filter:
-                let stablePiece: ScannedPiece | null = null
-
                 if (rawPiece) {
                   const history = pieceHistoryRef.current
                   const isContinuous = history.length > 0 &&
@@ -546,7 +550,7 @@ export default function App() {
 
                   if (!isContinuous) {
                     pieceHistoryRef.current = [rawPiece]
-                    stablePiece = rawPiece
+                    livePiece = rawPiece
                   } else {
                     history.unshift(rawPiece)
                     if (history.length > 5) history.pop()
@@ -573,7 +577,7 @@ export default function App() {
                       return { x: xs[mid], y: ys[mid] }
                     }) as [Point2D, Point2D, Point2D, Point2D]
 
-                    stablePiece = {
+                    livePiece = {
                       ...rawPiece,
                       corners: medianCorners,
                       edges: consensusEdges,
@@ -585,7 +589,8 @@ export default function App() {
                   pieceHistoryRef.current = []
                 }
 
-                setDetectedPiece(stablePiece)
+                setDetectedPiece(livePiece)
+                detectedPieceRef.current = livePiece
               }
 
               // Render rectified piece view
@@ -621,11 +626,15 @@ export default function App() {
                       corners: activeCorners,
                       edges: mockEdges,
                     })
-                  } else if (detectedPiece) {
-                    drawPieceDiagnostics(pCtx, detectedPiece)
+                  } else if (livePiece) {
+                    drawPieceDiagnostics(pCtx, livePiece)
+                  } else if (detectedPieceRef.current) {
+                    drawPieceDiagnostics(pCtx, detectedPieceRef.current)
                   }
                 }
               }
+
+
             } catch (cvErr) {
               console.warn('[CV] Frame processing error:', cvErr)
             }
