@@ -360,3 +360,111 @@ html, body, #root {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* Ground Truth Annotation Tool */
+.gt-banner {
+  background: rgba(31, 111, 235, 0.15);
+  border: 1px solid var(--blue);
+  border-radius: 4px;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+
+.gt-editor-card {
+  width: 100%;
+  max-width: 320px;
+  background: #121820;
+  border: 1px solid var(--blue);
+  border-radius: 4px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+.gt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--blue);
+}
+
+.gt-edge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gt-edge-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #1c2128;
+  padding: 4px 8px;
+  border-radius: 3px;
+  border-left: 3px solid transparent;
+}
+
+.gt-edge-item.flat { border-left-color: var(--purple); }
+.gt-edge-item.tab { border-left-color: var(--blue); }
+.gt-edge-item.hole { border-left-color: var(--yellow); }
+
+.gt-edge-label {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.gt-edge-toggle {
+  display: flex;
+  gap: 2px;
+}
+
+.gt-edge-btn {
+  padding: 2px 7px;
+  font-size: 9px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  background: #21262d;
+  color: var(--text-muted);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.gt-edge-btn.active.tab {
+  background: var(--blue);
+  color: #fff;
+  border-color: #58a6ff;
+}
+
+.gt-edge-btn.active.hole {
+  background: #d29922;
+  color: #000;
+  border-color: #f0883e;
+}
+
+.gt-edge-btn.active.flat {
+  background: var(--purple);
+  color: #fff;
+  border-color: #bc8cff;
+}
+
+.gt-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.gt-actions .btn {
+  flex: 1;
+}
+
+.piece-canvas-interactive {
+  cursor: crosshair;
+}

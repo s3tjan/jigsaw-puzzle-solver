@@ -33,6 +33,20 @@ interface ScannedPiece {
   is_border: boolean
 }
 
+export interface GroundTruthPiece {
+  id: string
+  timestamp: string
+  expected_type: 'Interior' | 'Border' | 'Corner'
+  expected_edges: ['Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole']
+  corners: [Point2D, Point2D, Point2D, Point2D]
+  contour_points: Point2D[]
+  center: Point2D
+  bounding_width: number
+  bounding_height: number
+  imageJpegBase64?: string
+}
+
+
 const STORAGE_KEY = 'jigsaw_calibration_corners_v3'
 
 const DEFAULT_CORNERS: [Point2D, Point2D, Point2D, Point2D] = [
@@ -80,6 +94,24 @@ export default function App() {
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null)
   const [snappedIdx, setSnappedIdx] = useState<number | null>(null)
 
+  // Ground-Truth Labeling Workbench State
+  const [isGtMode, setIsGtMode] = useState<boolean>(false)
+  const [gtFrozenPiece, setGtFrozenPiece] = useState<ScannedPiece | null>(null)
+  const [gtEdges, setGtEdges] = useState<['Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole']>(['Tab', 'Tab', 'Tab', 'Tab'])
+  const [gtCorners, setGtCorners] = useState<[Point2D, Point2D, Point2D, Point2D] | null>(null)
+  const [draggingGtCorner, setDraggingGtCorner] = useState<number | null>(null)
+  const [gtSavedCount, setGtSavedCount] = useState<number>(0)
+  const [gtSaveStatus, setGtSaveStatus] = useState<string | null>(null)
+
+  // Fetch count of already saved ground-truth files on mount
+  useEffect(() => {
+    fetch('/api/ground-truth-count')
+      .then(res => res.json())
+      .then(data => { if (typeof data.count === 'number') setGtSavedCount(data.count) })
+      .catch(() => {})
+  }, [])
+
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -97,6 +129,18 @@ export default function App() {
   sensRef.current = sensitivity
   const isMirrorRef = useRef(isMirror)
   isMirrorRef.current = isMirror
+
+  const isGtModeRef = useRef(isGtMode)
+  isGtModeRef.current = isGtMode
+  const gtFrozenPieceRef = useRef(gtFrozenPiece)
+  gtFrozenPieceRef.current = gtFrozenPiece
+  const gtCornersRef = useRef(gtCorners)
+  gtCornersRef.current = gtCorners
+  const gtEdgesRef = useRef(gtEdges)
+  gtEdgesRef.current = gtEdges
+  const draggingGtCornerRef = useRef(draggingGtCorner)
+  draggingGtCornerRef.current = draggingGtCorner
+
 
   useEffect(() => {
     try {
@@ -371,12 +415,13 @@ export default function App() {
       ctx.fillText(label, badgeX, badgeY)
     })
 
-    // 3. Draw 4 Core Physical Corners (C0..C3) (solid white pins with dark borders)
+    // 3. Draw 4 Core Physical Corners (C0..C3) (solid pins with dark borders)
     piece.corners.forEach((pt, i) => {
+      const isDraggingThis = isGtMode && draggingGtCorner === i
       // Solid outer ring
       ctx.beginPath()
-      ctx.arc(pt.x, pt.y, 6.0, 0, Math.PI * 2)
-      ctx.fillStyle = '#d32f2f' // Solid red pin
+      ctx.arc(pt.x, pt.y, isDraggingThis ? 9.0 : 6.0, 0, Math.PI * 2)
+      ctx.fillStyle = isGtMode ? '#00e5ff' : '#d32f2f' // Cyan pin in GT mode, Red in live
       ctx.fill()
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 2.0
@@ -392,15 +437,15 @@ export default function App() {
       const toCX = pt.x - piece.center.x
       const toCY = pt.y - piece.center.y
       const toCDist = Math.hypot(toCX, toCY) || 1.0
-      const tagX = pt.x + (toCX / toCDist) * 18.0
-      const tagY = pt.y + (toCY / toCDist) * 18.0
+      const tagX = pt.x + (toCX / toCDist) * 20.0
+      const tagY = pt.y + (toCY / toCDist) * 20.0
 
       ctx.font = 'bold 10px monospace'
       ctx.fillStyle = 'rgba(20, 25, 30, 0.90)'
       ctx.beginPath()
       ctx.roundRect(tagX - 11, tagY - 8, 22, 16, 2)
       ctx.fill()
-      ctx.strokeStyle = '#ffffff'
+      ctx.strokeStyle = isGtMode ? '#00e5ff' : '#ffffff'
       ctx.lineWidth = 1.0
       ctx.stroke()
 
@@ -410,6 +455,7 @@ export default function App() {
       ctx.fillText(`C${i}`, tagX, tagY)
     })
   }
+
 
   // Main Render & CV Loop
   useEffect(() => {
@@ -552,7 +598,24 @@ export default function App() {
                   pImg.data.set(dewarped)
                   pCtx.putImageData(pImg, 0, 0)
 
-                  if (stablePiece) {
+                  if (isGtModeRef.current && gtFrozenPieceRef.current && gtCornersRef.current) {
+                    // In Ground-Truth mode: render frozen piece with interactive corners and user-toggled edges
+                    const frozen = gtFrozenPieceRef.current
+                    const activeCorners = gtCornersRef.current
+                    const activeEdges = gtEdgesRef.current
+                    const mockEdges = frozen.edges.map((e, idx) => ({
+                      ...e,
+                      edge_type: activeEdges[idx],
+                      start_corner: activeCorners[idx],
+                      end_corner: activeCorners[(idx + 1) % 4],
+                    })) as [PieceEdge, PieceEdge, PieceEdge, PieceEdge]
+
+                    drawPieceDiagnostics(pCtx, {
+                      ...frozen,
+                      corners: activeCorners,
+                      edges: mockEdges,
+                    })
+                  } else if (stablePiece) {
                     drawPieceDiagnostics(pCtx, stablePiece)
                   }
                 }
@@ -561,6 +624,7 @@ export default function App() {
               console.warn('[CV] Frame processing error:', cvErr)
             }
           }
+
 
           // Draw camera overlay every frame
           drawCameraOverlay(targetW, targetH, cornersRef.current, lensK1Ref.current)
@@ -685,18 +749,154 @@ export default function App() {
     URL.revokeObjectURL(url)
   }
 
+  // Freeze current piece into ground truth workbench
+  const handleFreezeGroundTruth = () => {
+    if (!detectedPiece) return
+    setGtFrozenPiece(detectedPiece)
+    setGtCorners([...detectedPiece.corners] as [Point2D, Point2D, Point2D, Point2D])
+    setGtEdges(detectedPiece.edges.map(e => e.edge_type) as ['Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole'])
+    setIsGtMode(true)
+    setGtSaveStatus(null)
+  }
+
+  const handleExitGtMode = () => {
+    setIsGtMode(false)
+    setGtFrozenPiece(null)
+    setGtCorners(null)
+    setDraggingGtCorner(null)
+    setGtSaveStatus(null)
+  }
+
+  const handleToggleEdgeType = (edgeIdx: number, type: 'Flat' | 'Tab' | 'Hole') => {
+    setGtEdges(prev => {
+      const next = [...prev] as ['Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole']
+      next[edgeIdx] = type
+      return next
+    })
+  }
+
+  // Pointer drag for piece corners directly on the 384x384 piece canvas
+  const handlePiecePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isGtMode || !gtCorners) return
+    const canvas = pieceCanvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+
+    // Check if clicked near one of the 4 corners (< 20px)
+    for (let i = 0; i < 4; i++) {
+      const dist = Math.hypot(gtCorners[i].x - x, gtCorners[i].y - y)
+      if (dist < 20.0) {
+        setDraggingGtCorner(i)
+        ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+        return
+      }
+    }
+  }
+
+  const handlePiecePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isGtMode || draggingGtCorner === null || !gtCorners || !gtFrozenPiece) return
+    const canvas = pieceCanvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width)
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height)
+
+    // Snap to the closest contour point
+    let bestPt = { x, y }
+    let minDist = 40.0 // snap radius
+    for (const p of gtFrozenPiece.contour_points) {
+      const d = Math.hypot(p.x - x, p.y - y)
+      if (d < minDist) {
+        minDist = d
+        bestPt = p
+      }
+    }
+
+    setGtCorners(prev => {
+      if (!prev) return prev
+      const next = [...prev] as [Point2D, Point2D, Point2D, Point2D]
+      next[draggingGtCorner] = bestPt
+      return next
+    })
+  }
+
+  const handlePiecePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (draggingGtCorner !== null) {
+      setDraggingGtCorner(null)
+      try {
+        ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+      } catch {}
+    }
+  }
+
+  // Save ground truth to backend
+  const handleSaveGroundTruth = async () => {
+    if (!gtFrozenPiece || !gtCorners) return
+    const pCanvas = pieceCanvasRef.current
+    const dataUrl = pCanvas ? pCanvas.toDataURL('image/jpeg', 0.85) : undefined
+
+    const flatCount = gtEdges.filter(t => t === 'Flat').length
+    const expectedType: 'Interior' | 'Border' | 'Corner' =
+      flatCount >= 2 ? 'Corner' : flatCount === 1 ? 'Border' : 'Interior'
+
+    const id = `piece_gt_${Date.now()}`
+    const payload: GroundTruthPiece = {
+      id,
+      timestamp: new Date().toISOString(),
+      expected_type: expectedType,
+      expected_edges: gtEdges,
+      corners: gtCorners,
+      contour_points: gtFrozenPiece.contour_points,
+      center: gtFrozenPiece.center,
+      bounding_width: gtFrozenPiece.bounding_width,
+      bounding_height: gtFrozenPiece.bounding_height,
+      imageJpegBase64: dataUrl,
+    }
+
+    try {
+      setGtSaveStatus('Saving...')
+      const res = await fetch('/api/save-ground-truth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const result = await res.json()
+      if (result.success) {
+        setGtSavedCount(prev => prev + 1)
+        setGtSaveStatus(`✓ Saved as ${result.file}`)
+        setTimeout(() => {
+          handleExitGtMode()
+        }, 800)
+      } else {
+        setGtSaveStatus(`Error: ${result.error || 'Failed'}`)
+      }
+    } catch (err: any) {
+      setGtSaveStatus(`Error: ${err.message}`)
+    }
+  }
+
   // Keyboard shortcut Space to capture
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
       if (e.code === 'Space') {
         e.preventDefault()
-        handleRecordPiece()
+        if (isGtMode) {
+          handleSaveGroundTruth()
+        } else {
+          handleFreezeGroundTruth()
+        }
+      } else if (e.code === 'Escape' && isGtMode) {
+        e.preventDefault()
+        handleExitGtMode()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [detectedPiece])
+  }, [detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges])
+
 
   return (
     <div className="app-container">
@@ -793,60 +993,143 @@ export default function App() {
           </div>
 
           <div className="panel-body">
+            {/* Piece Canvas with optional interactive corner dragging */}
             <div className="piece-canvas-wrapper">
-              <canvas ref={pieceCanvasRef} width={384} height={384} className="piece-canvas" />
+              <canvas
+                ref={pieceCanvasRef}
+                width={384}
+                height={384}
+                className={`piece-canvas ${isGtMode ? 'piece-canvas-interactive' : ''}`}
+                onPointerDown={handlePiecePointerDown}
+                onPointerMove={handlePiecePointerMove}
+                onPointerUp={handlePiecePointerUp}
+                onPointerCancel={handlePiecePointerUp}
+              />
             </div>
 
-            {/* Piece Classification Details */}
-            <div className="piece-data-card">
-              <div className="data-row">
-                <span className="data-label">TYPE:</span>
-                <span className={`data-val ${detectedPiece ? (detectedPiece.is_corner ? 'red' : detectedPiece.is_border ? 'yellow' : 'green') : ''}`}>
-                  {detectedPiece ? (detectedPiece.is_corner ? 'CORNER' : detectedPiece.is_border ? 'BORDER' : 'INTERIOR') : '--'}
-                </span>
-              </div>
+            {/* Standard Mode vs Ground-Truth Labeling Mode */}
+            {!isGtMode ? (
+              <>
+                <div className="piece-data-card">
+                  <div className="data-row">
+                    <span className="data-label">TYPE:</span>
+                    <span className={`data-val ${detectedPiece ? (detectedPiece.is_corner ? 'red' : detectedPiece.is_border ? 'yellow' : 'green') : ''}`}>
+                      {detectedPiece ? (detectedPiece.is_corner ? 'CORNER' : detectedPiece.is_border ? 'BORDER' : 'INTERIOR') : '--'}
+                    </span>
+                  </div>
 
-              <div className="data-row">
-                <span className="data-label">SIZE:</span>
-                <span className="data-val">
-                  {detectedPiece
-                    ? `${(detectedPiece.bounding_width * 0.25).toFixed(1)} × ${(detectedPiece.bounding_height * 0.25).toFixed(1)} mm`
-                    : '--'}
-                </span>
-              </div>
+                  <div className="data-row">
+                    <span className="data-label">SIZE:</span>
+                    <span className="data-val">
+                      {detectedPiece
+                        ? `${(detectedPiece.bounding_width * 0.25).toFixed(1)} × ${(detectedPiece.bounding_height * 0.25).toFixed(1)} mm`
+                        : '--'}
+                    </span>
+                  </div>
 
-              <div className="data-row">
-                <span className="data-label">ROTATION:</span>
-                <span className="data-val">
-                  {detectedPiece ? `${((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(0)}°` : '--'}
-                </span>
-              </div>
+                  <div className="data-row">
+                    <span className="data-label">ROTATION:</span>
+                    <span className="data-val">
+                      {detectedPiece ? `${((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(0)}°` : '--'}
+                    </span>
+                  </div>
 
-              <div className="data-row">
-                <span className="data-label">EDGES:</span>
-                <div className="edge-pills">
-                  {detectedPiece ? (
-                    detectedPiece.edges.map((e, idx) => (
-                      <span key={idx} className={`pill ${e.edge_type.toLowerCase()}`}>
-                        E{idx}: {e.edge_type}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="muted">--</span>
-                  )}
+                  <div className="data-row">
+                    <span className="data-label">EDGES:</span>
+                    <div className="edge-pills">
+                      {detectedPiece ? (
+                        detectedPiece.edges.map((e, idx) => (
+                          <span key={idx} className={`pill ${e.edge_type.toLowerCase()}`}>
+                            E{idx}: {e.edge_type}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="muted">--</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 6, width: '100%', maxWidth: 320 }}>
+                  <button
+                    className="btn primary record-btn"
+                    disabled={!detectedPiece}
+                    onClick={handleRecordPiece}
+                    title="Add to session piece list"
+                  >
+                    RECORD PIECE
+                  </button>
+                  <button
+                    className="btn record-btn"
+                    style={{ background: '#1a365d', borderColor: '#3182ce', color: '#63b3ed' }}
+                    disabled={!detectedPiece}
+                    onClick={handleFreezeGroundTruth}
+                    title="Freeze and label Ground Truth for test harness [SPACE]"
+                  >
+                    LABEL GROUND TRUTH [SPACE]
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="gt-editor-card">
+                <div className="gt-header">
+                  <span>GROUND TRUTH EDITOR</span>
+                  <span className="badge" style={{ background: '#2b6cb0' }}>BENCHMARK #{gtSavedCount + 1}</span>
+                </div>
+
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                  Drag <b>cyan corner pins (C0..C3)</b> on canvas to align. Toggle edge classifications below:
+                </div>
+
+                <div className="gt-edge-list">
+                  {gtEdges.map((type, idx) => (
+                    <div key={idx} className={`gt-edge-item ${type.toLowerCase()}`}>
+                      <span className="gt-edge-label">Edge {idx} (C{idx}→C{(idx + 1) % 4}):</span>
+                      <div className="gt-edge-toggle">
+                        {(['Tab', 'Hole', 'Flat'] as const).map((t) => (
+                          <button
+                            key={t}
+                            className={`gt-edge-btn ${type === t ? `active ${t.toLowerCase()}` : ''}`}
+                            onClick={() => handleToggleEdgeType(idx, t)}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="data-row" style={{ marginTop: 2, padding: '2px 4px' }}>
+                  <span className="data-label">VERIFIED TYPE:</span>
+                  <b style={{
+                    color: gtEdges.filter(t => t === 'Flat').length >= 2 ? 'var(--red)' :
+                           gtEdges.filter(t => t === 'Flat').length === 1 ? 'var(--yellow)' : 'var(--green)'
+                  }}>
+                    {gtEdges.filter(t => t === 'Flat').length >= 2 ? 'CORNER' :
+                     gtEdges.filter(t => t === 'Flat').length === 1 ? 'BORDER' : 'INTERIOR'}
+                  </b>
+                </div>
+
+                {gtSaveStatus && (
+                  <div style={{ fontSize: 10, textAlign: 'center', color: gtSaveStatus.startsWith('✓') ? '#38a169' : '#e53e3e' }}>
+                    {gtSaveStatus}
+                  </div>
+                )}
+
+                <div className="gt-actions">
+                  <button className="btn" onClick={handleExitGtMode}>
+                    CANCEL [ESC]
+                  </button>
+                  <button className="btn primary" onClick={handleSaveGroundTruth}>
+                    SAVE TO BENCHMARK [SPACE]
+                  </button>
                 </div>
               </div>
-            </div>
-
-            <button
-              className="btn primary record-btn"
-              disabled={!detectedPiece}
-              onClick={handleRecordPiece}
-            >
-              RECORD PIECE [SPACE]
-            </button>
+            )}
           </div>
         </section>
+
       </main>
 
       {/* 3. Bottom Controls & Scanned Piece History */}
