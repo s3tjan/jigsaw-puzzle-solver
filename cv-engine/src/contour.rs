@@ -465,9 +465,8 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         corner_scores[i] = dist_c * diagonal_balance * (1.0 + convexity * 2.0 + sharpness * 1.5);
     }
 
-    // 4. Find Best Candidate in each of the 4 Spatially Fixed Quadrants:
-    let mut best_q_idx = [0usize; 4];
-    let mut best_q_score = [-1.0f32; 4];
+    // 4. Select Multi-Candidate Corners in each Quadrant and Optimize Quad Geometry:
+    let mut q_cands: [Vec<(usize, f32)>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
 
     for (i, p) in contour.iter().enumerate() {
         let dx = p.x - cx;
@@ -485,16 +484,60 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             3 // BL
         };
 
-        if corner_scores[i] > best_q_score[q] {
-            best_q_score[q] = corner_scores[i];
-            best_q_idx[q] = i;
-        }
+        q_cands[q].push((i, corner_scores[i]));
     }
 
-    // Ensure all 4 quadrants found a distinct corner
     for q in 0..4 {
-        if best_q_score[q] < 0.0 {
+        q_cands[q].sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let mut filtered = Vec::with_capacity(4);
+        for &(idx, sc) in &q_cands[q] {
+            let too_close = filtered.iter().any(|&(f_idx, _): &(usize, f32)| {
+                let dist_idx = ((idx as i32 - f_idx as i32).abs() as usize).min(n - (idx as i32 - f_idx as i32).abs() as usize);
+                dist_idx < 15
+            });
+            if !too_close {
+                filtered.push((idx, sc));
+                if filtered.len() >= 4 {
+                    break;
+                }
+            }
+        }
+        if filtered.is_empty() {
             return None;
+        }
+        q_cands[q] = filtered;
+    }
+
+    let mut best_q_idx = [q_cands[0][0].0, q_cands[1][0].0, q_cands[2][0].0, q_cands[3][0].0];
+    let mut best_total = -1e9f32;
+
+    for &(c0_idx, sc0) in &q_cands[0] {
+        let p0 = contour[c0_idx];
+        for &(c1_idx, sc1) in &q_cands[1] {
+            let p1 = contour[c1_idx];
+            for &(c2_idx, sc2) in &q_cands[2] {
+                let p2 = contour[c2_idx];
+                for &(c3_idx, sc3) in &q_cands[3] {
+                    let p3 = contour[c3_idx];
+
+                    let mid_x_diff = (p0.x + p2.x) - (p1.x + p3.x);
+                    let mid_y_diff = (p0.y + p2.y) - (p1.y + p3.y);
+                    let mid_err = (mid_x_diff * 0.5 * mid_x_diff * 0.5 + mid_y_diff * 0.5 * mid_y_diff * 0.5).sqrt();
+
+                    let d01 = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt();
+                    let d23 = ((p3.x - p2.x).powi(2) + (p3.y - p2.y).powi(2)).sqrt();
+                    let d12 = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt();
+                    let d30 = ((p0.x - p3.x).powi(2) + (p0.y - p3.y).powi(2)).sqrt();
+
+                    let edge_diff = (d01 - d23).abs() + (d12 - d30).abs();
+                    let total_sc = (sc0 + sc1 + sc2 + sc3) - (mid_err * 8.0) - (edge_diff * 2.0);
+
+                    if total_sc > best_total {
+                        best_total = total_sc;
+                        best_q_idx = [c0_idx, c1_idx, c2_idx, c3_idx];
+                    }
+                }
+            }
         }
     }
 
