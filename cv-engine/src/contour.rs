@@ -341,21 +341,83 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
 
     // 2. Compute Coordinate Frame Angle:
     // If a physical straight line exists, align directly to it.
-    // Otherwise, fall back to global 2D contour covariance PCA.
+    // Otherwise, use modulo-90 straight linear segment voting (detects tab necks, shoulders, and cut edges).
     let base_theta = if let Some((_, _, line_angle)) = best_line {
         line_angle
     } else {
-        let mut cov_xx = 0.0f32;
-        let mut cov_xy = 0.0f32;
-        let mut cov_yy = 0.0f32;
-        for p in contour {
-            let dx = p.x - cx;
-            let dy = p.y - cy;
-            cov_xx += dx * dx;
-            cov_xy += dx * dy;
-            cov_yy += dy * dy;
+        let mut segments: Vec<(f32, f32)> = Vec::new();
+        for &span in &[16usize, 20, 24] {
+            if span >= n { continue; }
+            for i in (0..n).step_by(2) {
+                let mut sum_x = 0.0f32;
+                let mut sum_y = 0.0f32;
+                for k in 0..span {
+                    let pt = contour[(i + k) % n];
+                    sum_x += pt.x;
+                    sum_y += pt.y;
+                }
+                let mx = sum_x / (span as f32);
+                let my = sum_y / (span as f32);
+                let mut cxx = 0.0f32;
+                let mut cyy = 0.0f32;
+                let mut cxy = 0.0f32;
+                for k in 0..span {
+                    let pt = contour[(i + k) % n];
+                    let dx = pt.x - mx;
+                    let dy = pt.y - my;
+                    cxx += dx * dx;
+                    cyy += dy * dy;
+                    cxy += dx * dy;
+                }
+                cxx /= span as f32;
+                cyy /= span as f32;
+                cxy /= span as f32;
+                let tr = cxx + cyy;
+                let det = cxx * cyy - cxy * cxy;
+                let diff = (tr * tr - 4.0 * det).max(0.0).sqrt();
+                let std_res = (0.5 * (tr - diff)).max(0.0).sqrt();
+
+                let p0 = contour[i];
+                let p1 = contour[(i + span) % n];
+                let chord = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt();
+                if std_res < 0.40 && chord > 12.0 {
+                    let ang = (p1.y - p0.y).atan2(p1.x - p0.x);
+                    segments.push((ang, chord));
+                }
+            }
         }
-        0.5 * (2.0 * cov_xy).atan2(cov_xx - cov_yy)
+
+        if segments.len() >= 5 {
+            let mut angle_bins = [0.0f32; 90];
+            for (ang, chord) in segments {
+                let mut deg = ang.to_degrees().rem_euclid(90.0);
+                if deg >= 45.0 { deg -= 90.0; }
+                let bin_idx = ((deg.round() as i32) + 45).clamp(0, 89) as usize;
+                angle_bins[bin_idx] += chord;
+            }
+            let mut best_bin = 45;
+            let mut best_votes = -1.0f32;
+            for (b, &votes) in angle_bins.iter().enumerate() {
+                if votes > best_votes {
+                    best_votes = votes;
+                    best_bin = b;
+                }
+            }
+            ((best_bin as f32 - 45.0)).to_radians()
+        } else {
+            // Contour covariance PCA fallback
+            let mut cov_xx = 0.0f32;
+            let mut cov_xy = 0.0f32;
+            let mut cov_yy = 0.0f32;
+            for p in contour {
+                let dx = p.x - cx;
+                let dy = p.y - cy;
+                cov_xx += dx * dx;
+                cov_xy += dx * dy;
+                cov_yy += dy * dy;
+            }
+            0.5 * (2.0 * cov_xy).atan2(cov_xx - cov_yy)
+        }
     };
 
     let mut theta = base_theta;
@@ -369,7 +431,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let sin_t = theta.sin();
 
     // 3. Corner Scoring in Aligned Frame:
-    let k_span = (n as i32 / 24).clamp(6, 14);
+    let k_span = 8;
     let mut corner_scores = vec![0.0f32; n];
 
     for i in 0..n {

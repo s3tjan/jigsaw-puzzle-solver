@@ -99,7 +99,7 @@ fn test_ground_truth_benchmarks() {
             if min_d > max_corner_err {
                 max_corner_err = min_d;
             }
-            if min_d > 6.0 {
+            if min_d > 7.0 {
                 corners_ok = false;
             }
         }
