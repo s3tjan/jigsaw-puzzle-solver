@@ -155,27 +155,35 @@ pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &m
     }
 }
 
-/// Smooths a closed contour polygon using a 5-point Gaussian moving window
+/// Smooths a closed contour polygon using an iterated Gaussian moving window to eliminate discrete raster steps
 pub fn smooth_contour_points(points: &[Point2D]) -> Vec<Point2D> {
     let n = points.len();
     if n < 5 {
         return points.to_vec();
     }
 
-    let mut smoothed = Vec::with_capacity(n);
-    for i in 0..n {
-        let p_prev2 = points[(i + n - 2) % n];
-        let p_prev1 = points[(i + n - 1) % n];
-        let p_curr  = points[i];
-        let p_next1 = points[(i + 1) % n];
-        let p_next2 = points[(i + 2) % n];
+    let mut current = points.to_vec();
+    let mut next = Vec::with_capacity(n);
 
-        let sx = (p_prev2.x + 4.0 * p_prev1.x + 6.0 * p_curr.x + 4.0 * p_next1.x + p_next2.x) / 16.0;
-        let sy = (p_prev2.y + 4.0 * p_prev1.y + 6.0 * p_curr.y + 4.0 * p_next1.y + p_next2.y) / 16.0;
+    // Apply 3 passes of 5-point binomial Gaussian filter [1, 4, 6, 4, 1] / 16
+    for _ in 0..3 {
+        next.clear();
+        for i in 0..n {
+            let p_prev2 = current[(i + n - 2) % n];
+            let p_prev1 = current[(i + n - 1) % n];
+            let p_curr  = current[i];
+            let p_next1 = current[(i + 1) % n];
+            let p_next2 = current[(i + 2) % n];
 
-        smoothed.push(Point2D { x: sx, y: sy });
+            let sx = (p_prev2.x + 4.0 * p_prev1.x + 6.0 * p_curr.x + 4.0 * p_next1.x + p_next2.x) / 16.0;
+            let sy = (p_prev2.y + 4.0 * p_prev1.y + 6.0 * p_curr.y + 4.0 * p_next1.y + p_next2.y) / 16.0;
+
+            next.push(Point2D { x: sx, y: sy });
+        }
+        std::mem::swap(&mut current, &mut next);
     }
-    smoothed
+
+    current
 }
 
 /// Extracts the continuous boundary contour using radial-sweep Moore-Neighbor tracing
@@ -951,10 +959,50 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let is_border = flat_count == 1;
 
     let edges = [
-        edges_vec[0].clone(),
-        edges_vec[1].clone(),
-        edges_vec[2].clone(),
-        edges_vec[3].clone(),
+        {
+            let mut e0 = edges_vec[0].clone();
+            e0.start_corner = corners[0];
+            e0.end_corner = corners[1];
+            if !e0.curve_samples.is_empty() {
+                e0.curve_samples[0] = corners[0];
+                let last = e0.curve_samples.len() - 1;
+                e0.curve_samples[last] = corners[1];
+            }
+            e0
+        },
+        {
+            let mut e1 = edges_vec[1].clone();
+            e1.start_corner = corners[1];
+            e1.end_corner = corners[2];
+            if !e1.curve_samples.is_empty() {
+                e1.curve_samples[0] = corners[1];
+                let last = e1.curve_samples.len() - 1;
+                e1.curve_samples[last] = corners[2];
+            }
+            e1
+        },
+        {
+            let mut e2 = edges_vec[2].clone();
+            e2.start_corner = corners[2];
+            e2.end_corner = corners[3];
+            if !e2.curve_samples.is_empty() {
+                e2.curve_samples[0] = corners[2];
+                let last = e2.curve_samples.len() - 1;
+                e2.curve_samples[last] = corners[3];
+            }
+            e2
+        },
+        {
+            let mut e3 = edges_vec[3].clone();
+            e3.start_corner = corners[3];
+            e3.end_corner = corners[0];
+            if !e3.curve_samples.is_empty() {
+                e3.curve_samples[0] = corners[3];
+                let last = e3.curve_samples.len() - 1;
+                e3.curve_samples[last] = corners[0];
+            }
+            e3
+        },
     ];
 
     let canonical_theta = if theta < 0.0 { theta + std::f32::consts::PI } else { theta };
