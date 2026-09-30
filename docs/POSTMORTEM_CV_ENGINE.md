@@ -74,6 +74,16 @@ This postmortem categorizes every identified bug, details the root causes, descr
     2. **Velocity-Gated Deadband:** If piece centroid displacement $< 2.5\text{ px}$, clamp small corner motions ($< 3.0\text{ px}$) using high-damping exponential moving average ($\alpha = 0.18$ live, $0.82$ history).
     3. Once physical movement exceeds $2.5\text{ px}$, immediately release the deadband to maintain zero-lag responsiveness.
 
+### Bug 2.3: Edge Chord Endpoint Divergence & Contour Staircase Noise
+* **Symptoms:** Baseline chords connecting corners drifted or wobbled relative to the piece corners, and contours exhibited discrete pixel-step roughness on close inspection.
+* **Root Cause:**
+  1. Sub-pixel line-intersection refinement updated `piece.corners`, but `PieceEdge.start_corner` and `PieceEdge.end_corner` remained bound to the unrefined raw contour indices.
+  2. Moore-Neighbor radial boundary tracing produces integer pixel steps, and single-pass 5-point smoothing left ~0.16px average 2nd-derivative roughness.
+* **Resolution:**
+  - Synchronized `PieceEdge` start/end corners and curve sample boundaries with the sub-pixel refined corners.
+  - Upgraded contour smoothing to 3 iterative passes of a binomial Gaussian kernel (`[1, 4, 6, 4, 1] / 16`), bringing mean directional jerk below 0.09px.
+  - Added deterministic regression harness `test_wobble_smoothness.rs`.
+
 ---
 
 ## 3. Calibration, Lighting & Segmentation Invariants
@@ -127,6 +137,7 @@ This postmortem categorizes every identified bug, details the root causes, descr
 | **BUG-005** | `generate_mat.py` | Calibration marks bled into 400x400 stage | High: False foreground blobs | Mat v5.0 outward L-crosshairs + 2% homography inset |
 | **BUG-006** | `lib.rs` | Non-uniform lighting caused Otsu binarization failure | High: Segmentation failure | 85th percentile perimeter background color sampling |
 | **BUG-007** | `web-app` / Test | Missing `detected_corners` in ground truth JSON | Medium: Tooling opacity | Schema extended to track both CV and human-labeled corners |
+| **BUG-008** | `contour.rs` | Edge chords used raw contour pts instead of refined corners + 1-pass step noise | Medium: Baseline wobble & rough curves | Synchronized edge start/end corners + 3-pass Gaussian smoothing filter |
 
 ---
 
