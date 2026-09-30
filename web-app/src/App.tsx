@@ -38,7 +38,10 @@ export interface GroundTruthPiece {
   timestamp: string
   expected_type: 'Interior' | 'Border' | 'Corner'
   expected_edges: ['Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole']
+  /** Human-verified / manually positioned corners (ground truth label) */
   corners: [Point2D, Point2D, Point2D, Point2D]
+  /** CV-detected corners at the moment of freeze, before any manual adjustment */
+  detected_corners: [Point2D, Point2D, Point2D, Point2D]
   contour_points: Point2D[]
   center: Point2D
   bounding_width: number
@@ -99,6 +102,8 @@ export default function App() {
   const [gtFrozenPiece, setGtFrozenPiece] = useState<ScannedPiece | null>(null)
   const [gtEdges, setGtEdges] = useState<['Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole']>(['Tab', 'Tab', 'Tab', 'Tab'])
   const [gtCorners, setGtCorners] = useState<[Point2D, Point2D, Point2D, Point2D] | null>(null)
+  /** CV-detected corners at the instant of freeze — never mutated by the user */
+  const [gtDetectedCorners, setGtDetectedCorners] = useState<[Point2D, Point2D, Point2D, Point2D] | null>(null)
   const [draggingGtCorner, setDraggingGtCorner] = useState<number | null>(null)
   const [gtSavedCount, setGtSavedCount] = useState<number>(0)
   const [gtSaveStatus, setGtSaveStatus] = useState<string | null>(null)
@@ -399,21 +404,30 @@ export default function App() {
   }
 
   // Draw Diagnostic Overlay on 1:1 Piece Canvas
-  const drawPieceDiagnostics = (ctx: CanvasRenderingContext2D, piece: ScannedPiece) => {
-    // 1. Draw crisp continuous outer boundary (clean green line, no blur or glow)
-    if (piece.contour_points.length > 0) {
+  const drawPieceDiagnostics = (
+    ctx: CanvasRenderingContext2D,
+    piece: ScannedPiece,
+    detectedCorners?: [Point2D, Point2D, Point2D, Point2D] | null,
+  ) => {
+    // 1. Draw smooth outer boundary using quadratic bezier curves between contour points
+    const pts = piece.contour_points
+    if (pts.length > 2) {
       ctx.save()
       ctx.beginPath()
-      ctx.moveTo(piece.contour_points[0].x, piece.contour_points[0].y)
-      for (let i = 1; i < piece.contour_points.length; i++) {
-        ctx.lineTo(piece.contour_points[i].x, piece.contour_points[i].y)
+      // Start at midpoint between last and first point
+      const startX = (pts[pts.length - 1].x + pts[0].x) * 0.5
+      const startY = (pts[pts.length - 1].y + pts[0].y) * 0.5
+      ctx.moveTo(startX, startY)
+      for (let i = 0; i < pts.length; i++) {
+        const curr = pts[i]
+        const next = pts[(i + 1) % pts.length]
+        // Each contour point is a quadratic control; anchor at midpoint to the next
+        ctx.quadraticCurveTo(curr.x, curr.y, (curr.x + next.x) * 0.5, (curr.y + next.y) * 0.5)
       }
       ctx.closePath()
-
       ctx.strokeStyle = '#00e676'
-      ctx.lineWidth = 2.0
+      ctx.lineWidth = 1.8
       ctx.stroke()
-
       ctx.fillStyle = 'rgba(0, 230, 118, 0.05)'
       ctx.fill()
       ctx.restore()
@@ -427,7 +441,7 @@ export default function App() {
       Flat: '#9c27b0',
     }
 
-    // 2. Draw 4 Core Baseline Chords with smart outward-offset badges
+    // 2. Draw 4 Core Baseline Chords with badges anchored at the peak curvature sample
     piece.edges.forEach((edge, i) => {
       const color = edgeColors[edge.edge_type] || '#333333'
 
@@ -441,20 +455,36 @@ export default function App() {
       ctx.stroke()
       ctx.restore()
 
-      // Calculate unit normal vector pointing away from piece center (outward)
-      const midX = (edge.start_corner.x + edge.end_corner.x) * 0.5
-      const midY = (edge.start_corner.y + edge.end_corner.y) * 0.5
-      const toMidX = midX - piece.center.x
-      const toMidY = midY - piece.center.y
-      const toMidDist = Math.hypot(toMidX, toMidY) || 1.0
-      const normX = toMidX / toMidDist
-      const normY = toMidY / toMidDist
+      // Find the peak curvature sample (furthest from the chord) to anchor the badge
+      // This ensures the label sits at the Tab bump or Hole dent, never ambiguously between them
+      const bDx = edge.end_corner.x - edge.start_corner.x
+      const bDy = edge.end_corner.y - edge.start_corner.y
+      const bLen = Math.hypot(bDx, bDy) || 1.0
+      let peakDist = 0
+      let peakX = (edge.start_corner.x + edge.end_corner.x) * 0.5
+      let peakY = (edge.start_corner.y + edge.end_corner.y) * 0.5
+      for (const s of edge.curve_samples) {
+        const signedDist = ((s.x - edge.start_corner.x) * bDy - (s.y - edge.start_corner.y) * bDx) / bLen
+        if (Math.abs(signedDist) > Math.abs(peakDist)) {
+          peakDist = signedDist
+          peakX = s.x
+          peakY = s.y
+        }
+      }
 
-      // Offset badge outward by 20px so it never obscures the edge contour or tab
-      const badgeX = midX + normX * 20.0
-      const badgeY = midY + normY * 20.0
+      // Place badge between chord midpoint and peak sample for readability
+      const chordMidX = (edge.start_corner.x + edge.end_corner.x) * 0.5
+      const chordMidY = (edge.start_corner.y + edge.end_corner.y) * 0.5
+      const badgeX = (chordMidX + peakX) * 0.5
+      const badgeY = (chordMidY + peakY) * 0.5
+
+      // Draw a small dot at peak to make the curvature measurement visible
+      ctx.beginPath()
+      ctx.arc(peakX, peakY, 3, 0, Math.PI * 2)
+      ctx.fillStyle = color
+      ctx.fill()
+
       const label = `E${i}: ${edge.edge_type}`
-
       ctx.font = 'bold 11px monospace'
       const tw = ctx.measureText(label).width
       const bw = tw + 14
@@ -474,7 +504,35 @@ export default function App() {
       ctx.fillText(label, badgeX, badgeY)
     })
 
-    // 3. Draw 4 Core Physical Corners (C0..C3) (solid pins with dark borders)
+    // 3. In GT mode, draw CV-detected corners as ghost pins (white dashed) to show offset from labels
+    if (isGtMode && detectedCorners) {
+      detectedCorners.forEach((pt, i) => {
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(pt.x, pt.y, 5.0, 0, Math.PI * 2)
+        ctx.strokeStyle = 'rgba(255,255,255,0.45)'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([3, 3])
+        ctx.stroke()
+        ctx.restore()
+        // Draw a line connecting ghost to the active (cyan) pin
+        const active = piece.corners[i]
+        const dist = Math.hypot(active.x - pt.x, active.y - pt.y)
+        if (dist > 1.5) {
+          ctx.save()
+          ctx.beginPath()
+          ctx.moveTo(pt.x, pt.y)
+          ctx.lineTo(active.x, active.y)
+          ctx.strokeStyle = 'rgba(255,255,255,0.25)'
+          ctx.lineWidth = 1.0
+          ctx.setLineDash([2, 4])
+          ctx.stroke()
+          ctx.restore()
+        }
+      })
+    }
+
+    // 4. Draw 4 Core Physical Corners (C0..C3) (solid pins with dark borders)
     piece.corners.forEach((pt, i) => {
       const isDraggingThis = isGtMode && draggingGtCorner === i
       // Solid outer ring
@@ -706,7 +764,7 @@ export default function App() {
                       ...frozen,
                       corners: activeCorners,
                       edges: mockEdges,
-                    })
+                    }, gtDetectedCorners)
                   } else if (livePiece) {
                     drawPieceDiagnostics(pCtx, livePiece)
                   } else if (detectedPieceRef.current) {
@@ -853,7 +911,10 @@ export default function App() {
       gtFrozenPixelsRef.current = new Uint8Array(latestDewarpedRef.current)
     }
     setGtFrozenPiece(detectedPiece)
-    setGtCorners([...detectedPiece.corners] as [Point2D, Point2D, Point2D, Point2D])
+    // Deep-copy corners into both the editable label AND the immutable detected snapshot
+    const frozenCorners = detectedPiece.corners.map(c => ({ ...c })) as [Point2D, Point2D, Point2D, Point2D]
+    setGtCorners(frozenCorners)
+    setGtDetectedCorners(frozenCorners.map(c => ({ ...c })) as [Point2D, Point2D, Point2D, Point2D])
     setGtEdges(detectedPiece.edges.map(e => e.edge_type) as ['Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole', 'Flat' | 'Tab' | 'Hole'])
     setIsGtMode(true)
     setGtSaveStatus(null)
@@ -864,6 +925,7 @@ export default function App() {
     gtFrozenPixelsRef.current = null
     setGtFrozenPiece(null)
     setGtCorners(null)
+    setGtDetectedCorners(null)
     setDraggingGtCorner(null)
     setGtSaveStatus(null)
   }
@@ -972,6 +1034,8 @@ export default function App() {
       expected_type: expectedType,
       expected_edges: gtEdges,
       corners: gtCorners,
+      // Store the original CV-detected corners so we can audit detection accuracy per-fixture
+      detected_corners: gtDetectedCorners ?? gtCorners,
       contour_points: gtFrozenPiece.contour_points,
       center: gtFrozenPiece.center,
       bounding_width: gtFrozenPiece.bounding_width,

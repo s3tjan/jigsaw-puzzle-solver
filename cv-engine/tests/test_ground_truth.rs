@@ -9,7 +9,11 @@ struct GroundTruthFixture {
     id: String,
     expected_type: String,
     expected_edges: [String; 4],
+    /// Human-verified / manually corrected corners (ground truth label)
     corners: [Point2D; 4],
+    /// CV-detected corners at freeze time, before any manual adjustment (optional — absent in legacy fixtures)
+    #[serde(default)]
+    detected_corners: Option<[Point2D; 4]>,
     contour_points: Vec<Point2D>,
 }
 
@@ -88,7 +92,7 @@ fn test_ground_truth_benchmarks() {
             }
         }
 
-        // 3. Corner accuracy: each detected corner should be near one of the ground truth corners (within 6px)
+        // 3. Corner accuracy: each detected corner should be near one of the ground truth (human-labelled) corners
         let mut max_corner_err = 0.0f32;
         let mut corners_ok = true;
         for c in &piece.corners {
@@ -104,14 +108,29 @@ fn test_ground_truth_benchmarks() {
             }
         }
 
+        // 4. If the fixture has detected_corners, compute the CV pre-correction error vs the human label
+        //    This lets us track how much the sub-pixel refinement actually helps.
+        let detected_err_str = if let Some(ref dc) = fixture.detected_corners {
+            let mut max_det_err = 0.0f32;
+            for det_c in dc {
+                let min_d = fixture.corners.iter().map(|gt_c| {
+                    ((gt_c.x - det_c.x).powi(2) + (gt_c.y - det_c.y).powi(2)).sqrt()
+                }).fold(f32::INFINITY, f32::min);
+                if min_d > max_det_err { max_det_err = min_d; }
+            }
+            format!(" DetErr={:.1}px", max_det_err)
+        } else {
+            String::new()
+        };
+
         let is_ok = type_match && edge_match && corners_ok;
         if is_ok {
             passed += 1;
-            println!("PASS [{}]: Type={}, Edges={:?}, MaxCornerErr={:.1}px",
-                fixture.id, det_type, det_edges, max_corner_err);
+            println!("PASS [{}]: Type={}, Edges={:?}, MaxCornerErr={:.1}px{}",
+                fixture.id, det_type, det_edges, max_corner_err, detected_err_str);
         } else {
-            println!("FAIL [{}]: Type={}(exp {}), Edges={:?}(exp {:?}), MaxCornerErr={:.1}px",
-                fixture.id, det_type, fixture.expected_type, det_edges, fixture.expected_edges, max_corner_err);
+            println!("FAIL [{}]: Type={}(exp {}), Edges={:?}(exp {:?}), MaxCornerErr={:.1}px{}",
+                fixture.id, det_type, fixture.expected_type, det_edges, fixture.expected_edges, max_corner_err, detected_err_str);
         }
     }
 

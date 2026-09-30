@@ -302,7 +302,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let mut best_line: Option<(usize, usize, f32)> = None;
     let max_span = (n / 3).min(90);
     for span in (40..=max_span).step_by(5) {
-        for i in 0..n {
+        for i in (0..n).step_by(3) {
             let mut sum_x = 0.0f32;
             let mut sum_y = 0.0f32;
             for k in 0..span {
@@ -334,7 +334,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             let p0 = contour[i];
             let p1 = contour[(i + span) % n];
             let chord = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt();
-            if std_res < 0.60 && chord > 42.0 {
+            if std_res < 0.45 && chord > 50.0 {
                 if best_line.is_none() || span > best_line.unwrap().0 {
                     let angle = (p1.y - p0.y).atan2(p1.x - p0.x);
                     best_line = Some((span, i, angle));
@@ -386,61 +386,29 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         }
     }
 
-    let base_theta = if segments.len() >= 5 {
-        let mut angle_bins = [0.0f32; 90];
-        for (ang, chord) in segments {
-            let mut deg = ang.to_degrees().rem_euclid(90.0);
-            if deg >= 45.0 { deg -= 90.0; }
-            let bin_idx = ((deg.round() as i32) + 45).clamp(0, 89) as usize;
-            angle_bins[bin_idx] += chord;
-        }
-        let mut best_bin = 45;
-        let mut best_votes = -1.0f32;
-        for (b, &votes) in angle_bins.iter().enumerate() {
-            if votes > best_votes {
-                best_votes = votes;
-                best_bin = b;
-            }
-        }
-        ((best_bin as f32 - 45.0)).to_radians()
-    } else {
-        // Contour covariance PCA fallback
-        let mut cov_xx = 0.0f32;
-        let mut cov_xy = 0.0f32;
-        let mut cov_yy = 0.0f32;
-        for p in contour {
-            let dx = p.x - cx;
-            let dy = p.y - cy;
-            cov_xx += dx * dx;
-            cov_xy += dx * dy;
-            cov_yy += dy * dy;
-        }
-        0.5 * (2.0 * cov_xy).atan2(cov_xx - cov_yy)
-    };
-
-    let mut theta = base_theta;
-    while theta <= -std::f32::consts::FRAC_PI_4 {
-        theta += std::f32::consts::FRAC_PI_2;
+    let mut cov_xx = 0.0f32;
+    let mut cov_xy = 0.0f32;
+    let mut cov_yy = 0.0f32;
+    for p in contour {
+        let dx = p.x - cx;
+        let dy = p.y - cy;
+        cov_xx += dx * dx;
+        cov_xy += dx * dy;
+        cov_yy += dy * dy;
     }
-    while theta > std::f32::consts::FRAC_PI_4 {
-        theta -= std::f32::consts::FRAC_PI_2;
-    }
-    let cos_t = theta.cos();
-    let sin_t = theta.sin();
+    let pca_t = 0.5 * (2.0 * cov_xy).atan2(cov_xx - cov_yy);
 
-    // 3. Corner Scoring in Aligned Frame (Scale-Normalized):
-    let k_span = 8;
-    let mut corner_scores = vec![0.0f32; n];
+    let k_span = (n / 36).clamp(8, 16) as i32;
+    let mut point_features = Vec::with_capacity(n);
+    let mut top_corners: Vec<(usize, f32)> = Vec::with_capacity(n);
 
     for i in 0..n {
         let prev = contour[(i as i32 - k_span).rem_euclid(n as i32) as usize];
         let curr = contour[i];
         let next = contour[(i as i32 + k_span).rem_euclid(n as i32) as usize];
 
-        let v1x = curr.x - prev.x;
-        let v1y = curr.y - prev.y;
-        let v2x = next.x - curr.x;
-        let v2y = next.y - curr.y;
+        let v1x = curr.x - prev.x; let v1y = curr.y - prev.y;
+        let v2x = next.x - curr.x; let v2y = next.y - curr.y;
 
         let len1 = (v1x * v1x + v1y * v1y).sqrt().max(1e-4);
         let len2 = (v2x * v2x + v2y * v2y).sqrt().max(1e-4);
@@ -448,103 +416,368 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
         let cross = (v1x * v2y - v1y * v2x) / (len1 * len2);
 
-        let dist_c = ((curr.x - cx) * (curr.x - cx) + (curr.y - cy) * (curr.y - cy)).sqrt();
-
         let dx = curr.x - cx;
         let dy = curr.y - cy;
-        let u = (dx * cos_t + dy * sin_t).abs();
-        let v = (-dx * sin_t + dy * cos_t).abs();
-
-        let ratio = (u.min(v) / u.max(v).max(1e-3)).min(1.0);
-        let diagonal_balance = ratio.powf(2.0);
+        let dist_c = (dx * dx + dy * dy).sqrt();
+        let dist_bounded = dist_c.min(r_est * 1.25);
 
         let convexity = cross.max(0.0);
         let sharpness = (1.0 - dot).max(0.0);
-        corner_scores[i] = (dist_c * scale_norm) * diagonal_balance * (1.0 + convexity * 2.0 + sharpness * 1.5);
+        let base_score = (dist_bounded * scale_norm) * (1.0 + convexity * 2.0 + sharpness * 2.5);
+
+        point_features.push((dx, dy, base_score));
+        top_corners.push((i, base_score));
     }
 
-    // 4. Select Multi-Candidate Corners in each Quadrant and Optimize Quad Geometry:
-    let mut q_cands: [Vec<(usize, f32)>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    top_corners.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    for (i, p) in contour.iter().enumerate() {
-        let dx = p.x - cx;
-        let dy = p.y - cy;
-        let u = dx * cos_t + dy * sin_t;
-        let v = -dx * sin_t + dy * cos_t;
-
-        let q = if u < 0.0 && v < 0.0 {
-            0 // TL
-        } else if u >= 0.0 && v < 0.0 {
-            1 // TR
-        } else if u >= 0.0 && v >= 0.0 {
-            2 // BR
-        } else {
-            3 // BL
-        };
-
-        q_cands[q].push((i, corner_scores[i]));
+    let mut filtered_corners = Vec::with_capacity(6);
+    for &(idx, sc) in &top_corners {
+        let too_close = filtered_corners.iter().any(|&(f_idx, _): &(usize, f32)| {
+            let dist = ((idx as i32 - f_idx as i32).abs() as usize).min(n - (idx as i32 - f_idx as i32).abs() as usize);
+            dist < 15
+        });
+        if !too_close {
+            filtered_corners.push((idx, sc));
+            if filtered_corners.len() >= 6 { break; }
+        }
     }
 
-    for q in 0..4 {
-        q_cands[q].sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let mut filtered = Vec::with_capacity(4);
-        for &(idx, sc) in &q_cands[q] {
-            let too_close = filtered.iter().any(|&(f_idx, _): &(usize, f32)| {
-                let dist_idx = ((idx as i32 - f_idx as i32).abs() as usize).min(n - (idx as i32 - f_idx as i32).abs() as usize);
-                dist_idx < 15
-            });
-            if !too_close {
-                filtered.push((idx, sc));
-                if filtered.len() >= 4 {
-                    break;
+    let mut pairwise_thetas: Vec<f32> = Vec::new();
+    'outer: for i in 0..filtered_corners.len() {
+        let p1 = contour[filtered_corners[i].0];
+        for j in (i+1)..filtered_corners.len() {
+            let p2 = contour[filtered_corners[j].0];
+            let dist = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt();
+            if dist > 35.0 {
+                let ang = (p2.y - p1.y).atan2(p2.x - p1.x);
+                let mut deg = ang.to_degrees().rem_euclid(90.0);
+                if deg >= 45.0 { deg -= 90.0; }
+                let t = deg.to_radians();
+                if !pairwise_thetas.iter().any(|&ct| (ct - t).abs() < 0.08) {
+                    pairwise_thetas.push(t);
+                    if pairwise_thetas.len() >= 2 { break 'outer; }
                 }
             }
         }
-        if filtered.is_empty() {
-            return None;
-        }
-        q_cands[q] = filtered;
     }
 
-    let mut best_q_idx = [q_cands[0][0].0, q_cands[1][0].0, q_cands[2][0].0, q_cands[3][0].0];
-    let mut best_total = -1e9f32;
+    let candidate_thetas: Vec<f32> = if segments.len() >= 5 {
+        let mut angle_bins = [0.0f32; 90];
+        for (ang, chord) in &segments {
+            let mut deg = ang.to_degrees().rem_euclid(90.0);
+            if deg >= 45.0 { deg -= 90.0; }
+            let bin_idx = ((deg.round() as i32) + 45).clamp(0, 89) as usize;
+            angle_bins[bin_idx] += chord;
+        }
 
-    for &(c0_idx, sc0) in &q_cands[0] {
-        let p0 = contour[c0_idx];
-        for &(c1_idx, sc1) in &q_cands[1] {
-            let p1 = contour[c1_idx];
-            for &(c2_idx, sc2) in &q_cands[2] {
-                let p2 = contour[c2_idx];
-                for &(c3_idx, sc3) in &q_cands[3] {
-                    let p3 = contour[c3_idx];
+        let mut bin_indices: Vec<usize> = (0..90).collect();
+        bin_indices.sort_by(|&a, &b| angle_bins[b].partial_cmp(&angle_bins[a]).unwrap_or(std::cmp::Ordering::Equal));
 
-                    let mid_x_diff = (p0.x + p2.x) - (p1.x + p3.x);
-                    let mid_y_diff = (p0.y + p2.y) - (p1.y + p3.y);
-                    let mid_err = (mid_x_diff * 0.5 * mid_x_diff * 0.5 + mid_y_diff * 0.5 * mid_y_diff * 0.5).sqrt() * scale_norm;
+        let best_bin1 = bin_indices[0];
+        let t1 = ((best_bin1 as f32 - 45.0)).to_radians();
 
-                    let d01 = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt() * scale_norm;
-                    let d23 = ((p3.x - p2.x).powi(2) + (p3.y - p2.y).powi(2)).sqrt() * scale_norm;
-                    let d12 = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt() * scale_norm;
-                    let d30 = ((p0.x - p3.x).powi(2) + (p0.y - p3.y).powi(2)).sqrt() * scale_norm;
+        let mut cands = vec![t1];
 
-                    let edge_diff = (d01 - d23).abs() + (d12 - d30).abs();
-                    let total_sc = (sc0 + sc1 + sc2 + sc3) - (mid_err * 6.0) - (edge_diff * 1.5);
+        let mut best_bin2 = None;
+        let mut best_bin2_votes = 0.0f32;
+        for &b in &bin_indices[1..] {
+            let diff = (b as i32 - best_bin1 as i32).abs();
+            if diff >= 20 && diff <= 70 {
+                if angle_bins[b] > best_bin2_votes {
+                    best_bin2_votes = angle_bins[b];
+                    best_bin2 = Some(b);
+                }
+            }
+        }
+        if let Some(b2) = best_bin2 {
+            if best_bin2_votes >= angle_bins[best_bin1] * 0.15 {
+                let t2 = ((b2 as f32 - 45.0)).to_radians();
+                if !cands.iter().any(|&t| (t - t2).abs() < 0.1) {
+                    cands.push(t2);
+                }
+            }
+        }
 
-                    if total_sc > best_total {
-                        best_total = total_sc;
-                        best_q_idx = [c0_idx, c1_idx, c2_idx, c3_idx];
+        if let Some((_, _, bl_ang)) = best_line {
+            let mut bl_deg = bl_ang.to_degrees().rem_euclid(90.0);
+            if bl_deg >= 45.0 { bl_deg -= 90.0; }
+            let bl_t = bl_deg.to_radians();
+            if !cands.iter().any(|&t| (t - bl_t).abs() < 0.1) {
+                cands.push(bl_t);
+            }
+        }
+
+        if !cands.iter().any(|&t| (t - pca_t).abs() < 0.1) {
+            cands.push(pca_t);
+        }
+
+        for &pt in &pairwise_thetas {
+            if !cands.iter().any(|&t| (t - pt).abs() < 0.1) {
+                cands.push(pt);
+            }
+        }
+
+        for deg in (-42..=42).step_by(5) {
+            let t = (deg as f32).to_radians();
+            if !cands.iter().any(|&ct| (ct - t).abs() < 0.05) {
+                cands.push(t);
+            }
+        }
+        cands
+    } else {
+        let mut cands = vec![pca_t];
+        for &pt in &pairwise_thetas {
+            if !cands.iter().any(|&t| (t - pt).abs() < 0.1) {
+                cands.push(pt);
+            }
+        }
+        for deg in (-42..=42).step_by(5) {
+            let t = (deg as f32).to_radians();
+            if !cands.iter().any(|&ct| (ct - t).abs() < 0.05) {
+                cands.push(t);
+            }
+        }
+        cands
+    };
+
+    let tr = cov_xx + cov_yy;
+    let det = cov_xx * cov_yy - cov_xy * cov_xy;
+    let diff = (tr * tr - 4.0 * det).max(0.0).sqrt();
+    let l1 = 0.5 * (tr + diff);
+    let l2 = (0.5 * (tr - diff)).max(1e-3);
+    let pca_aspect = (l1 / l2).sqrt();
+    let use_rect_norm = pca_aspect > 1.20;
+
+    let mut best_global_quad = None;
+    let mut best_global_score = -1e9f32;
+    let mut best_chosen_theta = candidate_thetas[0];
+
+    for &cand_t in &candidate_thetas {
+        let mut theta = cand_t;
+        while theta <= -std::f32::consts::FRAC_PI_4 {
+            theta += std::f32::consts::FRAC_PI_2;
+        }
+        while theta > std::f32::consts::FRAC_PI_4 {
+            theta -= std::f32::consts::FRAC_PI_2;
+        }
+        let cos_t = theta.cos();
+        let sin_t = theta.sin();
+
+        // Aspect-ratio normalization: find maximum extent along u and v axes
+        let mut max_u = 1.0f32;
+        let mut max_v = 1.0f32;
+        for p in contour {
+            let dx = p.x - cx;
+            let dy = p.y - cy;
+            let u = (dx * cos_t + dy * sin_t).abs();
+            let v = (-dx * sin_t + dy * cos_t).abs();
+            if u > max_u { max_u = u; }
+            if v > max_v { max_v = v; }
+        }
+
+        let mut corner_scores = vec![0.0f32; n];
+        for i in 0..n {
+            let (dx, dy, base_score) = point_features[i];
+
+            let (u_norm, v_norm) = if use_rect_norm {
+                ((dx * cos_t + dy * sin_t).abs() / max_u, (-dx * sin_t + dy * cos_t).abs() / max_v)
+            } else {
+                ((dx * cos_t + dy * sin_t).abs(), (-dx * sin_t + dy * cos_t).abs())
+            };
+
+            let ratio = (u_norm.min(v_norm) / u_norm.max(v_norm).max(1e-3)).min(1.0);
+            let diagonal_balance = 0.4 + 0.6 * ratio;
+
+            corner_scores[i] = base_score * diagonal_balance;
+        }
+
+        let mut raw_q_cands: [Vec<(usize, f32)>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        for (i, p) in contour.iter().enumerate() {
+            let dx = p.x - cx;
+            let dy = p.y - cy;
+            let u = dx * cos_t + dy * sin_t;
+            let v = -dx * sin_t + dy * cos_t;
+
+            let q = if u < 0.0 && v < 0.0 { 0 }
+                    else if u >= 0.0 && v < 0.0 { 1 }
+                    else if u >= 0.0 && v >= 0.0 { 2 }
+                    else { 3 };
+
+            raw_q_cands[q].push((i, corner_scores[i]));
+        }
+
+        let mut q_cands: [Vec<(usize, f32)>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        for q in 0..4 {
+            raw_q_cands[q].sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            let mut filtered = Vec::with_capacity(25);
+            for &(idx, sc) in &raw_q_cands[q] {
+                let too_close = filtered.iter().any(|&(f_idx, _): &(usize, f32)| {
+                    let dist = ((idx as i32 - f_idx as i32).abs() as usize).min(n - (idx as i32 - f_idx as i32).abs() as usize);
+                    dist < 5
+                });
+                if !too_close {
+                    filtered.push((idx, sc));
+                    if filtered.len() >= 25 { break; }
+                }
+            }
+            q_cands[q] = filtered;
+        }
+
+        if q_cands[0].is_empty() || q_cands[1].is_empty() || q_cands[2].is_empty() || q_cands[3].is_empty() {
+            continue;
+        }
+
+        let mut cand_best_quad = None;
+        let mut cand_best_score = -1e9f32;
+
+        for &(c0_idx, sc0) in &q_cands[0] {
+            let p0 = contour[c0_idx];
+            for &(c1_idx, sc1) in &q_cands[1] {
+                let p1 = contour[c1_idx];
+                for &(c2_idx, sc2) in &q_cands[2] {
+                    let p2 = contour[c2_idx];
+                    for &(c3_idx, sc3) in &q_cands[3] {
+                        let p3 = contour[c3_idx];
+
+                        let mid_x_diff = (p0.x + p2.x) - (p1.x + p3.x);
+                        let mid_y_diff = (p0.y + p2.y) - (p1.y + p3.y);
+                        let mid_err = (mid_x_diff * 0.5 * mid_x_diff * 0.5 + mid_y_diff * 0.5 * mid_y_diff * 0.5).sqrt() * scale_norm;
+
+                        let d01 = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt() * scale_norm;
+                        let d23 = ((p3.x - p2.x).powi(2) + (p3.y - p2.y).powi(2)).sqrt() * scale_norm;
+                        let d12 = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt() * scale_norm;
+                        let d30 = ((p0.x - p3.x).powi(2) + (p0.y - p3.y).powi(2)).sqrt() * scale_norm;
+
+                        let edge_diff = (d01 - d23).abs() + (d12 - d30).abs();
+                        let prelim_sc = (sc0 + sc1 + sc2 + sc3) - (mid_err * 6.0) - (edge_diff * 1.5);
+                        if prelim_sc <= cand_best_score {
+                            continue;
+                        }
+
+                        // Tab-cut zero-crossing check
+                        let quad_indices = [c0_idx, c1_idx, c2_idx, c3_idx];
+                        let quad_pts = [p0, p1, p2, p3];
+                        let mut tab_cut_penalty = 0.0f32;
+
+                        for e in 0..4 {
+                            let s_i = quad_indices[e];
+                            let e_i = quad_indices[(e + 1) % 4];
+                            let ps = quad_pts[e];
+                            let pe = quad_pts[(e + 1) % 4];
+
+                            let b_dx = pe.x - ps.x; let b_dy = pe.y - ps.y;
+                            let b_len = (b_dx * b_dx + b_dy * b_dy).sqrt().max(1.0);
+
+                            let fwd_span = (e_i + n - s_i) % n;
+                            let (step, count) = if fwd_span <= n / 2 {
+                                (1, fwd_span)
+                            } else {
+                                (n - 1, (s_i + n - e_i) % n)
+                            };
+
+                            let mut curr_idx = (s_i + step) % n;
+                            let mut step_count = 1;
+                            let mut has_pos = false;
+                            let mut has_neg = false;
+
+                            while step_count < count {
+                                let pt = contour[curr_idx];
+                                let dist = (((pt.x - ps.x) * b_dy - (pt.y - ps.y) * b_dx) / b_len) * scale_norm;
+                                if dist > 8.0 { has_pos = true; }
+                                if dist < -8.0 { has_neg = true; }
+                                curr_idx = (curr_idx + step) % n;
+                                step_count += 1;
+                            }
+
+                            if has_pos && has_neg {
+                                tab_cut_penalty += 300.0;
+                            }
+                        }
+
+                        let total_sc = (sc0 + sc1 + sc2 + sc3) - (mid_err * 6.0) - (edge_diff * 1.5) - tab_cut_penalty;
+
+                        if total_sc > cand_best_score {
+                            cand_best_score = total_sc;
+                            cand_best_quad = Some([c0_idx, c1_idx, c2_idx, c3_idx]);
+                        }
                     }
                 }
             }
         }
+
+        if let Some(q_idx) = cand_best_quad {
+            if contour.len() == 446 {
+                eprintln!("   theta={:.2} deg (raw={:.2} deg), score={:.1}, quad={:?}, pts=[{:?}, {:?}, {:?}, {:?}]",
+                    theta.to_degrees(), cand_t.to_degrees(), cand_best_score, q_idx,
+                    contour[q_idx[0]], contour[q_idx[1]], contour[q_idx[2]], contour[q_idx[3]]);
+            }
+            if cand_best_score > best_global_score {
+                best_global_score = cand_best_score;
+                best_global_quad = Some(q_idx);
+                best_chosen_theta = theta;
+            }
+        }
     }
 
-    let corners = [
+    let best_q_idx = best_global_quad?;
+    let theta = best_chosen_theta;
+
+    let mut corners = [
         contour[best_q_idx[0]], // TL
         contour[best_q_idx[1]], // TR
         contour[best_q_idx[2]], // BR
         contour[best_q_idx[3]], // BL
     ];
+
+    // Sub-pixel line-line intersection refinement for rounded corner tips
+    for i in 0..4 {
+        let c_idx = best_q_idx[i];
+        let curr_p = contour[c_idx];
+
+        let mut in_pts = Vec::with_capacity(12);
+        for k in 3..=14 {
+            let idx = (c_idx as i32 - k).rem_euclid(n as i32) as usize;
+            in_pts.push(contour[idx]);
+        }
+
+        let mut out_pts = Vec::with_capacity(12);
+        for k in 3..=14 {
+            let idx = (c_idx + k) % n;
+            out_pts.push(contour[idx]);
+        }
+
+        let fit_line = |pts: &[Point2D]| -> Option<(f32, f32, f32, f32)> {
+            let m = pts.len() as f32;
+            if m < 4.0 { return None; }
+            let mut mx = 0.0f32; let mut my = 0.0f32;
+            for p in pts { mx += p.x; my += p.y; }
+            mx /= m; my /= m;
+            let mut cxx = 0.0f32; let mut cyy = 0.0f32; let mut cxy = 0.0f32;
+            for p in pts {
+                let dx = p.x - mx; let dy = p.y - my;
+                cxx += dx * dx; cyy += dy * dy; cxy += dx * dy;
+            }
+            let ang = 0.5 * (2.0 * cxy).atan2(cxx - cyy);
+            Some((mx, my, ang.cos(), ang.sin()))
+        };
+
+        if let (Some((mx1, my1, dx1, dy1)), Some((mx2, my2, dx2, dy2))) = (fit_line(&in_pts), fit_line(&out_pts)) {
+            let a1 = dy1; let b1 = -dx1; let c1 = mx1 * dy1 - my1 * dx1;
+            let a2 = dy2; let b2 = -dx2; let c2 = mx2 * dy2 - my2 * dx2;
+
+            let det = a1 * b2 - a2 * b1;
+            if det.abs() > 0.25 {
+                let ix = (c1 * b2 - c2 * b1) / det;
+                let iy = (a1 * c2 - a2 * c1) / det;
+
+                let err = ((ix - curr_p.x).powi(2) + (iy - curr_p.y).powi(2)).sqrt();
+                if err < 8.0 {
+                    corners[i] = Point2D { x: ix, y: iy };
+                }
+            }
+        }
+    }
 
     let mut edges_vec = Vec::with_capacity(4);
 
@@ -554,7 +787,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let next_e = best_q_idx[(e + 1) % 4];
         fwd_corner_span += (next_e + n - s) % n;
     }
-    let is_forward_winding = fwd_corner_span < (n * 2);
+    let _is_forward_winding = fwd_corner_span < (n * 2);
 
     for e in 0..4 {
         let start_i = best_q_idx[e];
@@ -590,14 +823,14 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
 
         let mean_dist = sum_dist / n_samples;
         let variance = (sum_dist_sq / n_samples - mean_dist * mean_dist).max(0.0);
-        let std_dev = variance.sqrt();
+        let _std_dev = variance.sqrt();
 
         // Center signed distance to determine tab (outward) vs hole (inward)
         let mid_x = (p_start.x + p_end.x) * 0.5;
         let mid_y = (p_start.y + p_end.y) * 0.5;
         let center_dx = cx - mid_x;
         let center_dy = cy - mid_y;
-        let center_signed_dist = (center_dx * base_dy - center_dy * base_dx) / base_len;
+        let _center_signed_dist = (center_dx * base_dy - center_dy * base_dx) / base_len;
 
         // Resample edge into 100 normalized points
         let mut norm_profile = Vec::with_capacity(100);
