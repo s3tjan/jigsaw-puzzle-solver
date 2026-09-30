@@ -108,7 +108,7 @@ export default function App() {
     fetch('/api/ground-truth-count')
       .then(res => res.json())
       .then(data => { if (typeof data.count === 'number') setGtSavedCount(data.count) })
-      .catch(() => {})
+      .catch(() => { })
   }, [])
 
 
@@ -281,10 +281,10 @@ export default function App() {
     if (!ctx) return
     ctx.clearRect(0, 0, w, h)
 
-    // 1. Draw boundary quad connecting the 4 corners (classic CV green)
+    // 1. Draw boundary quad connecting the 4 corners (classic CV green, 3.5px thick for sharp extinction)
     ctx.beginPath()
-    ctx.strokeStyle = '#00e676'
-    ctx.lineWidth = 2.0
+    ctx.strokeStyle = 'rgba(255, 0, 255, 0.75)'
+    ctx.lineWidth = 3.5
     const SAMPLES = 16
     for (let side = 0; side < 4; side++) {
       const p1 = undistortPt(pts[side].x, pts[side].y, w, h, lensK1)
@@ -301,48 +301,100 @@ export default function App() {
     ctx.closePath()
     ctx.stroke()
 
-    // 2. Draw 4 Fiducial Handles
+    // 2. High-Visibility Optical Center Crosshair & Reticle
+    const cx = w / 2
+    const cy = h / 2
+    const ARM = 40
+    const GAP = 6
+
+    ctx.beginPath()
+    ctx.strokeStyle = '#00e5ff' // High-contrast neon cyan
+    ctx.lineWidth = 2.0
+
+    // Horizontal arms with center gap
+    ctx.moveTo(cx - ARM, cy)
+    ctx.lineTo(cx - GAP, cy)
+    ctx.moveTo(cx + GAP, cy)
+    ctx.lineTo(cx + ARM, cy)
+
+    // Vertical arms with center gap
+    ctx.moveTo(cx, cy - ARM)
+    ctx.lineTo(cx, cy - GAP)
+    ctx.moveTo(cx, cy + GAP)
+    ctx.lineTo(cx, cy + ARM)
+    ctx.stroke()
+
+    // Central aiming reticle ring
+    ctx.beginPath()
+    ctx.arc(cx, cy, 14, 0, Math.PI * 2)
+    ctx.strokeStyle = 'rgba(0, 229, 255, 0.75)'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+
+    // Sub-pixel white center point
+    ctx.beginPath()
+    ctx.arc(cx, cy, 2.0, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffffff'
+    ctx.fill()
+
+    // 3. Physical Pose & Keystone Balance Indicators (Calculates camera tilt from quad geometry)
+    const topWidth = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+    const botWidth = Math.hypot(pts[2].x - pts[3].x, pts[2].y - pts[3].y)
+    const leftHeight = Math.hypot(pts[3].x - pts[0].x, pts[3].y - pts[0].y)
+    const rightHeight = Math.hypot(pts[2].x - pts[1].x, pts[2].y - pts[1].y)
+    const pitchSkew = ((topWidth - botWidth) / ((topWidth + botWidth) / 2)) * 100
+    const yawSkew = ((leftHeight - rightHeight) / ((leftHeight + rightHeight) / 2)) * 100
+    const rollAngleDeg = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * (180 / Math.PI)
+
+    // Pose HUD Banner
+    ctx.font = '22px monospace'
+
+    ctx.fillStyle = Math.abs(pitchSkew) < 2.5 ? '#00ff00ff' : '#ff0000ff'
+    ctx.fillText(`PITCH (Top/Bot):  ${pitchSkew.toFixed(1)}% ${Math.abs(pitchSkew) < 2.5 ? 'SQUARE' : 'TILTED'}`, 18, 26)
+
+    ctx.fillStyle = Math.abs(yawSkew) < 2.5 ? '#00ff00ff' : '#ff0000ff'
+    ctx.fillText(`YAW   (L/R Side): ${yawSkew.toFixed(1)}% ${Math.abs(yawSkew) < 2.5 ? 'SQUARE' : 'TILTED'}`, 18, 52)
+
+    ctx.fillStyle = Math.abs(rollAngleDeg) < 1.0 ? '#00ff00ff' : '#ff0000ff'
+    ctx.fillText(`ROLL  (Horizon):  ${rollAngleDeg.toFixed(1)}° ${Math.abs(rollAngleDeg) < 1.0 ? 'LEVEL' : 'ROTATED'}`, 18, 74)
+
+    // 4. Draw 4 Fiducial Handles (enlarged ring, longer & thicker crosshairs)
     const labels = ['TL 0', 'TR 1', 'BR 2', 'BL 3']
     pts.forEach((pt, i) => {
       const isDragging = i === draggingIdx
       const isSnapped = i === snappedIdx
-      const color = isDragging ? '#ff9100' : isSnapped ? '#00e676' : '#00e676'
+      const color = isDragging ? '#ff9100' : isSnapped ? '#00e676' : '#ff00ffff'
 
       ctx.beginPath()
-      ctx.arc(pt.x, pt.y, 16, 0, Math.PI * 2)
+      ctx.arc(pt.x, pt.y, 26, 0, Math.PI * 2)
       ctx.strokeStyle = color
-      ctx.lineWidth = isDragging ? 3.0 : 2.0
+      ctx.lineWidth = isDragging ? 3.5 : 2.5
       ctx.stroke()
 
       ctx.beginPath()
-      ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2)
+      ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2)
       ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 1.0
+      ctx.lineWidth = 1.5
       ctx.stroke()
 
-      // Crosshair ticks
+      // Longer, thicker crosshair ticks (reaching 28px out with 2.5px width)
       ctx.beginPath()
       ctx.strokeStyle = color
-      ctx.lineWidth = 1.5
-      ctx.moveTo(pt.x - 20, pt.y)
-      ctx.lineTo(pt.x - 6, pt.y)
-      ctx.moveTo(pt.x + 6, pt.y)
-      ctx.lineTo(pt.x + 20, pt.y)
-      ctx.moveTo(pt.x, pt.y - 20)
-      ctx.lineTo(pt.x, pt.y - 6)
-      ctx.moveTo(pt.x, pt.y + 6)
-      ctx.lineTo(pt.x, pt.y + 20)
+      ctx.lineWidth = 2.5
+      ctx.moveTo(pt.x - 28, pt.y)
+      ctx.lineTo(pt.x - 8, pt.y)
+      ctx.moveTo(pt.x + 8, pt.y)
+      ctx.lineTo(pt.x + 28, pt.y)
+      ctx.moveTo(pt.x, pt.y - 28)
+      ctx.lineTo(pt.x, pt.y - 8)
+      ctx.moveTo(pt.x, pt.y + 8)
+      ctx.lineTo(pt.x, pt.y + 28)
       ctx.stroke()
 
       // Corner Label (Bold, High Contrast)
-      ctx.font = 'bold 12px monospace'
-      ctx.fillStyle = '#0d1117'
-      ctx.fillRect(pt.x + 14, pt.y - 18, 36, 16)
-      ctx.strokeStyle = color
-      ctx.lineWidth = 1.0
-      ctx.strokeRect(pt.x + 14, pt.y - 18, 36, 16)
+      ctx.font = 'bold 22px monospace'
       ctx.fillStyle = color
-      ctx.fillText(labels[i], pt.x + 17, pt.y - 5)
+      ctx.fillText(labels[i], pt.x + 19, pt.y - 6)
     })
   }
 
@@ -570,6 +622,7 @@ export default function App() {
                     const isCorner = flatCount === 2
                     const isBorder = flatCount === 1
 
+                    // 1. Median coordinates across recent frames
                     const medianCorners = [0, 1, 2, 3].map((cIdx) => {
                       const xs = history.map(hp => hp.corners[cIdx].x).sort((a, b) => a - b)
                       const ys = history.map(hp => hp.corners[cIdx].y).sort((a, b) => a - b)
@@ -577,9 +630,32 @@ export default function App() {
                       return { x: xs[mid], y: ys[mid] }
                     }) as [Point2D, Point2D, Point2D, Point2D]
 
+                    // 2. Velocity-gated stabilization: when piece is stationary (displacement < 2.5px),
+                    // apply heavy temporal damping (EMA alpha=0.20) to eliminate camera sensor shot-noise wobble.
+                    const prevLiveCorners = detectedPieceRef.current?.corners
+                    const centerDisplacement = Math.hypot(
+                      rawPiece.center.x - history[1]?.center.x || 0,
+                      rawPiece.center.y - history[1]?.center.y || 0
+                    )
+
+                    const stabilizedCorners = medianCorners.map((mc, cIdx) => {
+                      if (prevLiveCorners && centerDisplacement < 2.5) {
+                        const prevC = prevLiveCorners[cIdx]
+                        const cornerDist = Math.hypot(mc.x - prevC.x, mc.y - prevC.y)
+                        // If corner jitter is tiny (< 3.0px), damp it heavily
+                        if (cornerDist < 3.0) {
+                          return {
+                            x: prevC.x * 0.82 + mc.x * 0.18,
+                            y: prevC.y * 0.82 + mc.y * 0.18,
+                          }
+                        }
+                      }
+                      return mc
+                    }) as [Point2D, Point2D, Point2D, Point2D]
+
                     livePiece = {
                       ...rawPiece,
-                      corners: medianCorners,
+                      corners: stabilizedCorners,
                       edges: consensusEdges,
                       is_corner: isCorner,
                       is_border: isBorder,
@@ -831,7 +907,7 @@ export default function App() {
       const dist = Math.hypot(gtCorners[i].x - x, gtCorners[i].y - y)
       if (dist < 25.0) {
         setDraggingGtCorner(i)
-        ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+          ; (e.target as HTMLElement).setPointerCapture(e.pointerId)
         return
       }
     }
@@ -869,8 +945,8 @@ export default function App() {
     if (draggingGtCorner !== null) {
       setDraggingGtCorner(null)
       try {
-        ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
-      } catch {}
+        ; (e.target as HTMLElement).releasePointerCapture(e.pointerId)
+      } catch { }
     }
   }
 
@@ -1189,10 +1265,10 @@ export default function App() {
                   <span className="data-label">VERIFIED TYPE:</span>
                   <b style={{
                     color: gtEdges.filter(t => t === 'Flat').length >= 2 ? 'var(--red)' :
-                           gtEdges.filter(t => t === 'Flat').length === 1 ? 'var(--yellow)' : 'var(--green)'
+                      gtEdges.filter(t => t === 'Flat').length === 1 ? 'var(--yellow)' : 'var(--green)'
                   }}>
                     {gtEdges.filter(t => t === 'Flat').length >= 2 ? 'CORNER' :
-                     gtEdges.filter(t => t === 'Flat').length === 1 ? 'BORDER' : 'INTERIOR'}
+                      gtEdges.filter(t => t === 'Flat').length === 1 ? 'BORDER' : 'INTERIOR'}
                   </b>
                 </div>
 
