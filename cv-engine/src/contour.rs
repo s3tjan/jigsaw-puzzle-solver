@@ -627,7 +627,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let mut q_cands: [Vec<(usize, f32)>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
         for q in 0..4 {
             raw_q_cands[q].sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            let mut filtered = Vec::with_capacity(25);
+            let mut filtered = Vec::with_capacity(8);
             for &(idx, sc) in &raw_q_cands[q] {
                 let too_close = filtered.iter().any(|&(f_idx, _): &(usize, f32)| {
                     let dist = ((idx as i32 - f_idx as i32).abs() as usize).min(n - (idx as i32 - f_idx as i32).abs() as usize);
@@ -635,7 +635,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
                 });
                 if !too_close {
                     filtered.push((idx, sc));
-                    if filtered.len() >= 25 { break; }
+                    if filtered.len() >= 8 { break; }
                 }
             }
             q_cands[q] = filtered;

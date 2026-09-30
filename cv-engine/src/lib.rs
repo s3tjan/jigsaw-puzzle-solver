@@ -218,8 +218,28 @@ pub fn analyze_staged_piece(
     let mut closed_binary = vec![0u8; total_pixels];
     contour::morphological_close_3x3(&binary, width, height, &mut closed_binary);
 
-    // Obstruction / Hand filter: >55% or <0.3% of the stage
-    let is_obstructed = foreground_count > (total_pixels * 55 / 100);
+    // Topological stage isolation test:
+    // A legitimate puzzle piece is strictly an enclosed island positioned within the staging arena.
+    // If a hand, fingers, or foreign object enters the stage, it crosses the boundary perimeter.
+    let mut border_intrusion_count = 0usize;
+    let stage_border_margin = (w.min(h) as f32 * 0.04) as usize; // ~15px
+    for x in 0..w {
+        for y in 0..stage_border_margin {
+            if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
+            if closed_binary[(h - 1 - y) * w + x] > 0 { border_intrusion_count += 1; }
+        }
+    }
+    for y in stage_border_margin..(h - stage_border_margin) {
+        for x in 0..stage_border_margin {
+            if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
+            if closed_binary[y * w + (w - 1 - x)] > 0 { border_intrusion_count += 1; }
+        }
+    }
+    let total_border_samples = stage_border_margin * w * 2 + stage_border_margin * (h - 2 * stage_border_margin) * 2;
+    let touches_stage_border = border_intrusion_count > (total_border_samples * 2 / 100);
+
+    // Obstruction / Hand filter: >55% of stage, <0.3% of stage, or touching the stage border perimeter
+    let is_obstructed = touches_stage_border || foreground_count > (total_pixels * 55 / 100);
 
     let piece_profile = if !is_obstructed && foreground_count >= total_pixels / 300 {
         trace_piece_contour(&closed_binary, width, height)

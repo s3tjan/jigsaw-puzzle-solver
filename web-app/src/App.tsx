@@ -581,14 +581,17 @@ export default function App() {
           } else {
             ctx.drawImage(video, 0, 0, targetW, targetH)
           }
-          const imgData = ctx.getImageData(0, 0, targetW, targetH)
-          const rawBytes = new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength)
-          latestPixelsRef.current = { bytes: rawBytes, w: targetW, h: targetH }
-
           const now = performance.now()
+          const isCvTick = (now - lastCvTimeRef.current >= 160 && wasmReady) || isGtModeRef.current
+
           // Run Rust WASM piece analysis ~6 times/sec (every 160ms)
-          if (now - lastCvTimeRef.current >= 160 && wasmReady) {
+          if (isCvTick) {
             lastCvTimeRef.current = now
+
+            // Extract pixel buffer from canvas only on CV analysis ticks to prevent 60fps GPU readback stalls
+            const imgData = ctx.getImageData(0, 0, targetW, targetH)
+            const rawBytes = new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength)
+            latestPixelsRef.current = { bytes: rawBytes, w: targetW, h: targetH }
 
             const curCorners = cornersRef.current
             const curK1 = lensK1Ref.current
@@ -757,8 +760,6 @@ export default function App() {
                     }, gtDetectedCorners)
                   } else if (livePiece) {
                     drawPieceDiagnostics(pCtx, livePiece)
-                  } else if (detectedPieceRef.current) {
-                    drawPieceDiagnostics(pCtx, detectedPieceRef.current)
                   }
                 }
               }
