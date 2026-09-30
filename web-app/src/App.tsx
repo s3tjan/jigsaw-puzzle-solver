@@ -1031,84 +1031,6 @@ export default function App() {
     })
   }
 
-  // Pointer drag for piece corners directly on the 384x384 piece canvas
-  const handlePiecePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isGtMode || !gtCorners) return
-    const canvas = pieceCanvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
-    const x = (e.clientX - rect.left) * (canvas.width / rect.width)
-    const y = (e.clientY - rect.top) * (canvas.height / rect.height)
-
-    // If a corner is already selected, clicking directly moves that corner to the clicked position
-    if (draggingGtCorner !== null && gtFrozenPiece) {
-      let bestPt = { x, y }
-      let minDist = 60.0
-      for (const p of gtFrozenPiece.contour_points) {
-        const d = Math.hypot(p.x - x, p.y - y)
-        if (d < minDist) {
-          minDist = d
-          bestPt = p
-        }
-      }
-      setGtCorners(prev => {
-        if (!prev) return prev
-        const next = [...prev] as [Point2D, Point2D, Point2D, Point2D]
-        next[draggingGtCorner] = bestPt
-        return next
-      })
-      setDraggingGtCorner(null)
-      return
-    }
-
-    // Check if clicked near one of the 4 corners (< 25px) to begin dragging
-    for (let i = 0; i < 4; i++) {
-      const dist = Math.hypot(gtCorners[i].x - x, gtCorners[i].y - y)
-      if (dist < 25.0) {
-        setDraggingGtCorner(i)
-          ; (e.target as HTMLElement).setPointerCapture(e.pointerId)
-        return
-      }
-    }
-  }
-
-
-  const handlePiecePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isGtMode || draggingGtCorner === null || !gtCorners || !gtFrozenPiece) return
-    const canvas = pieceCanvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
-    const x = (e.clientX - rect.left) * (canvas.width / rect.width)
-    const y = (e.clientY - rect.top) * (canvas.height / rect.height)
-
-    // Snap to the closest contour point
-    let bestPt = { x, y }
-    let minDist = 40.0 // snap radius
-    for (const p of gtFrozenPiece.contour_points) {
-      const d = Math.hypot(p.x - x, p.y - y)
-      if (d < minDist) {
-        minDist = d
-        bestPt = p
-      }
-    }
-
-    setGtCorners(prev => {
-      if (!prev) return prev
-      const next = [...prev] as [Point2D, Point2D, Point2D, Point2D]
-      next[draggingGtCorner] = bestPt
-      return next
-    })
-  }
-
-  const handlePiecePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (draggingGtCorner !== null) {
-      setDraggingGtCorner(null)
-      try {
-        ; (e.target as HTMLElement).releasePointerCapture(e.pointerId)
-      } catch { }
-    }
-  }
-
   // Save ground truth to backend
   const handleSaveGroundTruth = async () => {
     if (!gtFrozenPiece || !gtCorners) return
@@ -1253,55 +1175,22 @@ export default function App() {
           </div>
         </section>
 
-        {/* Center: Rectified Dewarp Canvas (strictly 384x384, never resized) */}
-        <section className="workbench-panel" style={{ width: 416, flexShrink: 0 }}>
+        {/* Offscreen 384x384 canvas for Ground Truth JPEG export */}
+        <canvas ref={pieceCanvasRef} width={384} height={384} style={{ display: 'none' }} />
+
+        {/* Right: Piece Diagnostics & Ground-Truth Station */}
+        <section className="workbench-panel">
           <div className="panel-header">
-            <span>[2] RECTIFIED PIECE INSPECTION</span>
+            <span>[2] PIECE & GROUND TRUTH STATION</span>
             <div className="panel-actions">
-              <span className={detectedPiece ? 'green' : 'muted'}>
+              <span className={detectedPiece ? 'green' : 'muted'} style={{ marginRight: 6 }}>
                 {detectedPiece ? 'TARGET IN STAGE' : 'NO PIECE'}
               </span>
-            </div>
-          </div>
-
-          <div className="panel-body" style={{ alignItems: 'center', justifyContent: 'flex-start', padding: 16 }}>
-            <div className="piece-canvas-wrapper">
-              <canvas
-                ref={pieceCanvasRef}
-                width={384}
-                height={384}
-                className={`piece-canvas ${isGtMode ? 'piece-canvas-interactive' : ''}`}
-                onPointerDown={handlePiecePointerDown}
-                onPointerMove={handlePiecePointerMove}
-                onPointerUp={handlePiecePointerUp}
-                onPointerCancel={handlePiecePointerUp}
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: 8, width: 384, marginTop: 12 }}>
-              <button
-                className="btn primary small"
-                disabled={!detectedPiece}
-                onClick={handleRecordPiece}
-                style={{ flex: 1 }}
-                title="Add to session piece list"
-              >
-                RECORD PIECE
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* Right: Dedicated Benchmark Ground-Truth Station */}
-        <section className="workbench-panel" style={{ width: 360, flexShrink: 0 }}>
-          <div className="panel-header">
-            <span>[3] GROUND TRUTH STATION</span>
-            <div className="panel-actions">
               <span className="badge" style={{ background: '#2b6cb0' }}>BENCHMARK #{gtSavedCount}</span>
             </div>
           </div>
 
-          <div className="panel-body" style={{ padding: 12, gap: 10, alignItems: 'stretch' }}>
+          <div className="panel-body" style={{ padding: 14, gap: 12, alignItems: 'stretch' }}>
             {!isGtMode ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%', justifyContent: 'space-between' }}>
                 <div className="piece-data-card" style={{ width: '100%', maxWidth: 'none' }}>
@@ -1344,20 +1233,31 @@ export default function App() {
                   </div>
                 </div>
 
-                <div style={{ background: '#161b22', padding: 12, borderRadius: 4, border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                  <strong style={{ color: '#fff' }}>Ground Truth Benchmark:</strong>
-                  <br />
-                  Freeze the current frame to accurately place corners and specify edges for regression testing.
-                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <button
+                    className="btn primary"
+                    disabled={!detectedPiece}
+                    onClick={handleRecordPiece}
+                    title="Add detected piece to session collection"
+                  >
+                    RECORD PIECE
+                  </button>
 
-                <button
-                  className="btn primary"
-                  style={{ padding: 10, fontSize: 11, background: '#1a365d', borderColor: '#3182ce', color: '#63b3ed' }}
-                  disabled={!detectedPiece}
-                  onClick={handleFreezeGroundTruth}
-                >
-                  START LABELING [SPACE]
-                </button>
+                  <div style={{ background: '#161b22', padding: 10, borderRadius: 4, border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                    <strong style={{ color: '#fff' }}>Ground Truth Benchmark:</strong>
+                    <br />
+                    Freeze current piece frame to accurately verify corners and edge classifications for regression testing.
+                  </div>
+
+                  <button
+                    className="btn"
+                    style={{ background: '#1a365d', borderColor: '#3182ce', color: '#63b3ed' }}
+                    disabled={!detectedPiece}
+                    onClick={handleFreezeGroundTruth}
+                  >
+                    START LABELING [SPACE]
+                  </button>
+                </div>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

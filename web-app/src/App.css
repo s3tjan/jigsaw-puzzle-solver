@@ -85,11 +85,11 @@ html, body, #root {
 .red { color: var(--red) !important; }
 .muted { color: var(--text-muted) !important; }
 
-/* Main Workbench: Fixed 3-Column Studio Layout */
+/* Main Workbench: 2-Column Clean Studio Layout */
 .main-workbench {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(360px, 1fr) 416px 360px;
+  grid-template-columns: minmax(400px, 1fr) 380px;
   gap: 1px;
   background: var(--border);
   min-height: 0;
@@ -214,14 +214,17 @@ html, body, #root {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  font-size: 11px;
 }
 
 .data-label {
   color: var(--text-muted);
+  font-size: 11px;
 }
 
 .data-val {
   font-weight: 700;
+  font-size: 11px;
 }
 
 .edge-pills {
@@ -230,9 +233,9 @@ html, body, #root {
 }
 
 .pill {
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: 3px;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -320,10 +323,10 @@ html, body, #root {
   background: #21262d;
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 4px 10px;
-  border-radius: 3px;
+  padding: 5px 12px;
+  border-radius: 4px;
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   text-decoration: none;
@@ -348,13 +351,13 @@ html, body, #root {
 }
 
 .btn.small {
-  padding: 2px 8px;
-  font-size: 9px;
+  padding: 4px 10px;
+  font-size: 11px;
 }
 
 .btn.tiny {
-  padding: 1px 5px;
-  font-size: 8px;
+  padding: 2px 6px;
+  font-size: 10px;
 }
 
 .btn:disabled {
@@ -407,7 +410,7 @@ html, body, #root {
   justify-content: space-between;
   align-items: center;
   background: #1c2128;
-  padding: 4px 8px;
+  padding: 5px 8px;
   border-radius: 3px;
   border-left: 3px solid transparent;
 }
@@ -417,24 +420,24 @@ html, body, #root {
 .gt-edge-item.hole { border-left-color: var(--yellow); }
 
 .gt-edge-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   font-family: monospace;
 }
 
 .gt-edge-toggle {
   display: flex;
-  gap: 2px;
+  gap: 3px;
 }
 
 .gt-edge-btn {
-  padding: 2px 7px;
-  font-size: 9px;
+  padding: 3px 8px;
+  font-size: 10px;
   font-weight: 700;
   border: 1px solid var(--border);
   background: #21262d;
   color: var(--text-muted);
-  border-radius: 2px;
+  border-radius: 3px;
   cursor: pointer;
 }
 
