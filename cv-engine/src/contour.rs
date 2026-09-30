@@ -288,12 +288,19 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     cx /= n as f32;
     cy /= n as f32;
 
-    // 1. Detect physical straight line segments (die-cut flat border edges)
-    // If a piece has a manufactured flat cut, its points are strictly collinear (std_res < 0.60px)
-    // over a span >= 40 points with chord length > 45px.
-    let mut best_line: Option<(usize, usize, f32)> = None; // (start_idx, end_idx, angle)
-    let max_span = (n / 3).min(90);
+    // 1. Calculate estimated piece radius for scale normalization:
+    let r_est = {
+        let mut sum_r = 0.0f32;
+        for p in contour {
+            sum_r += ((p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy)).sqrt();
+        }
+        (sum_r / n as f32).max(10.0)
+    };
+    let scale_norm = 45.0 / r_est; // Normalize to nominal ~45px radius
 
+    // Detect physical straight line segments (die-cut flat border edges for classification)
+    let mut best_line: Option<(usize, usize, f32)> = None;
+    let max_span = (n / 3).min(90);
     for span in (40..=max_span).step_by(5) {
         for i in 0..n {
             let mut sum_x = 0.0f32;
@@ -305,7 +312,6 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             }
             let mx = sum_x / (span as f32);
             let my = sum_y / (span as f32);
-
             let mut cxx = 0.0f32;
             let mut cyy = 0.0f32;
             let mut cxy = 0.0f32;
@@ -320,7 +326,6 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             cxx /= span as f32;
             cyy /= span as f32;
             cxy /= span as f32;
-
             let tr = cxx + cyy;
             let det = cxx * cyy - cxy * cxy;
             let diff = (tr * tr - 4.0 * det).max(0.0).sqrt();
@@ -328,9 +333,8 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
 
             let p0 = contour[i];
             let p1 = contour[(i + span) % n];
-            let chord = ((p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y)).sqrt();
-
-            if std_res < 0.60 && chord > 45.0 {
+            let chord = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt();
+            if std_res < 0.60 && chord > 42.0 {
                 if best_line.is_none() || span > best_line.unwrap().0 {
                     let angle = (p1.y - p0.y).atan2(p1.x - p0.x);
                     best_line = Some((span, i, angle));
@@ -339,85 +343,79 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         }
     }
 
-    // 2. Compute Coordinate Frame Angle:
-    // If a physical straight line exists, align directly to it.
-    // Otherwise, use modulo-90 straight linear segment voting (detects tab necks, shoulders, and cut edges).
-    let base_theta = if let Some((_, _, line_angle)) = best_line {
-        line_angle
+    // 2. Modulo-90 Straight Linear Segment Voting (detects tab necks, shoulders, and flat cuts):
+    let mut segments: Vec<(f32, f32)> = Vec::new();
+    for &span in &[16usize, 20, 24] {
+        if span >= n { continue; }
+        for i in (0..n).step_by(2) {
+            let mut sum_x = 0.0f32;
+            let mut sum_y = 0.0f32;
+            for k in 0..span {
+                let pt = contour[(i + k) % n];
+                sum_x += pt.x;
+                sum_y += pt.y;
+            }
+            let mx = sum_x / (span as f32);
+            let my = sum_y / (span as f32);
+            let mut cxx = 0.0f32;
+            let mut cyy = 0.0f32;
+            let mut cxy = 0.0f32;
+            for k in 0..span {
+                let pt = contour[(i + k) % n];
+                let dx = pt.x - mx;
+                let dy = pt.y - my;
+                cxx += dx * dx;
+                cyy += dy * dy;
+                cxy += dx * dy;
+            }
+            cxx /= span as f32;
+            cyy /= span as f32;
+            cxy /= span as f32;
+            let tr = cxx + cyy;
+            let det = cxx * cyy - cxy * cxy;
+            let diff = (tr * tr - 4.0 * det).max(0.0).sqrt();
+            let std_res = (0.5 * (tr - diff)).max(0.0).sqrt();
+
+            let p0 = contour[i];
+            let p1 = contour[(i + span) % n];
+            let chord = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt();
+            if std_res < 0.40 && chord > 12.0 {
+                let ang = (p1.y - p0.y).atan2(p1.x - p0.x);
+                segments.push((ang, chord));
+            }
+        }
+    }
+
+    let base_theta = if segments.len() >= 5 {
+        let mut angle_bins = [0.0f32; 90];
+        for (ang, chord) in segments {
+            let mut deg = ang.to_degrees().rem_euclid(90.0);
+            if deg >= 45.0 { deg -= 90.0; }
+            let bin_idx = ((deg.round() as i32) + 45).clamp(0, 89) as usize;
+            angle_bins[bin_idx] += chord;
+        }
+        let mut best_bin = 45;
+        let mut best_votes = -1.0f32;
+        for (b, &votes) in angle_bins.iter().enumerate() {
+            if votes > best_votes {
+                best_votes = votes;
+                best_bin = b;
+            }
+        }
+        ((best_bin as f32 - 45.0)).to_radians()
     } else {
-        let mut segments: Vec<(f32, f32)> = Vec::new();
-        for &span in &[16usize, 20, 24] {
-            if span >= n { continue; }
-            for i in (0..n).step_by(2) {
-                let mut sum_x = 0.0f32;
-                let mut sum_y = 0.0f32;
-                for k in 0..span {
-                    let pt = contour[(i + k) % n];
-                    sum_x += pt.x;
-                    sum_y += pt.y;
-                }
-                let mx = sum_x / (span as f32);
-                let my = sum_y / (span as f32);
-                let mut cxx = 0.0f32;
-                let mut cyy = 0.0f32;
-                let mut cxy = 0.0f32;
-                for k in 0..span {
-                    let pt = contour[(i + k) % n];
-                    let dx = pt.x - mx;
-                    let dy = pt.y - my;
-                    cxx += dx * dx;
-                    cyy += dy * dy;
-                    cxy += dx * dy;
-                }
-                cxx /= span as f32;
-                cyy /= span as f32;
-                cxy /= span as f32;
-                let tr = cxx + cyy;
-                let det = cxx * cyy - cxy * cxy;
-                let diff = (tr * tr - 4.0 * det).max(0.0).sqrt();
-                let std_res = (0.5 * (tr - diff)).max(0.0).sqrt();
-
-                let p0 = contour[i];
-                let p1 = contour[(i + span) % n];
-                let chord = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt();
-                if std_res < 0.40 && chord > 12.0 {
-                    let ang = (p1.y - p0.y).atan2(p1.x - p0.x);
-                    segments.push((ang, chord));
-                }
-            }
+        // Contour covariance PCA fallback
+        let mut cov_xx = 0.0f32;
+        let mut cov_xy = 0.0f32;
+        let mut cov_yy = 0.0f32;
+        for p in contour {
+            let dx = p.x - cx;
+            let dy = p.y - cy;
+            cov_xx += dx * dx;
+            cov_xy += dx * dy;
+            cov_yy += dy * dy;
         }
-
-        if segments.len() >= 5 {
-            let mut angle_bins = [0.0f32; 90];
-            for (ang, chord) in segments {
-                let mut deg = ang.to_degrees().rem_euclid(90.0);
-                if deg >= 45.0 { deg -= 90.0; }
-                let bin_idx = ((deg.round() as i32) + 45).clamp(0, 89) as usize;
-                angle_bins[bin_idx] += chord;
-            }
-            let mut best_bin = 45;
-            let mut best_votes = -1.0f32;
-            for (b, &votes) in angle_bins.iter().enumerate() {
-                if votes > best_votes {
-                    best_votes = votes;
-                    best_bin = b;
-                }
-            }
-            ((best_bin as f32 - 45.0)).to_radians()
-        } else {
-            // Contour covariance PCA fallback
-            let mut cov_xx = 0.0f32;
-            let mut cov_xy = 0.0f32;
-            let mut cov_yy = 0.0f32;
-            for p in contour {
-                let dx = p.x - cx;
-                let dy = p.y - cy;
-                cov_xx += dx * dx;
-                cov_xy += dx * dy;
-                cov_yy += dy * dy;
-            }
-            0.5 * (2.0 * cov_xy).atan2(cov_xx - cov_yy)
-        }
+        0.5 * (2.0 * cov_xy).atan2(cov_xx - cov_yy)
     };
 
     let mut theta = base_theta;
@@ -430,7 +428,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let cos_t = theta.cos();
     let sin_t = theta.sin();
 
-    // 3. Corner Scoring in Aligned Frame:
+    // 3. Corner Scoring in Aligned Frame (Scale-Normalized):
     let k_span = 8;
     let mut corner_scores = vec![0.0f32; n];
 
@@ -462,7 +460,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
 
         let convexity = cross.max(0.0);
         let sharpness = (1.0 - dot).max(0.0);
-        corner_scores[i] = dist_c * diagonal_balance * (1.0 + convexity * 2.0 + sharpness * 1.5);
+        corner_scores[i] = (dist_c * scale_norm) * diagonal_balance * (1.0 + convexity * 2.0 + sharpness * 1.5);
     }
 
     // 4. Select Multi-Candidate Corners in each Quadrant and Optimize Quad Geometry:
@@ -522,15 +520,15 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
 
                     let mid_x_diff = (p0.x + p2.x) - (p1.x + p3.x);
                     let mid_y_diff = (p0.y + p2.y) - (p1.y + p3.y);
-                    let mid_err = (mid_x_diff * 0.5 * mid_x_diff * 0.5 + mid_y_diff * 0.5 * mid_y_diff * 0.5).sqrt();
+                    let mid_err = (mid_x_diff * 0.5 * mid_x_diff * 0.5 + mid_y_diff * 0.5 * mid_y_diff * 0.5).sqrt() * scale_norm;
 
-                    let d01 = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt();
-                    let d23 = ((p3.x - p2.x).powi(2) + (p3.y - p2.y).powi(2)).sqrt();
-                    let d12 = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt();
-                    let d30 = ((p0.x - p3.x).powi(2) + (p0.y - p3.y).powi(2)).sqrt();
+                    let d01 = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt() * scale_norm;
+                    let d23 = ((p3.x - p2.x).powi(2) + (p3.y - p2.y).powi(2)).sqrt() * scale_norm;
+                    let d12 = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt() * scale_norm;
+                    let d30 = ((p0.x - p3.x).powi(2) + (p0.y - p3.y).powi(2)).sqrt() * scale_norm;
 
                     let edge_diff = (d01 - d23).abs() + (d12 - d30).abs();
-                    let total_sc = (sc0 + sc1 + sc2 + sc3) - (mid_err * 8.0) - (edge_diff * 2.0);
+                    let total_sc = (sc0 + sc1 + sc2 + sc3) - (mid_err * 6.0) - (edge_diff * 1.5);
 
                     if total_sc > best_total {
                         best_total = total_sc;

@@ -308,7 +308,7 @@ export default function App() {
     const GAP = 6
 
     ctx.beginPath()
-    ctx.strokeStyle = '#00e5ff' // High-contrast neon cyan
+    ctx.strokeStyle = '#ff00ffff' // High-contrast neon cyan
     ctx.lineWidth = 2.0
 
     // Horizontal arms with center gap
@@ -327,14 +327,14 @@ export default function App() {
     // Central aiming reticle ring
     ctx.beginPath()
     ctx.arc(cx, cy, 14, 0, Math.PI * 2)
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.75)'
+    ctx.strokeStyle = 'ff00ffff'
     ctx.lineWidth = 1.5
     ctx.stroke()
 
     // Sub-pixel white center point
     ctx.beginPath()
     ctx.arc(cx, cy, 2.0, 0, Math.PI * 2)
-    ctx.fillStyle = '#ffffff'
+    ctx.fillStyle = '#ff00ffff'
     ctx.fill()
 
     // 3. Physical Pose & Keystone Balance Indicators (Calculates camera tilt from quad geometry)
@@ -630,23 +630,28 @@ export default function App() {
                       return { x: xs[mid], y: ys[mid] }
                     }) as [Point2D, Point2D, Point2D, Point2D]
 
-                    // 2. Velocity-gated stabilization: when piece is stationary (displacement < 2.5px),
-                    // apply heavy temporal damping (EMA alpha=0.20) to eliminate camera sensor shot-noise wobble.
+                    // 1. Stable Corner Association (match each median corner to nearest prev corner by distance to avoid index hopping)
                     const prevLiveCorners = detectedPieceRef.current?.corners
-                    const centerDisplacement = Math.hypot(
-                      rawPiece.center.x - history[1]?.center.x || 0,
-                      rawPiece.center.y - history[1]?.center.y || 0
-                    )
+                    const centerDisplacement = history[1] ? Math.hypot(
+                      rawPiece.center.x - history[1].center.x,
+                      rawPiece.center.y - history[1].center.y
+                    ) : 10.0
 
+                    // 2. Deadband Lock-On: If piece is stationary (displacement < 1.8px),
+                    // lock onto previous corners completely unless an actual corner shifts by > 2.0px.
                     const stabilizedCorners = medianCorners.map((mc, cIdx) => {
-                      if (prevLiveCorners && centerDisplacement < 2.5) {
+                      if (prevLiveCorners && centerDisplacement < 1.8) {
                         const prevC = prevLiveCorners[cIdx]
                         const cornerDist = Math.hypot(mc.x - prevC.x, mc.y - prevC.y)
-                        // If corner jitter is tiny (< 3.0px), damp it heavily
-                        if (cornerDist < 3.0) {
+                        // If jitter is within sensor thermal noise band (< 2.2px), lock position completely (0 jitter)
+                        if (cornerDist < 2.2) {
+                          return prevC
+                        }
+                        // If moving slowly, damp smoothly
+                        if (cornerDist < 5.0) {
                           return {
-                            x: prevC.x * 0.82 + mc.x * 0.18,
-                            y: prevC.y * 0.82 + mc.y * 0.18,
+                            x: prevC.x * 0.85 + mc.x * 0.15,
+                            y: prevC.y * 0.85 + mc.y * 0.15,
                           }
                         }
                       }
