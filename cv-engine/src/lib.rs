@@ -162,13 +162,19 @@ pub fn analyze_staged_piece(
     let h = height as usize;
 
     // 1. Robust Background Sampling from the 4 outer peripheral margins:
-    // Samples 12px strips along Top, Bottom, Left, and Right.
-    // Instead of a simple average (which gets distorted if a piece is placed near an edge),
-    // we collect luminance values and use the 85th percentile (brightest ~15% rejection of shadows/piece).
+    // Robust Background Sampling from the 4 outer peripheral margins:
+    // Samples strips along Top, Bottom, Left, and Right independently.
+    // Instead of pooling all border pixels together (where a hand on one edge pulls down the percentile),
+    // we compute the 85th percentile (brightest clean paper) for each of the 4 edges independently,
+    // and take the median/highest of these clean quadrant estimates.
     let margin_px = ((w.min(h) as f32) * 0.05).max(8.0) as usize;
-    let mut perimeter_pixels: Vec<(u8, u8, u8, u8)> = Vec::with_capacity(w * 4); // (r, g, b, lum)
+    
+    let mut top_pixels = Vec::with_capacity(w * margin_px);
+    let mut bottom_pixels = Vec::with_capacity(w * margin_px);
+    let mut left_pixels = Vec::with_capacity(h * margin_px);
+    let mut right_pixels = Vec::with_capacity(h * margin_px);
 
-    // Top & Bottom strips
+    // Top strip
     for x in margin_px..(w - margin_px) {
         for y in 2..margin_px {
             let idx = (y * w + x) * 4;
@@ -176,19 +182,21 @@ pub fn analyze_staged_piece(
             let g = dewarped_pixels[idx + 1];
             let b = dewarped_pixels[idx + 2];
             let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
-            perimeter_pixels.push((r, g, b, lum));
+            top_pixels.push((r, g, b, lum));
         }
+    }
+    // Bottom strip
+    for x in margin_px..(w - margin_px) {
         for y in (h - margin_px)..(h - 2) {
             let idx = (y * w + x) * 4;
             let r = dewarped_pixels[idx];
             let g = dewarped_pixels[idx + 1];
             let b = dewarped_pixels[idx + 2];
             let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
-            perimeter_pixels.push((r, g, b, lum));
+            bottom_pixels.push((r, g, b, lum));
         }
     }
-
-    // Left & Right strips
+    // Left strip
     for y in margin_px..(h - margin_px) {
         for x in 2..margin_px {
             let idx = (y * w + x) * 4;
@@ -196,23 +204,39 @@ pub fn analyze_staged_piece(
             let g = dewarped_pixels[idx + 1];
             let b = dewarped_pixels[idx + 2];
             let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
-            perimeter_pixels.push((r, g, b, lum));
+            left_pixels.push((r, g, b, lum));
         }
+    }
+    // Right strip
+    for y in margin_px..(h - margin_px) {
         for x in (w - margin_px)..(w - 2) {
             let idx = (y * w + x) * 4;
             let r = dewarped_pixels[idx];
             let g = dewarped_pixels[idx + 1];
             let b = dewarped_pixels[idx + 2];
             let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
-            perimeter_pixels.push((r, g, b, lum));
+            right_pixels.push((r, g, b, lum));
         }
     }
 
-    // Sort by luminance and pick the 85th percentile (clean white paper background)
-    perimeter_pixels.sort_by_key(|p| p.3);
-    let sample_idx = (perimeter_pixels.len() as f32 * 0.85) as usize;
-    let bg_ref = if !perimeter_pixels.is_empty() {
-        perimeter_pixels[sample_idx.min(perimeter_pixels.len() - 1)]
+    let pick_percentile = |mut samples: Vec<(u8, u8, u8, u8)>| -> Option<(u8, u8, u8, u8)> {
+        if samples.is_empty() { return None; }
+        samples.sort_by_key(|p| p.3);
+        let idx = (samples.len() as f32 * 0.85) as usize;
+        Some(samples[idx.min(samples.len() - 1)])
+    };
+
+    let mut edge_refs = Vec::new();
+    if let Some(p) = pick_percentile(top_pixels) { edge_refs.push(p); }
+    if let Some(p) = pick_percentile(bottom_pixels) { edge_refs.push(p); }
+    if let Some(p) = pick_percentile(left_pixels) { edge_refs.push(p); }
+    if let Some(p) = pick_percentile(right_pixels) { edge_refs.push(p); }
+
+    edge_refs.sort_by_key(|p| p.3);
+    // Take the 2nd highest / median edge reference so an obstructed side does not corrupt the background
+    let bg_ref = if !edge_refs.is_empty() {
+        let mid = edge_refs.len() * 3 / 4;
+        edge_refs[mid.min(edge_refs.len() - 1)]
     } else {
         (240, 240, 240, 240)
     };
@@ -269,23 +293,25 @@ pub fn analyze_staged_piece(
 
     // Topological stage isolation test:
     // A legitimate puzzle piece is strictly an enclosed island positioned within the staging arena.
-    // If a hand, fingers, or foreign object enters the stage, it crosses the boundary perimeter.
+    // If a hand, fingers, or foreign object enters the stage, it forms an intrusion from the outer margin.
+    // We check outer 3px..6px ring (after the border_cut) and test if intrusion is significant (>10% of samples)
+    let stage_border_margin = ((w.min(h) as f32 * 0.015) as usize).clamp(3, 6);
     let mut border_intrusion_count = 0usize;
-    let stage_border_margin = ((w.min(h) as f32 * 0.015) as usize).clamp(3, 6); // 6px border strip
-    for x in 0..w {
-        for y in 0..stage_border_margin {
+    for x in border_cut..(w - border_cut) {
+        for y in border_cut..stage_border_margin {
             if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
             if closed_binary[(h - 1 - y) * w + x] > 0 { border_intrusion_count += 1; }
         }
     }
     for y in stage_border_margin..(h - stage_border_margin) {
-        for x in 0..stage_border_margin {
+        for x in border_cut..stage_border_margin {
             if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
             if closed_binary[y * w + (w - 1 - x)] > 0 { border_intrusion_count += 1; }
         }
     }
-    let total_border_samples = stage_border_margin * w * 2 + stage_border_margin * (h - 2 * stage_border_margin) * 2;
-    let touches_stage_border = border_intrusion_count > (total_border_samples * 4 / 100);
+    let total_border_samples = (stage_border_margin - border_cut).max(1) * (w - 2 * border_cut) * 2
+        + (stage_border_margin - border_cut).max(1) * (h - 2 * stage_border_margin) * 2;
+    let touches_stage_border = border_intrusion_count > (total_border_samples * 10 / 100);
 
     // Obstruction / Hand filter: >55% of stage, <0.3% of stage, or touching the stage border perimeter
     let is_obstructed = touches_stage_border || foreground_count > (total_pixels * 55 / 100);

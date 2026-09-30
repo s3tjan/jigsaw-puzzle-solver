@@ -715,9 +715,9 @@ export default function App() {
             ctx.drawImage(video, 0, 0, targetW, targetH)
           }
           const now = performance.now()
-          const isCvTick = (now - lastCvTimeRef.current >= 100 && wasmReady) || isGtModeRef.current
+          const isCvTick = (now - lastCvTimeRef.current >= 60 && wasmReady) || isGtModeRef.current
 
-          // Run Rust WASM piece analysis ~10 times/sec (every 100ms for instant responsiveness)
+          // Run Rust WASM piece analysis ~16 times/sec (every 60ms for instant piece detection)
           if (isCvTick) {
             lastCvTimeRef.current = now
 
@@ -767,7 +767,7 @@ export default function App() {
                 if (rawPiece) {
                   const history = pieceHistoryRef.current
                   const isContinuous = history.length > 0 &&
-                    Math.hypot(rawPiece.center.x - history[0].center.x, rawPiece.center.y - history[0].center.y) < 8.0
+                    Math.hypot(rawPiece.center.x - history[0].center.x, rawPiece.center.y - history[0].center.y) < 14.0
 
                   if (!isContinuous) {
                     // Instant frame-1 response: show raw detected piece immediately
@@ -844,7 +844,14 @@ export default function App() {
                     }
                   }
                 } else {
-                  pieceHistoryRef.current = []
+                  // Transient dropout tolerance (up to 2 missed frames / ~120ms):
+                  // Prevents momentary finger retraction shadows from resetting history and causing perceptual wait
+                  if (pieceHistoryRef.current.length > 2) {
+                    pieceHistoryRef.current.pop()
+                    livePiece = detectedPieceRef.current
+                  } else {
+                    pieceHistoryRef.current = []
+                  }
                 }
 
                 setDetectedPiece(livePiece)
