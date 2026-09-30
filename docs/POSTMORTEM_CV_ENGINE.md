@@ -42,12 +42,15 @@ This postmortem categorizes every identified bug, details the root causes, descr
     $$k_{\text{span}} = \text{clamp}\left(\frac{n}{36}, 8, 16\right)$$
   - Normalized distance metrics using estimated radius $r_{\text{est}} = \frac{1}{n} \sum \|p_i - C\|$.
 
-### Bug 1.3: Corner Ordering & Edge Permutation Jitter
-* **Symptoms:** A piece rotated by even $1^\circ$ would occasionally swap edge indices (Edge 0 became Edge 3), disrupting piece tracking and board placement logic.
-* **Root Cause:** Sorting corners by raw polar angle without establishing a canonical orientation reference point caused boundary wraparound at $-\pi / +\pi$.
+### Bug 1.4: Tab-Neck Fillet Parallelogram Collapse & Border Flat Classification
+* **Symptoms:** In 4-tab pieces or rotated border pieces, corners erroneously snapped to inward tab neck fillets (~50px error), and flat border cuts were misclassified as tabs/holes.
+* **Root Cause:**
+  1. *Topological Concealment:* Inner tab neck fillets make sharp $90^\circ$ turns, scoring high in corner sharpness $(1 - \text{dot})$, and opposing neck pairs created an artificially balanced parallelogram with near-zero diagonal error.
+  2. *Single-Pass Flat Cut Fragility:* Flat edge identification previously depended on a fragile, single-threshold straight line pre-pass ($\text{std\_res} < 0.45\text{px}$). Perspective tilt pushed residuals to $0.61\text{px}$, causing true border edges to fall through to `Interior`.
 * **Resolution:**
-  - Enforced deterministic ordering by orienting corners relative to the canonical PCA / linear cut axis.
-  - In automated testing, evaluated edge matching using cyclic permutations (modulo 4 shifts) while maintaining strict clockwise vertex ordering.
+  - *Topological Convexity Gating:* Enforced 2D cross product gating ($\text{cross} < -0.05$) to strictly reject re-entrant / concave vertices from corner candidate pools (`q_cands`).
+  - *Physical Tab-Cut Zero Crossing:* Lowered chord zero-crossing detection threshold to $5.0\text{px}$, penalizing any candidate chord slicing across tab shoulders.
+  - *Relative Edge Bimodality Classification:* Classified edges by relative depth separation (border pieces exhibit an order-of-magnitude difference: $\frac{\text{depth}_{\text{tab}}}{\text{depth}_{\text{flat}}} > 8$, $s_3 - s_0 \ge 2.0$) rather than relying on brittle boolean flags.
 
 ---
 
@@ -138,6 +141,7 @@ This postmortem categorizes every identified bug, details the root causes, descr
 | **BUG-006** | `lib.rs` | Non-uniform lighting caused Otsu binarization failure | High: Segmentation failure | 85th percentile perimeter background color sampling |
 | **BUG-007** | `web-app` / Test | Missing `detected_corners` in ground truth JSON | Medium: Tooling opacity | Schema extended to track both CV and human-labeled corners |
 | **BUG-008** | `contour.rs` | Edge chords used raw contour pts instead of refined corners + 1-pass step noise | Medium: Baseline wobble & rough curves | Synchronized edge start/end corners + 3-pass Gaussian smoothing filter |
+| **BUG-009** | `contour.rs` | Inner tab-neck fillets formed false parallelograms & border straight-cut threshold failed | High: 50px corner error & border misclassification | Topological convexity gating, 5px zero-crossing penalty, relative edge depth bimodality |
 
 ---
 

@@ -441,7 +441,7 @@ export default function App() {
       Flat: '#9c27b0',
     }
 
-    // 2. Draw 4 Core Baseline Chords with badges anchored at the peak curvature sample
+    // 2. Draw 4 Core Baseline Chords with badges anchored at the stable chord midpoint
     piece.edges.forEach((edge, i) => {
       const color = edgeColors[edge.edge_type] || '#333333'
 
@@ -455,34 +455,9 @@ export default function App() {
       ctx.stroke()
       ctx.restore()
 
-      // Find the peak curvature sample (furthest from the chord) to anchor the badge
-      // This ensures the label sits at the Tab bump or Hole dent, never ambiguously between them
-      const bDx = edge.end_corner.x - edge.start_corner.x
-      const bDy = edge.end_corner.y - edge.start_corner.y
-      const bLen = Math.hypot(bDx, bDy) || 1.0
-      let peakDist = 0
-      let peakX = (edge.start_corner.x + edge.end_corner.x) * 0.5
-      let peakY = (edge.start_corner.y + edge.end_corner.y) * 0.5
-      for (const s of edge.curve_samples) {
-        const signedDist = ((s.x - edge.start_corner.x) * bDy - (s.y - edge.start_corner.y) * bDx) / bLen
-        if (Math.abs(signedDist) > Math.abs(peakDist)) {
-          peakDist = signedDist
-          peakX = s.x
-          peakY = s.y
-        }
-      }
-
-      // Place badge between chord midpoint and peak sample for readability
+      // Anchor badge strictly to the geometric midpoint of the baseline chord for 100% stability
       const chordMidX = (edge.start_corner.x + edge.end_corner.x) * 0.5
       const chordMidY = (edge.start_corner.y + edge.end_corner.y) * 0.5
-      const badgeX = (chordMidX + peakX) * 0.5
-      const badgeY = (chordMidY + peakY) * 0.5
-
-      // Draw a small dot at peak to make the curvature measurement visible
-      ctx.beginPath()
-      ctx.arc(peakX, peakY, 3, 0, Math.PI * 2)
-      ctx.fillStyle = color
-      ctx.fill()
 
       const label = `E${i}: ${edge.edge_type}`
       ctx.font = 'bold 11px monospace'
@@ -492,7 +467,7 @@ export default function App() {
 
       ctx.fillStyle = 'rgba(20, 25, 30, 0.92)'
       ctx.beginPath()
-      ctx.roundRect(badgeX - bw / 2, badgeY - bh / 2, bw, bh, 3)
+      ctx.roundRect(chordMidX - bw / 2, chordMidY - bh / 2, bw, bh, 3)
       ctx.fill()
       ctx.strokeStyle = color
       ctx.lineWidth = 1.5
@@ -501,7 +476,7 @@ export default function App() {
       ctx.fillStyle = '#ffffff'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(label, badgeX, badgeY)
+      ctx.fillText(label, chordMidX, chordMidY)
     })
 
     // 3. In GT mode, draw CV-detected corners as ghost pins (white dashed) to show offset from labels
@@ -660,7 +635,15 @@ export default function App() {
 
                   if (!isContinuous) {
                     pieceHistoryRef.current = [rawPiece]
-                    livePiece = rawPiece
+                    const initialEdges = rawPiece.edges.map((e, idx) => ({
+                      ...e,
+                      start_corner: rawPiece.corners[idx],
+                      end_corner: rawPiece.corners[(idx + 1) % 4],
+                    })) as [PieceEdge, PieceEdge, PieceEdge, PieceEdge]
+                    livePiece = {
+                      ...rawPiece,
+                      edges: initialEdges,
+                    }
                   } else {
                     history.unshift(rawPiece)
                     if (history.length > 5) history.pop()
@@ -716,10 +699,17 @@ export default function App() {
                       return mc
                     }) as [Point2D, Point2D, Point2D, Point2D]
 
+                    // Bind stabilized deadband corners directly into edges so connecting lines and labels never wobble
+                    const stabilizedEdges = consensusEdges.map((e, idx) => ({
+                      ...e,
+                      start_corner: stabilizedCorners[idx],
+                      end_corner: stabilizedCorners[(idx + 1) % 4],
+                    })) as [PieceEdge, PieceEdge, PieceEdge, PieceEdge]
+
                     livePiece = {
                       ...rawPiece,
                       corners: stabilizedCorners,
-                      edges: consensusEdges,
+                      edges: stabilizedEdges,
                       is_corner: isCorner,
                       is_border: isBorder,
                     }

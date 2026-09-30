@@ -50,9 +50,41 @@ fn test_ground_truth_benchmarks() {
         let content = fs::read_to_string(entry.path()).expect("Read fixture");
         let fixture: GroundTruthFixture = serde_json::from_str(&content).expect("Parse fixture");
 
+        println!("=== FIXTURE: {} (contour len = {}) ===", fixture.id, fixture.contour_points.len());
+        let pts = &fixture.contour_points;
+        for (i, c) in fixture.corners.iter().enumerate() {
+            let mut best_idx = 0;
+            let mut best_dist = f32::INFINITY;
+            for (idx, p) in pts.iter().enumerate() {
+                let d = ((p.x - c.x).powi(2) + (p.y - c.y).powi(2)).sqrt();
+                if d < best_dist {
+                    best_dist = d;
+                    best_idx = idx;
+                }
+            }
+            println!("  GT Corner {}: ({:.1}, {:.1}) -> nearest contour idx {} (dist {:.2}px)",
+                i, c.x, c.y, best_idx, best_dist);
+        }
+
         let detected = contour::partition_edges_and_classify(&fixture.contour_points);
         let piece = match detected {
-            Some(p) => p,
+            Some(p) => {
+                println!("Detected corners:");
+                for (i, c) in p.corners.iter().enumerate() {
+                    let mut best_idx = 0;
+                    let mut best_dist = f32::INFINITY;
+                    for (idx, pt) in pts.iter().enumerate() {
+                        let d = ((pt.x - c.x).powi(2) + (pt.y - c.y).powi(2)).sqrt();
+                        if d < best_dist {
+                            best_dist = d;
+                            best_idx = idx;
+                        }
+                    }
+                    println!("  Det Corner {}: ({:.1}, {:.1}) -> nearest contour idx {} (dist {:.2}px)",
+                        i, c.x, c.y, best_idx, best_dist);
+                }
+                p
+            },
             None => {
                 println!("FAIL [{}]: NO PIECE DETECTED", fixture.id);
                 continue;

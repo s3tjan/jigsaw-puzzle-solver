@@ -429,9 +429,18 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let dist_c = (dx * dx + dy * dy).sqrt();
         let dist_bounded = dist_c.min(r_est * 1.25);
 
-        let convexity = cross.max(0.0);
+        // Topological Convexity Gating:
+        // A true puzzle piece corner is always an exterior convex vertex pointing away from the center.
+        // Re-entrant / concave vertices (cross < 0, such as tab fillets and neck concavities) must be
+        // heavily penalized so they cannot be selected as corner candidates in quad optimization.
         let sharpness = (1.0 - dot).max(0.0);
-        let base_score = (dist_bounded * scale_norm) * (1.0 + convexity * 2.0 + sharpness * 2.5);
+        let base_score = if cross < -0.05 {
+            // Re-entrant concave fillet: suppress candidate score
+            0.0
+        } else {
+            let convexity = cross.max(0.0);
+            (dist_bounded * scale_norm) * (1.0 + convexity * 2.5 + sharpness * 2.5)
+        };
 
         point_features.push((dx, dy, base_score));
         top_corners.push((i, base_score));
@@ -692,8 +701,8 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
                             while step_count < count {
                                 let pt = contour[curr_idx];
                                 let dist = (((pt.x - ps.x) * b_dy - (pt.y - ps.y) * b_dx) / b_len) * scale_norm;
-                                if dist > 8.0 { has_pos = true; }
-                                if dist < -8.0 { has_neg = true; }
+                                if dist > 5.0 { has_pos = true; }
+                                if dist < -5.0 { has_neg = true; }
                                 curr_idx = (curr_idx + step) % n;
                                 step_count += 1;
                             }
@@ -715,11 +724,6 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         }
 
         if let Some(q_idx) = cand_best_quad {
-            if contour.len() == 446 {
-                eprintln!("   theta={:.2} deg (raw={:.2} deg), score={:.1}, quad={:?}, pts=[{:?}, {:?}, {:?}, {:?}]",
-                    theta.to_degrees(), cand_t.to_degrees(), cand_best_score, q_idx,
-                    contour[q_idx[0]], contour[q_idx[1]], contour[q_idx[2]], contour[q_idx[3]]);
-            }
             if cand_best_score > best_global_score {
                 best_global_score = cand_best_score;
                 best_global_quad = Some(q_idx);
@@ -907,9 +911,11 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // Determine flat edges:
-    // If a physical straight line cut was detected, the lowest scoring edge is a true Flat edge.
-    // If NO straight line exists on the contour, the piece is an Interior piece unless
-    // an edge has an unmistakably flat profile (s0 < 4.0).
+    // A border piece has an order-of-magnitude difference in protrusion between its flat edge(s)
+    // and its tab/hole edges. Rather than relying on a fragile single-threshold straight line flag,
+    // we use a unified multi-metric test:
+    // 1. Is the lowest score significantly smaller than the rest (bimodal gap)?
+    // 2. Or did we find a physical sustained straight line segment on the contour?
     let has_straight_line = best_line.is_some();
     let mut is_flat = [false; 4];
     let s0 = scores[0].1;
@@ -917,19 +923,22 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let s2 = scores[2].1;
     let s3 = scores[3].1;
 
-    if has_straight_line {
-        // True physical flat cut present
-        if s0 < 8.8 && (s3 - s0 >= 1.8 || s0 < 4.0) {
-            is_flat[scores[0].0] = true;
-        }
-        // Corner piece: second lowest edge is also a flat cut
-        if is_flat[scores[0].0] && s1 < 8.8 && (s2 - s1 >= 1.2 || s1 < 4.0) {
+    // Edge 0 is flat if:
+    // - A physical straight line is detected AND s0 is low (< 9.0)
+    // - OR s0 is unconditionally flat (< 4.5)
+    // - OR there is a strong bimodal gap (tabs/holes protrude much further: s3 - s0 >= 2.0 && s0 < 7.5)
+    if (has_straight_line && s0 < 9.0) || s0 < 4.5 || (s3 - s0 >= 2.0 && s0 < 7.5) {
+        is_flat[scores[0].0] = true;
+    }
+
+    // Edge 1 is also flat (Corner piece) if:
+    // Edge 0 is flat AND s1 is also flat / separated from tabs s2 and s3
+    if is_flat[scores[0].0] {
+        if (has_straight_line && s1 < 9.0 && (s2 - s1 >= 1.2 || s1 < 4.5))
+            || s1 < 4.5
+            || (s2 - s1 >= 2.0 && s1 < 7.5)
+        {
             is_flat[scores[1].0] = true;
-        }
-    } else {
-        // Pure interior piece: only classify as Flat if score is unconditionally flat
-        if s0 < 4.0 {
-            is_flat[scores[0].0] = true;
         }
     }
 
