@@ -54,32 +54,49 @@ This roadmap documents the end-to-end architecture, current completion status, a
 | **Phase 0** | Clean Slate & Rust + React WASM Scaffolding | Cargo, Vite, wasm-pack | ✅ **DONE** |
 | **Phase 1** | Real-time Camera Feed & Sub-ms Frame Ingestion | WebRTC, Canvas, WASM Memory | ✅ **DONE** |
 | **Phase 2** | Pillar 1: Industrial Calibration Mat & 3x3 DLT Homography | Rust (`homography.rs`), Headless Chrome | ✅ **DONE** |
-| **Phase 3** | Calibration Polish: Bullseye Centroid Snapping & LocalStorage | Rust (`aruco.rs`), HTML5 Pointer Events | ✅ **DONE** |
-| **Phase 4** | Pillar 3: Boundary Segmentation & 4-Edge Classification | Rust (`contour.rs`), PCA, Otsu | ✅ **DONE** |
-| **Phase 5** | Vision Polish: Rotation Invariance & Hands-Free Auto-Capture | Web Audio API, Moving Window Blur | ✅ **DONE** |
-| **Phase 6** | **Pillar 4: Persistent Assembly Board Graph** | Rust (`board.rs`), React Canvas Grid | ✅ **DONE** |
-| **Phase 7** | **Visual Matching against Master Artwork Poster** | Rust / WASM Keypoints, FLANN / KD-Tree | 🟡 **UP NEXT** |
+| **Phase 3** | Calibration Mat v5.0: Zero-Bleed L-Crosshairs & Camera Pose HUD | Python (`generate_mat.py`), Canvas HUD | ✅ **DONE** |
+| **Phase 4** | Pillar 3: Scale-Invariant Contour & 4-Edge Corner Detection | Rust (`contour.rs`), 82/82 Ground Truth Fixtures | ✅ **DONE** |
+| **Phase 5** | Vision Polish: Macro Wobble Deadband & Auto-Capture Pipeline | Moving Window Blur, Deadband Lock, Web Audio | ✅ **DONE** |
+| **Phase 6** | **Pillar 4: Pairwise Curve Mating & Border Loop Solver** | Rust (`matcher.rs`, `board.rs`), Turn Angles | 🟡 **IN PROGRESS** |
+| **Phase 7** | **Visual Matching against Master Artwork Poster** | Rust / WASM Keypoints, FLANN / KD-Tree | ⏳ Planned |
 | **Phase 8** | **Interactive AR Placement Guidance & Session Storage** | IndexedDB, Canvas 2D/WebGL Overlay | ⏳ Planned |
 | **Phase 9** | **PWA Packaging & Mobile Optimization** | Service Workers, Web App Manifest | ⏳ Planned |
 
 ---
 
-## 🔍 Detailed Breakdown of Upcoming Phases
+## 🔍 Detailed Breakdown of Phases & Current Milestones
 
-### Phase 6: Pillar 4 — Persistent Assembly Board Graph (Current Target)
-* **Objective**: Transform isolated piece scans into a collaborative, stateful puzzle assembly graph that grows smarter as pieces are placed.
+### Phase 3: Calibration Mat v5.0 & Camera Alignment Guidance (Completed)
+* **Accomplishments**:
+  - **Zero-Bleed Outward L-Crosshairs**: Corner targets engineered with orthogonal arms extending strictly outward from the $65 \times 65\text{ mm}$ scan area directly to $(vx, vy)$ with red nodal cores ($0.35\text{ mm}$), ensuring zero ink intrusion into the piece detection arena.
+  - **Tight FOV Visual Marks**: Added $77 \times 77\text{ mm}$ framing brackets and parallel horizon rails designed for close-up macro webcam stands.
+  - **Single-Source Assets in `web-app/public/`**: `calibration_mat.pdf` (1:1 true scale print), `calibration_mat.svg`, and `calibration_mat.png` directly downloadable and served by Vite.
+  - **Real-Time Camera Pose & Optical Reticle**: High-contrast magenta/cyan center reticle and real-time live Pitch, Yaw, and Roll readouts for leveling the camera against the desk.
+
+---
+
+### Phase 4 & 5: Scale-Invariant Contour Extraction & Macro Stabilization (Completed)
+* **Accomplishments**:
+  - **Scale-Invariant Quad Scoring**: Segment-voting and radius-normalized corner metrics ($r_{\text{est}}$ normalization) preventing false flat-edge classification across varying camera distances (macro close-up vs wide field).
+  - **100% Ground Truth Regression Suite**: All 82 scanned physical piece fixtures passing deterministic corner classification tests (`cv-engine/scans/ground_truth/`).
+  - **Deadband Wobble Lock-On**: Sub-pixel sensor noise filter freezing corner drift ($<2.2\text{ px}$) when the piece is physically stationary ($<1.8\text{ px}$ centroid movement).
+
+---
+
+### Phase 6: Pairwise Curve Mating & Border Loop Solver (Current Focus)
+* **Objective**: Connect complementary tabs and blanks geometrically, assembling the closed outer perimeter frame.
 * **Key Tasks**:
-  1. **Grid Model in Rust (`cv-engine/src/board.rs`)**:
-     - Define grid dimensions (e.g., $42 \times 24$ for 1,008-piece Ravensburger).
-     - Model slots with 4 edge neighbor slots (North, East, South, West).
-     - Represent board boundaries (Edges $r=0, c=0, r=R-1, c=C-1$ must have `Flat` edges).
-  2. **Candidate Search Space Pruning**:
-     - When scanning a **Corner** piece, candidate positions shrink immediately from 1,008 to **4**.
-     - When scanning a **Border** piece, candidate positions are restricted to the 128 perimeter cells.
-     - As pieces are locked into place, open boundary constraints propagate to remaining empty neighbor cells.
-  3. **Virtual Board UI Component (`web-app/src/components/BoardView.tsx`)**:
-     - Interactive zoomable/pannable 2D canvas displaying the puzzle grid.
-     - Highlights placed pieces, candidate slots for current piece, and fit probability scores.
+  1. **Normalized Curve Signatures (`cv-engine/src/matcher.rs`)**:
+     - Resample piece edges into arc-length normalized equidistant points (e.g. 100 points per edge).
+     - Represent edge profile using intrinsic turn-angle $\theta(s)$ or chord-curvature signatures invariant to rigid Euclidean transformation.
+  2. **Pairwise Compatibility Scoring**:
+     - Complementary matching: evaluate $L_2$ error between male tab curve and inverted female blank curve.
+     - Prune impossible pairs (tab-tab, blank-blank, or bounding-box width/height mismatch).
+  3. **Border Loop Solver (`cv-engine/src/board.rs`)**:
+     - Connect the 4 corner pieces (2 adjacent flat edges) and the ~36 border pieces (1 flat edge).
+     - Circular constraint satisfaction: the closed loop must form a rigid rectangle matching expected grid dimensions ($W \times H$).
+  4. **Virtual Assembly Preview (`web-app/src/components/BoardView.tsx`)**:
+     - Interactive visual board showing solved clusters, candidate edge snaps, and confidence heatmaps.
 
 ---
 
