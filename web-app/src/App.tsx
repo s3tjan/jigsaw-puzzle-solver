@@ -4,6 +4,7 @@ import init, {
   snap_fiducial_corner,
   measure_stage_focus,
   analyze_staged_piece,
+  map_dewarped_points_to_camera,
 } from './pkg/cv_engine'
 import './App.css'
 
@@ -267,7 +268,8 @@ export default function App() {
     w: number,
     h: number,
     pts: [Point2D, Point2D, Point2D, Point2D],
-    lensK1: number
+    lensK1: number,
+    activePiece?: ScannedPiece | null
   ) => {
     const overlay = overlayCanvasRef.current
     const video = videoRef.current
@@ -401,6 +403,137 @@ export default function App() {
       ctx.fillStyle = color
       ctx.fillText(labels[i], pt.x + 19, pt.y - 6)
     })
+
+    // 5. In-situ Augmented Reality: Project detected piece diagnostics directly onto the physical camera stage
+    if (activePiece && wasmReady) {
+      const dstW = 384
+      const dstH = 384
+      const rawContour = activePiece.contour_points
+      if (rawContour.length > 2) {
+        // Flatten contour points for batch WASM projection
+        const flatContour: number[] = []
+        for (let i = 0; i < rawContour.length; i++) {
+          flatContour.push(rawContour[i].x, rawContour[i].y)
+        }
+        const projContour = map_dewarped_points_to_camera(
+          new Float32Array(flatContour),
+          w, h,
+          pts[0].x, pts[0].y,
+          pts[1].x, pts[1].y,
+          pts[2].x, pts[2].y,
+          pts[3].x, pts[3].y,
+          dstW, dstH,
+          lensK1
+        )
+
+        const numPts = projContour.length / 2
+        if (numPts > 2) {
+          ctx.save()
+          ctx.beginPath()
+          const startX = (projContour[(numPts - 1) * 2] + projContour[0]) * 0.5
+          const startY = (projContour[(numPts - 1) * 2 + 1] + projContour[1]) * 0.5
+          ctx.moveTo(startX, startY)
+          for (let i = 0; i < numPts; i++) {
+            const cx = projContour[i * 2]
+            const cy = projContour[i * 2 + 1]
+            const nextX = projContour[((i + 1) % numPts) * 2]
+            const nextY = projContour[((i + 1) % numPts) * 2 + 1]
+            ctx.quadraticCurveTo(cx, cy, (cx + nextX) * 0.5, (cy + nextY) * 0.5)
+          }
+          ctx.closePath()
+          ctx.strokeStyle = '#00e676'
+          ctx.lineWidth = 2.5
+          ctx.stroke()
+          ctx.fillStyle = 'rgba(0, 230, 118, 0.12)'
+          ctx.fill()
+          ctx.restore()
+        }
+
+        // Project 4 Corners to camera space
+        const flatCorners = [
+          activePiece.corners[0].x, activePiece.corners[0].y,
+          activePiece.corners[1].x, activePiece.corners[1].y,
+          activePiece.corners[2].x, activePiece.corners[2].y,
+          activePiece.corners[3].x, activePiece.corners[3].y,
+        ]
+        const projCorners = map_dewarped_points_to_camera(
+          new Float32Array(flatCorners),
+          w, h,
+          pts[0].x, pts[0].y,
+          pts[1].x, pts[1].y,
+          pts[2].x, pts[2].y,
+          pts[3].x, pts[3].y,
+          dstW, dstH,
+          lensK1
+        )
+
+        // Draw baseline chords and badges in camera space
+        const edgeColors: Record<string, string> = {
+          Tab: '#2979ff',
+          Hole: '#ff9100',
+          Flat: '#ab47bc',
+        }
+        for (let i = 0; i < 4; i++) {
+          const edge = activePiece.edges[i]
+          const c1x = projCorners[i * 2]
+          const c1y = projCorners[i * 2 + 1]
+          const nextIdx = (i + 1) % 4
+          const c2x = projCorners[nextIdx * 2]
+          const c2y = projCorners[nextIdx * 2 + 1]
+
+          const color = edgeColors[edge.edge_type] || '#ffffff'
+          ctx.save()
+          ctx.beginPath()
+          ctx.moveTo(c1x, c1y)
+          ctx.lineTo(c2x, c2y)
+          ctx.strokeStyle = color
+          ctx.lineWidth = 2.2
+          ctx.setLineDash([5, 3])
+          ctx.stroke()
+          ctx.restore()
+
+          // Edge type badge
+          const midX = (c1x + c2x) * 0.5
+          const midY = (c1y + c2y) * 0.5
+          const label = `E${i}: ${edge.edge_type}`
+          ctx.font = 'bold 12px monospace'
+          const tw = ctx.measureText(label).width
+          const bw = tw + 10
+          const bh = 18
+
+          ctx.fillStyle = 'rgba(20, 25, 30, 0.90)'
+          ctx.beginPath()
+          ctx.roundRect(midX - bw / 2, midY - bh / 2, bw, bh, 3)
+          ctx.fill()
+          ctx.strokeStyle = color
+          ctx.lineWidth = 1.5
+          ctx.stroke()
+
+          ctx.fillStyle = '#ffffff'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(label, midX, midY)
+        }
+
+        // Corner circles in camera space
+        for (let i = 0; i < 4; i++) {
+          const cx = projCorners[i * 2]
+          const cy = projCorners[i * 2 + 1]
+          ctx.beginPath()
+          ctx.arc(cx, cy, 6.0, 0, Math.PI * 2)
+          ctx.fillStyle = '#d32f2f'
+          ctx.fill()
+          ctx.strokeStyle = '#ffffff'
+          ctx.lineWidth = 2.0
+          ctx.stroke()
+
+          ctx.beginPath()
+          ctx.arc(cx, cy, 2.0, 0, Math.PI * 2)
+          ctx.fillStyle = '#ffffff'
+          ctx.fill()
+        }
+      }
+    }
   }
 
   // Draw Diagnostic Overlay on 1:1 Piece Canvas
@@ -582,9 +715,9 @@ export default function App() {
             ctx.drawImage(video, 0, 0, targetW, targetH)
           }
           const now = performance.now()
-          const isCvTick = (now - lastCvTimeRef.current >= 160 && wasmReady) || isGtModeRef.current
+          const isCvTick = (now - lastCvTimeRef.current >= 100 && wasmReady) || isGtModeRef.current
 
-          // Run Rust WASM piece analysis ~6 times/sec (every 160ms)
+          // Run Rust WASM piece analysis ~10 times/sec (every 100ms for instant responsiveness)
           if (isCvTick) {
             lastCvTimeRef.current = now
 
@@ -637,16 +770,9 @@ export default function App() {
                     Math.hypot(rawPiece.center.x - history[0].center.x, rawPiece.center.y - history[0].center.y) < 8.0
 
                   if (!isContinuous) {
+                    // Instant frame-1 response: show raw detected piece immediately
                     pieceHistoryRef.current = [rawPiece]
-                    const initialEdges = rawPiece.edges.map((e, idx) => ({
-                      ...e,
-                      start_corner: rawPiece.corners[idx],
-                      end_corner: rawPiece.corners[(idx + 1) % 4],
-                    })) as [PieceEdge, PieceEdge, PieceEdge, PieceEdge]
-                    livePiece = {
-                      ...rawPiece,
-                      edges: initialEdges,
-                    }
+                    livePiece = rawPiece
                   } else {
                     history.unshift(rawPiece)
                     if (history.length > 5) history.pop()
@@ -772,8 +898,9 @@ export default function App() {
 
 
 
-          // Draw camera overlay every frame
-          drawCameraOverlay(targetW, targetH, cornersRef.current, lensK1Ref.current)
+          // Draw camera overlay every frame with in-situ piece projection
+          const activePiece = isGtModeRef.current ? gtFrozenPieceRef.current : detectedPieceRef.current
+          drawCameraOverlay(targetW, targetH, cornersRef.current, lensK1Ref.current, activePiece)
         }
       }
 

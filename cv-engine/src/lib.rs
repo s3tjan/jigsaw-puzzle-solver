@@ -95,6 +95,55 @@ pub fn dewarp_quad(
     Ok(dst_buffer)
 }
 
+/// Computes the forward mapping matrix from dewarped stage coordinates (dst_w x dst_h)
+/// back to camera pixel coordinates, taking into account lens distortion k1.
+#[wasm_bindgen]
+pub fn map_dewarped_points_to_camera(
+    points: &[f32],
+    src_w: u32, src_h: u32,
+    p0_x: f32, p0_y: f32,
+    p1_x: f32, p1_y: f32,
+    p2_x: f32, p2_y: f32,
+    p3_x: f32, p3_y: f32,
+    dst_w: u32, dst_h: u32,
+    k1: f32,
+) -> Vec<f32> {
+    let src_w_f = src_w as f32;
+    let src_h_f = src_h as f32;
+
+    let src_corners = [
+        homography::undistort_point(Point2D { x: p0_x, y: p0_y }, src_w_f, src_h_f, k1),
+        homography::undistort_point(Point2D { x: p1_x, y: p1_y }, src_w_f, src_h_f, k1),
+        homography::undistort_point(Point2D { x: p2_x, y: p2_y }, src_w_f, src_h_f, k1),
+        homography::undistort_point(Point2D { x: p3_x, y: p3_y }, src_w_f, src_h_f, k1),
+    ];
+
+    let inset = dst_w as f32 * 0.02;
+    let dst_corners = [
+        Point2D { x: -inset, y: -inset },
+        Point2D { x: dst_w as f32 + inset, y: -inset },
+        Point2D { x: dst_w as f32 + inset, y: dst_h as f32 + inset },
+        Point2D { x: -inset, y: dst_h as f32 + inset },
+    ];
+
+    let mut result = Vec::with_capacity(points.len());
+    if let Some(h) = Homography::from_4_points(&src_corners, &dst_corners) {
+        if let Some(inv_h) = h.invert() {
+            let n = points.len() / 2;
+            for i in 0..n {
+                let u = points[i * 2];
+                let v = points[i * 2 + 1];
+                let undistorted_p = inv_h.transform_point(Point2D { x: u, y: v });
+                let distorted_p = homography::apply_radial_distortion(undistorted_p, src_w_f, src_h_f, k1);
+                result.push(distorted_p.x);
+                result.push(distorted_p.y);
+            }
+            return result;
+        }
+    }
+    points.to_vec()
+}
+
 /// Scans, segments, and analyzes the puzzle piece from a rectified RGBA buffer.
 /// Robust against white bond paper background: pieces have distinct contrast from the white floor.
 #[wasm_bindgen]
@@ -222,7 +271,7 @@ pub fn analyze_staged_piece(
     // A legitimate puzzle piece is strictly an enclosed island positioned within the staging arena.
     // If a hand, fingers, or foreign object enters the stage, it crosses the boundary perimeter.
     let mut border_intrusion_count = 0usize;
-    let stage_border_margin = (w.min(h) as f32 * 0.04) as usize; // ~15px
+    let stage_border_margin = ((w.min(h) as f32 * 0.015) as usize).clamp(3, 6); // 6px border strip
     for x in 0..w {
         for y in 0..stage_border_margin {
             if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
@@ -236,7 +285,7 @@ pub fn analyze_staged_piece(
         }
     }
     let total_border_samples = stage_border_margin * w * 2 + stage_border_margin * (h - 2 * stage_border_margin) * 2;
-    let touches_stage_border = border_intrusion_count > (total_border_samples * 2 / 100);
+    let touches_stage_border = border_intrusion_count > (total_border_samples * 4 / 100);
 
     // Obstruction / Hand filter: >55% of stage, <0.3% of stage, or touching the stage border perimeter
     let is_obstructed = touches_stage_border || foreground_count > (total_pixels * 55 / 100);
