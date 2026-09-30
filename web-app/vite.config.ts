@@ -7,7 +7,7 @@ function groundTruthApiPlugin(): Plugin {
   return {
     name: 'ground-truth-api',
     configureServer(server) {
-      const gtDir = path.resolve(__dirname, '../cv-engine/scans/ground_truth')
+      const gtDir = path.resolve(__dirname, '../cv-engine/datasets/ground_truth')
       if (!fs.existsSync(gtDir)) {
         fs.mkdirSync(gtDir, { recursive: true })
       }

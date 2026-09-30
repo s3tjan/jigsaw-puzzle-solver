@@ -878,32 +878,6 @@ export default function App() {
     }
   }
 
-  // Lightweight Snapshot Export (<150 KB JPEG + JSON diagnostics) for debugging
-  const handleExportSnapshot = () => {
-    const pCanvas = pieceCanvasRef.current
-    if (!pCanvas) return
-
-    // Convert 384x384 canvas directly to lightweight JPEG (~30-50 KB)
-    const dataUrl = pCanvas.toDataURL('image/jpeg', 0.85)
-
-    const snapshotPayload = {
-      timestamp: new Date().toISOString(),
-      piece: detectedPiece,
-      lensDistortion,
-      sensitivity,
-      corners,
-      imageJpegBase64: dataUrl,
-    }
-
-    const blob = new Blob([JSON.stringify(snapshotPayload, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `piece_snapshot_${Date.now()}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
   // Freeze current piece into ground truth workbench
   const handleFreezeGroundTruth = () => {
     if (!detectedPiece) return
@@ -1187,15 +1161,6 @@ export default function App() {
             </div>
 
             <div style={{ display: 'flex', gap: 8, width: 384, marginTop: 12 }}>
-              <button
-                className="btn small"
-                disabled={!detectedPiece}
-                onClick={handleExportSnapshot}
-                style={{ flex: 1 }}
-                title="Save lightweight JSON + JPEG diagnostic snapshot (<100KB)"
-              >
-                SAVE SNAPSHOT
-              </button>
               <button
                 className="btn primary small"
                 disabled={!detectedPiece}

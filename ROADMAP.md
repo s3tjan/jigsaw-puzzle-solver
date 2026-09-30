@@ -78,7 +78,7 @@ This roadmap documents the end-to-end architecture, current completion status, a
 ### Phase 4 & 5: Scale-Invariant Contour Extraction & Macro Stabilization (Completed)
 * **Accomplishments**:
   - **Scale-Invariant Quad Scoring**: Segment-voting and radius-normalized corner metrics ($r_{\text{est}}$ normalization) preventing false flat-edge classification across varying camera distances (macro close-up vs wide field).
-  - **100% Ground Truth Regression Suite**: All 82 scanned physical piece fixtures passing deterministic corner classification tests (`cv-engine/scans/ground_truth/`).
+  - **100% Ground Truth Regression Suite**: All 82 scanned physical piece fixtures passing deterministic corner classification tests (`cv-engine/datasets/ground_truth/`).
   - **Deadband Wobble Lock-On**: Sub-pixel sensor noise filter freezing corner drift ($<2.2\text{ px}$) when the piece is physically stationary ($<1.8\text{ px}$ centroid movement).
 
 ---

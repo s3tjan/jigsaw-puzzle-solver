@@ -19,7 +19,7 @@ struct GroundTruthFixture {
 
 #[test]
 fn test_ground_truth_benchmarks() {
-    let gt_dir = Path::new("scans/ground_truth");
+    let gt_dir = Path::new("datasets/ground_truth");
     if !gt_dir.exists() {
         println!("No ground truth fixtures yet. Create them using the Web App Labeling tool.");
         return;
@@ -34,7 +34,7 @@ fn test_ground_truth_benchmarks() {
     entries.sort_by_key(|e| e.file_name());
 
     if entries.is_empty() {
-        println!("No ground truth benchmark files found in scans/ground_truth/.");
+        println!("No ground truth benchmark files found in datasets/ground_truth/.");
         return;
     }
 
