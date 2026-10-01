@@ -99,31 +99,46 @@ This roadmap documents the end-to-end architecture, current completion status, a
 
 ---
 
-### Phase 8: Step 3 — Edge Curve Signatures & Pairwise Mating Engine
-* **Rationale**: Validated directly against physical paired pieces curated in Step 2.
+### Phase 8: Unified Tabletop Cockpit & Real-Time Poster Localization (Next Task)
+* **Rationale**: Grounded in computer vision literature (*Bridger et al. CVPR 2020*, *Pomeranz et al. CVPR 2011*). Matching raw edge curves in isolation across 1,008 pieces produces combinatorial explosion ($>10^6$ combinations) and is impossible for a human to curate manually without placement cues. The solver must first provide coarse visual spatial priors $(col, row, \theta)$ directly against the reference poster in real-time, within a single uninterrupted cockpit view.
+* **Key Tasks**:
+  1. **Unified Single-Screen Cockpit UI (`web-app/src/App.tsx`)**:
+     - Consolidate Camera, Assembly Board / Poster Canvas, and Inventory Tray into one cohesive dashboard (no tab switching that kills camera streaming).
+     - Replace drag-and-drop with **1-click placement**:
+       - Primary action: One-click `[PLACE AT ROW r, COL c (θ°)]` button or `[ENTER]` keypress.
+       - Manual action: Click piece $\rightarrow$ click target slot on board canvas.
+  2. **WASM Real-Time Poster Localization Engine (`cv-engine/src/poster.rs`)**:
+     - Literature-based illumination-invariant feature extraction: CIELAB chromaticity $(a^*, b^*)$ + tile CLAHE + 8-bin Sobel gradient orientation fields.
+     - Multi-scale pyramid search across 4 cardinal rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$).
+     - Real-time sub-50ms feedback: As soon as a piece is placed on the staging mat, highlight its candidate slot and rotation on the live camera overlay and board canvas.
+  3. **Automatic Mating Pair Detection & Ground-Truth Exporter**:
+     - As pieces are locked into adjacent board slots, the engine automatically registers physical mates (e.g., Piece #5 East $\leftrightarrow$ Piece #6 West).
+     - One-click export to clean JSON fixtures (`mating_pairs.json`) to supply verified ground-truth test data for Phase 9.
+
+---
+
+### Phase 9: Edge Curve Signatures & Pairwise Mating Engine
+* **Rationale**: Validated directly against physical paired pieces curated and exported during Phase 8 assembly.
 * **Key Tasks**:
   1. **Arc-Length Normalized Edge Profiles (`cv-engine/src/matcher.rs`)**:
      - Resample piece edge contours into fixed equidistant points ($N = 100$).
-     - Compute invariant intrinsic representations: turn-angle $\theta(s)$ or chord-relative curvature $\kappa(s)$.
+     - Compute invariant intrinsic representations: turn-angle $\theta(s)$ or chord-relative curvature $\kappa(s)$ (*Wolfson et al. 1988*, *Harel & Ben-Shahar ECCV 2016*).
   2. **Pairwise Compatibility Scoring**:
      - Fast rejection filter: opposite edge types (Tab $\leftrightarrow$ Hole, Flat $\leftrightarrow$ Flat for outer frame), tab width/height bounding box consistency.
      - Detailed curve match: Euclidean $L_2$ difference between male tab profile and inverted female hole profile across a sliding alignment window.
   3. **Pairwise Test Suite**:
-     - Rust unit tests using verified mated piece pairs exported from the Step 2 inventory.
+     - Rust unit tests verifying curve mating against the exported Phase 8 ground-truth mating pairs.
 
 ---
 
-### Phase 9: Step 4 — Hybrid Visual + Geometric Solver, AR Guidance & PWA
+### Phase 10: Global Hybrid Solver, AR Guidance & PWA
 * **Objective**: Combine edge curves and artwork features into a single global solver, with AR table guidance and offline PWA support.
 * **Key Tasks**:
-  1. **Visual Keypoint Matching against Reference Poster**:
-     - Fast feature matching (FAST / ORB-compatible keypoint hashing) inside the piece's interior texture.
-     - RANSAC homography estimation against the reference artwork to determine continuous global $(x, y)$ coordinate and rotation $\theta$.
-  2. **Hybrid Constraint Propagation**:
+  1. **Hybrid Constraint Propagation**:
      - Combine **Visual Landmark Score** (from poster) + **Geometric Boundary Score** (from neighbor pieces) to solve slots with $O(1)$ candidate elimination.
-  3. **HUD Placement Assistant & AR Table Guidance**:
+  2. **HUD Placement Assistant & AR Table Guidance**:
      - "Next Best Piece to Find" recommendation mode (prioritizing high-contrast borders or unique colors).
      - Augmented visual overlay showing where on the physical table to snap the scanned piece.
-  4. **Offline PWA & Session Persistence**:
+  3. **Offline PWA & Session Persistence**:
      - Service worker caching for 100% offline WASM execution.
      - IndexedDB persistence to resume 1,000-piece puzzle progress across days/weeks.
