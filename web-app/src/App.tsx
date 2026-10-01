@@ -6,6 +6,7 @@ import init, {
   analyze_staged_piece,
   map_dewarped_points_to_camera,
 } from './pkg/cv_engine'
+import { PosterCanvas } from './components/PosterCanvas'
 import './App.css'
 
 interface Point2D {
@@ -67,6 +68,7 @@ export default function App() {
   const [focusScore, setFocusScore] = useState<number>(0)
   const [detectedPiece, setDetectedPiece] = useState<ScannedPiece | null>(null)
   const [scannedPieces, setScannedPieces] = useState<ScannedPiece[]>([])
+  const [activeTab, setActiveTab] = useState<'camera' | 'poster'>('camera')
 
   // Controls
   const [lensDistortion, setLensDistortion] = useState<number>(() => {
@@ -1114,6 +1116,20 @@ export default function App() {
         <div className="header-brand">
           <strong>JIGSAW SOLVER</strong>
           <span className="badge">100mm MAT</span>
+          <nav className="header-nav" style={{ marginLeft: 16 }}>
+            <button
+              className={`nav-tab ${activeTab === 'camera' ? 'active' : ''}`}
+              onClick={() => setActiveTab('camera')}
+            >
+              [1] LIVE CAMERA &amp; SCANNER
+            </button>
+            <button
+              className={`nav-tab ${activeTab === 'poster' ? 'active' : ''}`}
+              onClick={() => setActiveTab('poster')}
+            >
+              [2] POSTER &amp; GRID
+            </button>
+          </nav>
         </div>
 
         <div className="header-status">
@@ -1129,7 +1145,12 @@ export default function App() {
         </div>
       </header>
 
-      {/* 2. Side-by-Side Main Workbench */}
+      {/* 2. Main View: Poster Canvas OR Camera Workbench */}
+      {activeTab === 'poster' ? (
+        <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <PosterCanvas wasmReady={wasmReady} />
+        </main>
+      ) : (
       <main className="main-workbench">
         {/* Left: Overhead Camera */}
         <section className="workbench-panel">
@@ -1352,6 +1373,7 @@ export default function App() {
 
 
       </main>
+      )}
 
       {/* 3. Bottom Controls & Scanned Piece History */}
       <footer className="app-footer">

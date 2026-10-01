@@ -56,6 +56,37 @@ html, body, #root {
   font-size: 12px;
 }
 
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.15s ease;
+}
+
+.nav-tab:hover {
+  color: var(--text);
+  background: #21262d;
+}
+
+.nav-tab.active {
+  background: #1f3b5c;
+  color: #58a6ff;
+  border-color: #388bfd;
+}
+
 .badge {
   background: #21262d;
   border: 1px solid var(--border);

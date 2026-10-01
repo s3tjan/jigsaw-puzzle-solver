@@ -75,23 +75,17 @@ This roadmap documents the end-to-end architecture, current completion status, a
 
 ---
 
-### Phase 6: Step 1 — Master Poster Reference & Coordinate Grid Stage (Current Task)
+### Phase 6: Step 1 — Master Poster Reference & Coordinate Grid Stage (Completed)
 * **Rationale**: Requires zero scanned pieces upfront. Establishes the ground-truth visual coordinate space, aspect ratio, and grid division ($C \times R$) against which pieces will be assembled.
-* **Key Tasks**:
-  1. **Poster Ingestion in Web App**:
-     - Drag-and-drop or file upload for the master puzzle box image / reference artwork.
-     - Interactive pan, zoom, and inspect canvas (`components/PosterCanvas.tsx`).
-     - Metadata input: puzzle piece count (e.g. 500, 1000), grid layout (e.g. $28 \times 18$ or $38 \times 27$), and physical dimensions ($W \times H\text{ mm}$).
-  2. **Grid Geometry & Slot Mapping**:
-     - Compute nominal slot boundaries, cell aspect ratio, and expected average piece dimensions (px and mm).
-     - Visual grid toggle overlay on the reference poster.
-  3. **WASM Poster Ingestion (`cv-engine/src/poster.rs`)**:
-     - Ingest poster RGBA buffer into Rust memory.
-     - Downsample and precalculate multi-scale grayscale pyramids for visual matching in future steps.
+* **Accomplishments**:
+  - **WASM Poster Engine (`cv-engine/src/poster.rs`)**: RGBA buffer ingestion into Rust memory, multi-scale grayscale image pyramid generation via 2x2 anti-aliased box downsampling, and nominal slot geometry calculation.
+  - **Interactive Poster Canvas (`components/PosterCanvas.tsx`)**: Drag-and-drop / file upload, smooth panning & cursor-centered zoom canvas, HUD inspector for slot details, toggleable nominal grid and coordinates overlay.
+  - **Puzzle Metadata Pre-sets**: Pre-configured for user's 1008-piece puzzle (700x500 mm, 36x28 grid) with customizable piece counts, physical dimensions, and column/row controls.
+  - **Unit Tests**: Full Rust unit test coverage in `poster.rs` verifying luminance conversion, pyramid downsampling stages, 1008-slot grid boundaries, corner/border counts, and error handling.
 
 ---
 
-### Phase 7: Step 2 — Piece Inventory Management & Interactive Board UI (Next)
+### Phase 7: Step 2 — Piece Inventory Management & Interactive Board UI (Current Task)
 * **Rationale**: Creates the critical **human-in-the-loop harness**. As pieces are scanned under the camera, they are added to a persistent tray where users can inspect thumbnails, re-verify edge types, group known neighbors, and manually position pieces on the board to generate test pairs.
 * **Key Tasks**:
   1. **Persistent Piece Tray**:

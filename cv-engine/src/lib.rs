@@ -1,10 +1,13 @@
 pub mod fiducial;
 pub mod contour;
 pub mod homography;
+pub mod poster;
 
 use wasm_bindgen::prelude::*;
 use homography::{dewarp_image, Homography, Point2D};
 use contour::{trace_piece_contour, partition_edges_and_classify, ScannedPiece};
+pub use poster::{process_poster_rgba, get_poster_grid_slots};
+
 
 /// Snaps a manual seed coordinate to the exact sub-pixel center of the nearest fiducial bullseye
 #[wasm_bindgen]
