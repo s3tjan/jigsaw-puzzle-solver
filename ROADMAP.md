@@ -57,8 +57,8 @@ This roadmap documents the end-to-end architecture, current completion status, a
 | **Phase 3** | Calibration Mat v5.0: Zero-Bleed L-Crosshairs & Camera Pose HUD | Python (`generate_mat.py`), Canvas HUD | ✅ **DONE** |
 | **Phase 4** | Pillar 3: Scale-Invariant Contour & 4-Edge Corner Detection | Rust (`contour.rs`), 90/90 Ground Truth Fixtures | ✅ **DONE** |
 | **Phase 5** | Vision Polish: Zero-Lag Sampling & Instant Contour Trigger | Quadrant 85th Percentiles, Deadband Lock, 60ms Tick | ✅ **DONE** |
-| **Phase 6** | **Step 1: Master Poster Reference & Coordinate Grid Stage** | React Canvas Pan/Zoom, WASM Texture Index | 🟡 **CURRENT TASK** |
-| **Phase 7** | **Step 2: Piece Inventory Management & Interactive Board UI** | IndexedDB / LocalStorage, Tray UI, Manual Snapping | ⏳ Next |
+| **Phase 6** | **Step 1: Master Poster Reference & Coordinate Grid Stage** | React Canvas Pan/Zoom, WASM Multi-Scale Pyramids, CLAHE | ✅ **DONE** |
+| **Phase 7** | **Step 2: Piece Inventory Management & Interactive Board UI** | IndexedDB / LocalStorage, Tray UI, Mode C Hole Targeting | 🟡 **CURRENT TASK** |
 | **Phase 8** | **Step 3: Edge Curve Signatures & Pairwise Mating Engine** | Rust (`matcher.rs`), Arc-length Turn-angles, $L_2$ Error | ⏳ Planned |
 | **Phase 9** | **Step 4: Hybrid Visual + Geometric Solver & AR Guidance** | Keypoint Hashes, Graph Search, PWA | ⏳ Planned |
 
@@ -78,10 +78,11 @@ This roadmap documents the end-to-end architecture, current completion status, a
 ### Phase 6: Step 1 — Master Poster Reference & Coordinate Grid Stage (Completed)
 * **Rationale**: Requires zero scanned pieces upfront. Establishes the ground-truth visual coordinate space, aspect ratio, and grid division ($C \times R$) against which pieces will be assembled.
 * **Accomplishments**:
-  - **WASM Poster Engine (`cv-engine/src/poster.rs`)**: RGBA buffer ingestion into Rust memory, multi-scale grayscale image pyramid generation via 2x2 anti-aliased box downsampling, and nominal slot geometry calculation.
-  - **Interactive Poster Canvas (`components/PosterCanvas.tsx`)**: Drag-and-drop / file upload, smooth panning & cursor-centered zoom canvas, HUD inspector for slot details, toggleable nominal grid and coordinates overlay.
+  - **WASM Poster Engine (`cv-engine/src/poster.rs`)**: RGBA buffer ingestion into Rust memory, multi-scale grayscale image pyramid generation via 2x2 anti-aliased box downsampling, tile-based CLAHE contrast equalization (glare/reflection elimination), and quantized 8-bin Sobel gradient orientation fields.
+  - **Color Invariance & Slot Crop (`get_slot_preview`)**: CIELAB D65 conversion separating luminance ($L^*$) from chrominance ($a^*, b^*$), and slot thumbnail extraction with color cue estimation for Mode C hole targeting.
+  - **Interactive Poster Canvas (`components/PosterCanvas.tsx`)**: Drag-and-drop / file upload, smooth panning & cursor-centered zoom canvas, HUD inspector for slot details, toggleable nominal grid and coordinates overlay, and tap-to-inspect slot preview cards.
   - **Puzzle Metadata Pre-sets**: Pre-configured for user's 1008-piece puzzle (700x500 mm, 36x28 grid) with customizable piece counts, physical dimensions, and column/row controls.
-  - **Unit Tests**: Full Rust unit test coverage in `poster.rs` verifying luminance conversion, pyramid downsampling stages, 1008-slot grid boundaries, corner/border counts, and error handling.
+  - **Dedicated Unit Tests (`tests/test_poster.rs`)**: 8 passing unit tests verifying luminance conversion, pyramid downsampling stages, CLAHE equalization, Sobel orientation bins, CIELAB mapping, slot preview extraction, 1008-slot grid boundaries, and error handling.
 
 ---
 
