@@ -233,28 +233,8 @@ To answer **"Given a piece, show its approximate location on the reference poste
 
 ## 7. Implementation Milestones
 
-### Phase 6: Step 1 — Master Poster Reference & Coordinate Grid Stage (Completed)
-- **6.1 WASM Poster Ingestion**: RGBA buffer ingestion, 2x2 box downsampling multi-scale pyramids.
-- **6.2 Illumination-Invariant Precomputation**: Tile-based CLAHE dynamic range normalization, 8-bin Sobel gradient orientation fields, and CIELAB color space transformation.
-- **6.3 Grid Geometry & Mode C Crop Extraction**: Nominal $C \times R$ coordinate mapping and `get_slot_preview` for target hole preview cards.
-- **6.4 Interactive Poster Canvas (`PosterCanvas.tsx`)**: Drag-and-drop / upload, pan/zoom canvas, HUD inspector, grid overlay, and tap-to-inspect slot preview inspector.
-- **6.5 Unit Tests**: 8 unit tests in `cv-engine/tests/test_poster.rs` verifying all pyramid stages, CLAHE, Sobel bins, CIELAB conversion, and slot preview crops.
+For active engineering milestones, real-time completion status, and delivery checklists, see the authoritative project tracker:
+👉 **[Technical Roadmap & Implementation Milestones (ROADMAP.md)](file:///home/stbn/projects/jigsaw-puzzle-solver/ROADMAP.md)**
 
-### Phase 7: Step 2 — Piece Inventory Management & Interactive Assembly Board (`BoardView.tsx`) (Current Task)
-- **7.1 Persistent Piece Tray (IndexedDB / LocalStorage)**: Store scanned pieces with thumbnails, edge profiles, and metric dimensions ($W \times H\text{ mm}$).
-- **7.2 Interactive Board Canvas with Mode C Hole Targeting**: Tap any empty board slot to render target slot artwork (`get_slot_preview`), nominal dimensions, and filter inventory for compatible tab/hole configurations.
-- **7.3 Manual Placement & Pair Verification Harness**: Drag-and-drop pieces from tray onto board slots; export verified mated pairs as JSON ground-truth fixtures.
-
-### Phase 8: Step 3 — Edge Curve Signatures & Pairwise Mating Engine (`cv-engine/src/matcher.rs`)
-- **8.1 Arc-Length Equidistant Resampling**: Resample each of the 4 edges into $N = 100$ equidistant points along the contour.
-- **8.2 Intrinsic Turn-Angle Profiles**: Compute chord-relative turn-angle signature $\theta(s)$ or curvature $\kappa(s)$.
-- **8.3 Pairwise $L_2$ Compatibility Scoring**: Fast filter (opposite edge types: Tab $\leftrightarrow$ Hole, Flat $\leftrightarrow$ Flat) followed by sliding-window Euclidean difference $L_2(\theta_A, -\theta_B)$.
-- **8.4 Mating Test Suite**: Rust unit tests against verified physical pairs exported in Step 2.
-
-### Phase 9: Step 4 — Hybrid Dual-Lock Solver, AR Guidance & PWA
-- **9.1 Multi-Scale Feature Hashing & Coarse Localization**: Fast piece-to-poster search matching piece interior texture against precomputed poster pyramids.
-- **9.2 Dual-Lock Solver Engine**: Combine Visual Landmark Score + Geometric Boundary Score with $O(1)$ slot elimination.
-- **9.3 Augmented Reality Guidance**: In-situ camera overlay indicating table snap position for the scanned piece.
-- **9.4 Offline PWA Support**: Full offline capability with service worker caching and session progress recovery.
 
 

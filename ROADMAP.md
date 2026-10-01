@@ -2,6 +2,8 @@
 
 This roadmap documents the end-to-end architecture, current completion status, and the sequential engineering milestones ahead for building a production-grade, zero-cloud-cost physical jigsaw puzzle solver using **Rust**, **WebAssembly (WASM)**, and **React/TypeScript**.
 
+> 📖 **Architectural Whitepaper & Literature Analysis**: For deep mathematical formulations, the 4 literature principles (Goldberg, Pomeranz, Gallagher, Paikin, Harel), physical UX models (Mode A & Mode C), and color invariance theory, see **[ASSEMBLY_STRATEGY.md](file:///home/stbn/projects/jigsaw-puzzle-solver/docs/ASSEMBLY_STRATEGY.md)**.
+
 ---
 
 ## 🏛️ System Architecture Overview
