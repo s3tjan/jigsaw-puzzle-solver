@@ -86,16 +86,16 @@ This roadmap documents the end-to-end architecture, current completion status, a
 ---
 
 ### Phase 7: Step 2 — Piece Inventory Management & Interactive Board UI (Current Task)
-* **Rationale**: Creates the critical **human-in-the-loop harness**. As pieces are scanned under the camera, they are added to a persistent tray where users can inspect thumbnails, re-verify edge types, group known neighbors, and manually position pieces on the board to generate test pairs.
+* **Rationale**: Creates the critical **human-in-the-loop reactive harness** (Literature Principle 4). As pieces are scanned, they are indexed in an offline persistent tray. Tapping any board slot triggers Mode C targeted hole-filling previews using the poster's visual cues and filters the inventory.
 * **Key Tasks**:
-  1. **Persistent Piece Tray**:
-     - Local storage / IndexedDB repository of recorded pieces.
-     - Card view displaying piece thumbnail, classification badges (Corner, Border, Interior; Tab/Hole/Flat count), and metric dimensions ($W \times H\text{ mm}$).
-     - Ability to tag, favorite, or pair pieces manually.
-  2. **Interactive Assembly Board (`components/BoardView.tsx`)**:
+  1. **Persistent Piece Tray (IndexedDB / LocalStorage)**:
+     - Repository storing scanned piece crops, sub-pixel corners, classification badges (Corner, Border, Interior; Tab/Hole/Flat count), and metric dimensions ($W \times H\text{ mm}$).
+     - Ability to tag, inspect, favorite, or pair physical pieces manually.
+  2. **Interactive Assembly Board (`components/BoardView.tsx`) with Mode C Hole Targeting**:
      - 2D grid canvas showing empty slots, placed pieces, and candidate slots.
+     - Slot targeting: Click any empty slot to load expected artwork crop (`get_slot_preview`), color cue, and filter the tray for compatible complementary tabs/holes.
      - Drag-and-drop piece placement from tray onto the board.
-     - Export/import ground-truth assembly pairs as JSON test fixtures.
+     - Export/import ground-truth assembly pairs as JSON test fixtures for validating Phase 8.
 
 ---
 

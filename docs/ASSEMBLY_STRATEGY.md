@@ -143,11 +143,41 @@ pub struct SlotConstraint {
 
 ---
 
-## 5. Implementation Roadmap Integration (Phase 6–8)
+## 5. Literature-Grounded Architecture & Implementation Plan
 
-1. **Milestone 6.1**: Normalized equidistant arc-length edge sampling & turn-angle signature extraction (`cv-engine/src/matcher.rs`).
-2. **Milestone 6.2**: Pairwise $L_2$ edge compatibility scoring (tab-hole complementarity).
-3. **Milestone 6.3**: Perimeter border loop solver (4 corners + border pieces forming a closed rectangular constraint).
-4. **Milestone 6.4**: Interactive Virtual Board UI (`web-app/src/components/BoardView.tsx`) with Scanned Tray and empty slot selection.
-5. **Milestone 7.1**: Poster image ingestion, multi-scale gradient pyramid, and CLAHE normalization.
-6. **Milestone 7.2**: Dual-constraint solver combining poster visual coordinates with geometric boundary verification.
+The architecture incorporates the 4 core literature recommendations:
+1. **Lighting & Finish Invariance (Literature Principle 1)**:
+   - CIELAB color separation ($L^*$ vs $a^*, b^*$).
+   - Tile-based CLAHE contrast equalization to eliminate specular glare from glossy box covers.
+   - 8-bin quantized Sobel orientation maps matching structural edge transitions instead of raw RGB.
+2. **Dual-Lock Hierarchy (Literature Principle 2)**:
+   - *Vision / Poster Matching*: Fast $O(1)$ candidate location proposal $(\text{col}, \text{row}, \theta)$.
+   - *Geometry / Curve Mating*: Strict mathematical $L_2$ turn-angle physical lock between complementary tabs and holes.
+3. **Die-Cut Tolerance & Grid Drift (Literature Principle 3)**:
+   - Nominal poster grid cells serve as elastic spatial priors rather than rigid coordinate boxes.
+   - Placed pieces and perimeter frame anchor the local coordinate mesh to compensate for physical die-cut curvature.
+4. **Human-in-the-Loop Reactive Assist (Literature Principle 4)**:
+   - **Mode A: Scan As You Pick**: Sub-50ms piece classification and immediate border/snap routing.
+   - **Mode C: Targeted Hole-Filling**: Tapping an empty slot on the board previews the exact missing piece artwork (`get_slot_preview`) and filters the tray for matching edge geometry.
+
+---
+
+## 6. Implementation Milestones
+
+### Phase 7: Step 2 — Piece Inventory Management & Interactive Assembly Board (`BoardView.tsx`)
+- **7.1 Persistent Piece Tray (IndexedDB / LocalStorage)**: Store scanned pieces with thumbnails, edge profiles, and metric dimensions ($W \times H\text{ mm}$).
+- **7.2 Interactive Board Canvas with Mode C Hole Targeting**: Tap any empty board slot to render target slot artwork (`get_slot_preview`), nominal dimensions, and filter inventory for compatible tab/hole configurations.
+- **7.3 Manual Placement & Pair Verification Harness**: Drag-and-drop pieces from tray onto board slots; export verified mated pairs as JSON ground-truth fixtures.
+
+### Phase 8: Step 3 — Edge Curve Signatures & Pairwise Mating Engine (`cv-engine/src/matcher.rs`)
+- **8.1 Arc-Length Equidistant Resampling**: Resample each of the 4 edges into $N = 100$ equidistant points along the contour.
+- **8.2 Intrinsic Turn-Angle Profiles**: Compute chord-relative turn-angle signature $\theta(s)$ or curvature $\kappa(s)$.
+- **8.3 Pairwise $L_2$ Compatibility Scoring**: Fast filter (opposite edge types: Tab $\leftrightarrow$ Hole, Flat $\leftrightarrow$ Flat) followed by sliding-window Euclidean difference $L_2(\theta_A, -\theta_B)$.
+- **8.4 Mating Test Suite**: Rust unit tests against verified physical pairs exported in Step 2.
+
+### Phase 9: Step 4 — Hybrid Dual-Lock Solver, AR Guidance & PWA
+- **9.1 Multi-Scale Feature Hashing**: FAST / ORB keypoint matching against the precomputed poster pyramids.
+- **9.2 Dual-Lock Solver Engine**: Combine Visual Landmark Score + Geometric Boundary Score with $O(1)$ slot elimination.
+- **9.3 Augmented Reality Guidance**: In-situ camera overlay indicating table snap position for the scanned piece.
+- **9.4 Offline PWA Support**: Full offline capability with service worker caching and session progress recovery.
+
