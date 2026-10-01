@@ -50,90 +50,86 @@ This roadmap documents the end-to-end architecture, current completion status, a
 ## 🚦 Roadmap Milestones & Status
 
 | Phase | Milestone | Tech Stack | Status |
-| :--- | :--- | :--- | :---: |
+| :--- | :--- | :--- | :--- |
 | **Phase 0** | Clean Slate & Rust + React WASM Scaffolding | Cargo, Vite, wasm-pack | ✅ **DONE** |
 | **Phase 1** | Real-time Camera Feed & Sub-ms Frame Ingestion | WebRTC, Canvas, WASM Memory | ✅ **DONE** |
 | **Phase 2** | Pillar 1: Industrial Calibration Mat & 3x3 DLT Homography | Rust (`homography.rs`), Headless Chrome | ✅ **DONE** |
 | **Phase 3** | Calibration Mat v5.0: Zero-Bleed L-Crosshairs & Camera Pose HUD | Python (`generate_mat.py`), Canvas HUD | ✅ **DONE** |
-| **Phase 4** | Pillar 3: Scale-Invariant Contour & 4-Edge Corner Detection | Rust (`contour.rs`), 82/82 Ground Truth Fixtures | ✅ **DONE** |
-| **Phase 5** | Vision Polish: Macro Wobble Deadband & Auto-Capture Pipeline | Moving Window Blur, Deadband Lock, Web Audio | ✅ **DONE** |
-| **Phase 6** | **Pillar 4: Pairwise Curve Mating & Border Loop Solver** | Rust (`matcher.rs`, `board.rs`), Turn Angles | 🟡 **IN PROGRESS** |
-| **Phase 7** | **Visual Matching against Master Artwork Poster** | Rust / WASM Keypoints, FLANN / KD-Tree | ⏳ Planned |
-| **Phase 8** | **Interactive AR Placement Guidance & Session Storage** | IndexedDB, Canvas 2D/WebGL Overlay | ⏳ Planned |
-| **Phase 9** | **PWA Packaging & Mobile Optimization** | Service Workers, Web App Manifest | ⏳ Planned |
+| **Phase 4** | Pillar 3: Scale-Invariant Contour & 4-Edge Corner Detection | Rust (`contour.rs`), 90/90 Ground Truth Fixtures | ✅ **DONE** |
+| **Phase 5** | Vision Polish: Zero-Lag Sampling & Instant Contour Trigger | Quadrant 85th Percentiles, Deadband Lock, 60ms Tick | ✅ **DONE** |
+| **Phase 6** | **Step 1: Master Poster Reference & Coordinate Grid Stage** | React Canvas Pan/Zoom, WASM Texture Index | 🟡 **CURRENT TASK** |
+| **Phase 7** | **Step 2: Piece Inventory Management & Interactive Board UI** | IndexedDB / LocalStorage, Tray UI, Manual Snapping | ⏳ Next |
+| **Phase 8** | **Step 3: Edge Curve Signatures & Pairwise Mating Engine** | Rust (`matcher.rs`), Arc-length Turn-angles, $L_2$ Error | ⏳ Planned |
+| **Phase 9** | **Step 4: Hybrid Visual + Geometric Solver & AR Guidance** | Keypoint Hashes, Graph Search, PWA | ⏳ Planned |
 
 ---
 
 ## 🔍 Detailed Breakdown of Phases & Current Milestones
 
-### Phase 3: Calibration Mat v5.0 & Camera Alignment Guidance (Completed)
+### Phase 5: Vision Polish & Zero-Lag Detection (Completed)
 * **Accomplishments**:
-  - **Zero-Bleed Outward L-Crosshairs**: Corner targets engineered with orthogonal arms extending strictly outward from the $65 \times 65\text{ mm}$ scan area directly to $(vx, vy)$ with red nodal cores ($0.35\text{ mm}$), ensuring zero ink intrusion into the piece detection arena.
-  - **Tight FOV Visual Marks**: Added $77 \times 77\text{ mm}$ framing brackets and parallel horizon rails designed for close-up macro webcam stands.
-  - **Single-Source Assets in `web-app/public/`**: `calibration_mat.pdf` (1:1 true scale print), `calibration_mat.svg`, and `calibration_mat.png` directly downloadable and served by Vite.
-  - **Real-Time Camera Pose & Optical Reticle**: High-contrast magenta/cyan center reticle and real-time live Pitch, Yaw, and Roll readouts for leveling the camera against the desk.
+  - **Quadrant Background Isolation**: Decomposed outer boundary sampling into 4 independent edge strips (Top, Bottom, Left, Right), taking the median clean 85th percentile so shadows from entering/exiting fingers never distort the arena background reference.
+  - **Perimeter Margin Intrusion Refinement**: Tuned connected outer intrusion check (>10% sample cutoff) eliminating false obstruction locks from minor corner vignetting or paper warping.
+  - **Instant Cadence**: Elevated WASM CV tick rate from 100ms to 60ms (~16.6 FPS) with a 2-frame (120ms) dropout tolerance, making contour overlay appearance instantaneous upon placing a piece.
+  - **Deterministic Regressions**: 100% passing across all ground-truth fixtures and wobble-budget tests.
 
 ---
 
-### Phase 4 & 5: Scale-Invariant Contour Extraction & Macro Stabilization (Completed)
-* **Accomplishments**:
-  - **Scale-Invariant Quad Scoring**: Segment-voting and radius-normalized corner metrics ($r_{\text{est}}$ normalization) preventing false flat-edge classification across varying camera distances (macro close-up vs wide field).
-  - **100% Ground Truth Regression Suite**: All 90 scanned physical piece fixtures passing deterministic corner classification tests (`cv-engine/datasets/archive/v1/`).
-  - **Deadband Wobble Lock-On**: Sub-pixel sensor noise filter freezing corner drift ($<2.2\text{ px}$) when the piece is physically stationary ($<1.8\text{ px}$ centroid movement).
-  - **Edge-Corner Endpoint Synchronization**: Chords and curve sample endpoints directly bound to sub-pixel refined corners, eliminating baseline drift and wireframe wobble.
-  - **Iterated Binomial Gaussian Smoothing**: 3-pass filter bringing boundary staircase noise below $0.09\text{ px}$ mean directional jerk, establishing clean input for Phase 6 turn-angle curve signatures.
-
----
-
-### Phase 6: Pairwise Curve Mating & Border Loop Solver (Current Focus)
-* **Objective**: Connect complementary tabs and blanks geometrically, assembling the closed outer perimeter frame.
+### Phase 6: Step 1 — Master Poster Reference & Coordinate Grid Stage (Current Task)
+* **Rationale**: Requires zero scanned pieces upfront. Establishes the ground-truth visual coordinate space, aspect ratio, and grid division ($C \times R$) against which pieces will be assembled.
 * **Key Tasks**:
-  1. **Normalized Curve Signatures (`cv-engine/src/matcher.rs`)**:
-     - Resample piece edges into arc-length normalized equidistant points (e.g. 100 points per edge).
-     - Represent edge profile using intrinsic turn-angle $\theta(s)$ or chord-curvature signatures invariant to rigid Euclidean transformation.
+  1. **Poster Ingestion in Web App**:
+     - Drag-and-drop or file upload for the master puzzle box image / reference artwork.
+     - Interactive pan, zoom, and inspect canvas (`components/PosterCanvas.tsx`).
+     - Metadata input: puzzle piece count (e.g. 500, 1000), grid layout (e.g. $28 \times 18$ or $38 \times 27$), and physical dimensions ($W \times H\text{ mm}$).
+  2. **Grid Geometry & Slot Mapping**:
+     - Compute nominal slot boundaries, cell aspect ratio, and expected average piece dimensions (px and mm).
+     - Visual grid toggle overlay on the reference poster.
+  3. **WASM Poster Ingestion (`cv-engine/src/poster.rs`)**:
+     - Ingest poster RGBA buffer into Rust memory.
+     - Downsample and precalculate multi-scale grayscale pyramids for visual matching in future steps.
+
+---
+
+### Phase 7: Step 2 — Piece Inventory Management & Interactive Board UI (Next)
+* **Rationale**: Creates the critical **human-in-the-loop harness**. As pieces are scanned under the camera, they are added to a persistent tray where users can inspect thumbnails, re-verify edge types, group known neighbors, and manually position pieces on the board to generate test pairs.
+* **Key Tasks**:
+  1. **Persistent Piece Tray**:
+     - Local storage / IndexedDB repository of recorded pieces.
+     - Card view displaying piece thumbnail, classification badges (Corner, Border, Interior; Tab/Hole/Flat count), and metric dimensions ($W \times H\text{ mm}$).
+     - Ability to tag, favorite, or pair pieces manually.
+  2. **Interactive Assembly Board (`components/BoardView.tsx`)**:
+     - 2D grid canvas showing empty slots, placed pieces, and candidate slots.
+     - Drag-and-drop piece placement from tray onto the board.
+     - Export/import ground-truth assembly pairs as JSON test fixtures.
+
+---
+
+### Phase 8: Step 3 — Edge Curve Signatures & Pairwise Mating Engine
+* **Rationale**: Validated directly against physical paired pieces curated in Step 2.
+* **Key Tasks**:
+  1. **Arc-Length Normalized Edge Profiles (`cv-engine/src/matcher.rs`)**:
+     - Resample piece edge contours into fixed equidistant points ($N = 100$).
+     - Compute invariant intrinsic representations: turn-angle $\theta(s)$ or chord-relative curvature $\kappa(s)$.
   2. **Pairwise Compatibility Scoring**:
-     - Complementary matching: evaluate $L_2$ error between male tab curve and inverted female blank curve.
-     - Prune impossible pairs (tab-tab, blank-blank, or bounding-box width/height mismatch).
-  3. **Border Loop Solver (`cv-engine/src/board.rs`)**:
-     - Connect the 4 corner pieces (2 adjacent flat edges) and the ~36 border pieces (1 flat edge).
-     - Circular constraint satisfaction: the closed loop must form a rigid rectangle matching expected grid dimensions ($W \times H$).
-  4. **Virtual Assembly Preview (`web-app/src/components/BoardView.tsx`)**:
-     - Interactive visual board showing solved clusters, candidate edge snaps, and confidence heatmaps.
+     - Fast rejection filter: opposite edge types (Tab $\leftrightarrow$ Hole, Flat $\leftrightarrow$ Flat for outer frame), tab width/height bounding box consistency.
+     - Detailed curve match: Euclidean $L_2$ difference between male tab profile and inverted female hole profile across a sliding alignment window.
+  3. **Pairwise Test Suite**:
+     - Rust unit tests using verified mated piece pairs exported from the Step 2 inventory.
 
 ---
 
-### Phase 7: Master Artwork Reference & Visual Feature Matching
-* **Objective**: Solve pieces with intricate artwork (faces, buildings, textures) via continuous landmark coordinates.
+### Phase 9: Step 4 — Hybrid Visual + Geometric Solver, AR Guidance & PWA
+* **Objective**: Combine edge curves and artwork features into a single global solver, with AR table guidance and offline PWA support.
 * **Key Tasks**:
-  1. **Master Poster Upload**:
-     - Allow user to upload the reference image of the puzzle box.
-     - Rust precomputes a multi-scale spatial index of the artwork.
-  2. **Feature Extractor in WASM**:
-     - Fast corner/feature detector (FAST / ORB-compatible keypoint hashing) inside the piece's interior texture.
-     - RANSAC homography estimation against the reference artwork to determine the exact global $(x, y)$ coordinate and continuous rotation $\theta$.
-  3. **Hybrid Voting System**:
-     - Combine **Visual Landmark Score** (from poster) + **Geometric Boundary Score** (from neighbor pieces).
-
----
-
-### Phase 8: Interactive AR Guidance & Session Persistence
-* **Objective**: Provide frictionless user guidance and ensure puzzle state survives browser restarts.
-* **Key Tasks**:
-  1. **IndexedDB Session Store**:
-     - Save scanned piece contours, edge signatures, and board placement state locally.
-     - Enable resuming a 1,000-piece puzzle across multiple days/weeks.
-  2. **HUD Placement Assistant**:
-     - "Next Best Piece to Find" recommendation mode (e.g., searches for easy high-contrast corners or distinct colors first).
+  1. **Visual Keypoint Matching against Reference Poster**:
+     - Fast feature matching (FAST / ORB-compatible keypoint hashing) inside the piece's interior texture.
+     - RANSAC homography estimation against the reference artwork to determine continuous global $(x, y)$ coordinate and rotation $\theta$.
+  2. **Hybrid Constraint Propagation**:
+     - Combine **Visual Landmark Score** (from poster) + **Geometric Boundary Score** (from neighbor pieces) to solve slots with $O(1)$ candidate elimination.
+  3. **HUD Placement Assistant & AR Table Guidance**:
+     - "Next Best Piece to Find" recommendation mode (prioritizing high-contrast borders or unique colors).
      - Augmented visual overlay showing where on the physical table to snap the scanned piece.
-
----
-
-### Phase 9: Progressive Web App (PWA) & Open Source Release
-* **Objective**: Package the application for seamless zero-install mobile and desktop use.
-* **Key Tasks**:
-  1. **Offline PWA**:
-     - Service worker caching so the entire WASM CV engine works offline without an internet connection.
-  2. **Mobile Layout Polish**:
-     - Responsive mobile viewport optimizations for clamping a smartphone directly over a desk stand.
-  3. **Documentation & Printable Assets**:
-     - Clean GitHub repository README with embedded printable PDF target links, setup diagrams, and architecture documentation.
+  4. **Offline PWA & Session Persistence**:
+     - Service worker caching for 100% offline WASM execution.
+     - IndexedDB persistence to resume 1,000-piece puzzle progress across days/weeks.
