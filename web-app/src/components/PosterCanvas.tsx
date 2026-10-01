@@ -1,6 +1,18 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { process_poster_rgba, get_poster_grid_slots } from '../pkg/cv_engine'
+import { process_poster_rgba, get_poster_grid_slots, get_slot_preview } from '../pkg/cv_engine'
 import './PosterCanvas.css'
+
+export interface SlotPreviewData {
+  col: number
+  row: number
+  width: number
+  height: number
+  is_border: boolean
+  is_corner: boolean
+  rgba_crop: Uint8Array
+  mean_rgb: [number, number, number]
+  mean_lab: [number, number, number]
+}
 
 export interface PosterSlotData {
   col: number
@@ -78,10 +90,14 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
   const [showGrid, setShowGrid] = useState<boolean>(true)
   const [showCoordinates, setShowCoordinates] = useState<boolean>(false)
   const [hoverSlot, setHoverSlot] = useState<PosterSlotData | null>(null)
+  const [selectedSlot, setSelectedSlot] = useState<PosterSlotData | null>(null)
+  const [slotPreview, setSlotPreview] = useState<SlotPreviewData | null>(null)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const rawRgbaRef = useRef<Uint8Array | null>(null)
 
   // Process image pixels with WASM
   const ingestImage = useCallback((img: HTMLImageElement, name: string) => {
@@ -109,11 +125,15 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
 
     ctx.drawImage(img, 0, 0)
     const imgData = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight)
+    const rgbaBytes = new Uint8Array(imgData.data.buffer)
+    rawRgbaRef.current = rgbaBytes
+    setSelectedSlot(null)
+    setSlotPreview(null)
 
     try {
-      // Ingest poster buffer into Rust WASM memory (downsamples & builds pyramids)
+      // Ingest poster buffer into Rust WASM memory (downsamples, CLAHE, Sobel pyramids)
       const poster = process_poster_rgba(
-        new Uint8Array(imgData.data.buffer),
+        rgbaBytes,
         img.naturalWidth,
         img.naturalHeight,
         totalPieces,
@@ -261,8 +281,46 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
     }
   }
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const wasDragging = isDragging && (Math.hypot(e.clientX - (dragStart.x + pan.x), e.clientY - (dragStart.y + pan.y)) > 3)
     setIsDragging(false)
+
+    // Tap-to-select slot for Mode C: Targeted Hole-Filling Preview
+    if (!wasDragging && posterImage && canvasRef.current && gridSlots.length > 0 && rawRgbaRef.current && wasmReady) {
+      const rect = canvasRef.current.getBoundingClientRect()
+      const mouseCanvasX = e.clientX - rect.left
+      const mouseCanvasY = e.clientY - rect.top
+
+      const imgX = (mouseCanvasX - pan.x) / zoom
+      const imgY = (mouseCanvasY - pan.y) / zoom
+
+      if (imgX >= 0 && imgX < posterImage.naturalWidth && imgY >= 0 && imgY < posterImage.naturalHeight) {
+        const cellW = posterImage.naturalWidth / gridCols
+        const cellH = posterImage.naturalHeight / gridRows
+        const col = Math.floor(imgX / cellW)
+        const row = Math.floor(imgY / cellH)
+        const slotIdx = row * gridCols + col
+        if (slotIdx >= 0 && slotIdx < gridSlots.length) {
+          const slot = gridSlots[slotIdx]
+          setSelectedSlot(slot)
+
+          try {
+            const preview = get_slot_preview(
+              rawRgbaRef.current,
+              posterImage.naturalWidth,
+              posterImage.naturalHeight,
+              gridCols,
+              gridRows,
+              col,
+              row
+            ) as SlotPreviewData
+            setSlotPreview(preview)
+          } catch (err) {
+            console.error('Failed to extract slot preview:', err)
+          }
+        }
+      }
+    }
   }
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -339,8 +397,12 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
       ctx.lineWidth = 1 / zoom
       for (const slot of gridSlots) {
         const isHover = hoverSlot && hoverSlot.col === slot.col && hoverSlot.row === slot.row
+        const isSelected = selectedSlot && selectedSlot.col === slot.col && selectedSlot.row === slot.row
 
-        if (isHover) {
+        if (isSelected) {
+          ctx.fillStyle = 'rgba(255, 211, 61, 0.40)'
+          ctx.fillRect(slot.min_x_px, slot.min_y_px, cellW, cellH)
+        } else if (isHover) {
           ctx.fillStyle = 'rgba(0, 229, 255, 0.28)'
           ctx.fillRect(slot.min_x_px, slot.min_y_px, cellW, cellH)
         } else if (slot.is_corner) {
@@ -351,7 +413,9 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
           ctx.fillRect(slot.min_x_px, slot.min_y_px, cellW, cellH)
         }
 
-        ctx.strokeStyle = isHover
+        ctx.strokeStyle = isSelected
+          ? '#ffd33d'
+          : isHover
           ? '#00e5ff'
           : slot.is_corner
           ? 'rgba(248, 81, 73, 0.7)'
@@ -361,11 +425,11 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
 
         ctx.strokeRect(slot.min_x_px, slot.min_y_px, cellW, cellH)
 
-        // Show slot coordinates if enabled or hovered
-        if (showCoordinates || isHover) {
+        // Show slot coordinates if enabled or hovered or selected
+        if (showCoordinates || isHover || isSelected) {
           const fontSize = Math.max(8, Math.min(13, cellH * 0.3))
           ctx.font = `bold ${fontSize}px monospace`
-          ctx.fillStyle = isHover ? '#00e5ff' : 'rgba(255, 255, 255, 0.75)'
+          ctx.fillStyle = isSelected ? '#ffd33d' : isHover ? '#00e5ff' : 'rgba(255, 255, 255, 0.75)'
           ctx.textAlign = 'center'
           ctx.textBaseline = 'middle'
           ctx.fillText(`[${slot.col},${slot.row}]`, slot.center_x_px, slot.center_y_px)
@@ -374,7 +438,19 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
     }
 
     ctx.restore()
-  }, [posterImage, pan, zoom, showGrid, showCoordinates, gridSlots, hoverSlot, gridCols, gridRows])
+  }, [posterImage, pan, zoom, showGrid, showCoordinates, gridSlots, hoverSlot, selectedSlot, gridCols, gridRows])
+
+  // Render slot preview thumbnail onto previewCanvasRef
+  useEffect(() => {
+    if (!slotPreview || !previewCanvasRef.current) return
+    const canvas = previewCanvasRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const imgData = ctx.createImageData(slotPreview.width, slotPreview.height)
+    imgData.data.set(slotPreview.rgba_crop)
+    ctx.putImageData(imgData, 0, 0)
+  }, [slotPreview])
 
   // Nominal cell dimensions
   const cellWmm = gridCols > 0 ? (physWidthMm / gridCols).toFixed(1) : '0'
@@ -558,6 +634,50 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
                   <span className="hud-val">
                     X:{hoverSlot.center_x_mm.toFixed(1)} Y:{hoverSlot.center_y_mm.toFixed(1)} mm
                   </span>
+                </div>
+              </div>
+            )}
+
+            {/* Mode C: Slot Preview Inspector Card */}
+            {selectedSlot && slotPreview && (
+              <div className="slot-preview-card">
+                <div className="slot-preview-header">
+                  <strong>TARGET SLOT [{slotPreview.col}, {slotPreview.row}]</strong>
+                  <button className="btn tiny" onClick={() => { setSelectedSlot(null); setSlotPreview(null); }}>
+                    CLOSE
+                  </button>
+                </div>
+                <div className="slot-preview-body">
+                  <canvas
+                    ref={previewCanvasRef}
+                    width={slotPreview.width}
+                    height={slotPreview.height}
+                    className="slot-preview-thumb-canvas"
+                  />
+                  <div className="slot-preview-details">
+                    <div>
+                      TYPE: <b className={slotPreview.is_corner ? 'red' : slotPreview.is_border ? 'yellow' : 'green'}>
+                        {slotPreview.is_corner ? 'CORNER' : slotPreview.is_border ? 'BORDER' : 'INTERIOR'}
+                      </b>
+                    </div>
+                    <div>
+                      SIZE: <b>{slotPreview.width}x{slotPreview.height} px</b>
+                    </div>
+                    <div className="color-swatch-row">
+                      <span
+                        className="color-swatch"
+                        style={{
+                          backgroundColor: `rgb(${slotPreview.mean_rgb[0]}, ${slotPreview.mean_rgb[1]}, ${slotPreview.mean_rgb[2]})`,
+                        }}
+                      />
+                      <span>
+                        RGB({slotPreview.mean_rgb[0]}, {slotPreview.mean_rgb[1]}, {slotPreview.mean_rgb[2]})
+                      </span>
+                    </div>
+                    <div className="toolbar-info">
+                      LAB: L*{slotPreview.mean_lab[0].toFixed(0)} a*{slotPreview.mean_lab[1].toFixed(0)} b*{slotPreview.mean_lab[2].toFixed(0)}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

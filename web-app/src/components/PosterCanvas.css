@@ -201,3 +201,70 @@
   color: #58a6ff !important;
   border-color: #388bfd !important;
 }
+
+/* Mode C Slot Preview Floating Inspector */
+.slot-preview-card {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 250px;
+  background: #161b22;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 10;
+}
+
+.slot-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: #1f242c;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.slot-preview-body {
+  padding: 10px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.slot-preview-thumb-canvas {
+  width: 72px;
+  height: 72px;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+}
+
+.slot-preview-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  min-width: 0;
+}
+
+.color-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.color-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  display: inline-block;
+  flex-shrink: 0;
+}
+

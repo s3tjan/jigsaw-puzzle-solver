@@ -1,14 +1,19 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-/// Representation of a single pyramid level (downscaled grayscale image).
+/// Representation of a single pyramid level with intensity and gradient orientations.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PyramidLevel {
     pub level: usize,
     pub width: u32,
     pub height: u32,
     pub scale: f32,
+    /// Grayscale intensity values [0, 255]
     pub pixels: Vec<u8>,
+    /// Sobel gradient magnitude [0, 255] (contrast normalized)
+    pub grad_magnitude: Vec<u8>,
+    /// Sobel gradient orientation quantized into 8 directional bins [0..7]
+    pub grad_orientation: Vec<u8>,
 }
 
 /// Metadata and precomputed visual structures for the master puzzle reference poster.
@@ -44,6 +49,23 @@ pub struct PosterSlot {
     pub is_corner: bool,
 }
 
+/// Extracted slot crop and visual cue metadata for Mode C (Targeted Hole-Filling).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SlotPreview {
+    pub col: u32,
+    pub row: u32,
+    pub width: u32,
+    pub height: u32,
+    pub is_border: bool,
+    pub is_corner: bool,
+    /// Rectified RGBA pixel crop of this slot from the poster
+    pub rgba_crop: Vec<u8>,
+    /// Average RGB color of the slot [R, G, B]
+    pub mean_rgb: [u8; 3],
+    /// CIELAB color representation [L*, a*, b*] for illumination-invariant color matching
+    pub mean_lab: [f32; 3],
+}
+
 /// Master Poster Engine holding the ingested master artwork and precomputed pyramids.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MasterPoster {
@@ -62,11 +84,166 @@ pub fn rgba_to_grayscale(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
         let r = rgba[i * 4] as u32;
         let g = rgba[i * 4 + 1] as u32;
         let b = rgba[i * 4 + 2] as u32;
-        // Integer fixed-point math: (299*R + 587*G + 114*B) / 1000
         let lum = (299 * r + 587 * g + 114 * b) / 1000;
         gray[i] = lum.min(255) as u8;
     }
     gray
+}
+
+/// Contrast-Limited Adaptive Histogram Equalization (CLAHE) on a grayscale image.
+/// Divides image into grid of contextual regions (tiles), computes clipped local histograms,
+/// and applies bilinear interpolation between tile mappings.
+/// Eliminates specular reflections and shadows from glossy box covers.
+pub fn apply_clahe(src: &[u8], width: u32, height: u32, tiles_x: u32, tiles_y: u32, clip_limit_factor: f32) -> Vec<u8> {
+    let w = width as usize;
+    let h = height as usize;
+    if w == 0 || h == 0 {
+        return Vec::new();
+    }
+    let tx = (tiles_x as usize).max(1).min(w);
+    let ty = (tiles_y as usize).max(1).min(h);
+
+    let tile_w = (w + tx - 1) / tx;
+    let tile_h = (h + ty - 1) / ty;
+
+    // Build transformation LUT for each tile
+    let mut tile_mappings = vec![vec![0u8; 256]; tx * ty];
+
+    for gy in 0..ty {
+        let y0 = gy * tile_h;
+        let y1 = (y0 + tile_h).min(h);
+        for gx in 0..tx {
+            let x0 = gx * tile_w;
+            let x1 = (x0 + tile_w).min(w);
+
+            let mut hist = [0u32; 256];
+            let mut count = 0u32;
+            for y in y0..y1 {
+                let row_idx = y * w;
+                for x in x0..x1 {
+                    let val = src[row_idx + x] as usize;
+                    hist[val] += 1;
+                    count += 1;
+                }
+            }
+
+            if count == 0 {
+                continue;
+            }
+
+            // Clip histogram
+            let clip_limit = ((count as f32 / 256.0) * clip_limit_factor).max(1.0) as u32;
+            let mut clipped_excess = 0u32;
+            for i in 0..256 {
+                if hist[i] > clip_limit {
+                    clipped_excess += hist[i] - clip_limit;
+                    hist[i] = clip_limit;
+                }
+            }
+
+            // Redistribute excess evenly across all bins
+            let redistrib = clipped_excess / 256;
+            let residual = clipped_excess % 256;
+            for i in 0..256 {
+                hist[i] += redistrib;
+                if (i as u32) < residual {
+                    hist[i] += 1;
+                }
+            }
+
+            // Calculate Cumulative Distribution Function (CDF)
+            let mut cdf = 0u32;
+            let tile_idx = gy * tx + gx;
+            for i in 0..256 {
+                cdf += hist[i];
+                let mapped = ((cdf as f32 / count as f32) * 255.0).round();
+                tile_mappings[tile_idx][i] = mapped.min(255.0).max(0.0) as u8;
+            }
+        }
+    }
+
+    // Bilinear interpolation of mapping across tile centers
+    let mut dst = vec![0u8; w * h];
+    for y in 0..h {
+        let f_gy = (y as f32 / tile_h as f32) - 0.5;
+        let gy0 = (f_gy.floor() as isize).max(0).min(ty as isize - 1) as usize;
+        let gy1 = (gy0 + 1).min(ty - 1);
+        let wy = (f_gy - f_gy.floor()).clamp(0.0, 1.0);
+
+        let row_idx = y * w;
+        for x in 0..w {
+            let f_gx = (x as f32 / tile_w as f32) - 0.5;
+            let gx0 = (f_gx.floor() as isize).max(0).min(tx as isize - 1) as usize;
+            let gx1 = (gx0 + 1).min(tx - 1);
+            let wx = (f_gx - f_gx.floor()).clamp(0.0, 1.0);
+
+            let val = src[row_idx + x] as usize;
+            let v00 = tile_mappings[gy0 * tx + gx0][val] as f32;
+            let v10 = tile_mappings[gy0 * tx + gx1][val] as f32;
+            let v01 = tile_mappings[gy1 * tx + gx0][val] as f32;
+            let v11 = tile_mappings[gy1 * tx + gx1][val] as f32;
+
+            let top = v00 * (1.0 - wx) + v10 * wx;
+            let bot = v01 * (1.0 - wx) + v11 * wx;
+            let out = top * (1.0 - wy) + bot * wy;
+
+            dst[row_idx + x] = out.round().min(255.0).max(0.0) as u8;
+        }
+    }
+
+    dst
+}
+
+/// Compute 3x3 Sobel spatial gradient magnitude and quantized orientation bins [0..7].
+/// Orientation bin 0 = ~0°, 1 = ~45°, 2 = ~90°, ..., 7 = ~315°.
+pub fn compute_sobel_gradients(src: &[u8], width: u32, height: u32) -> (Vec<u8>, Vec<u8>) {
+    let w = width as usize;
+    let h = height as usize;
+    let mut mag = vec![0u8; w * h];
+    let mut ori = vec![0u8; w * h];
+
+    if w < 3 || h < 3 {
+        return (mag, ori);
+    }
+
+    for y in 1..(h - 1) {
+        let r_prev = (y - 1) * w;
+        let r_curr = y * w;
+        let r_next = (y + 1) * w;
+
+        for x in 1..(w - 1) {
+            // Sobel X kernel:
+            // -1  0  1
+            // -2  0  2
+            // -1  0  1
+            let gx = -(src[r_prev + x - 1] as i32) + (src[r_prev + x + 1] as i32)
+                - 2 * (src[r_curr + x - 1] as i32) + 2 * (src[r_curr + x + 1] as i32)
+                - (src[r_next + x - 1] as i32) + (src[r_next + x + 1] as i32);
+
+            // Sobel Y kernel:
+            // -1 -2 -1
+            //  0  0  0
+            //  1  2  1
+            let gy = -(src[r_prev + x - 1] as i32) - 2 * (src[r_prev + x] as i32) - (src[r_prev + x + 1] as i32)
+                + (src[r_next + x - 1] as i32) + 2 * (src[r_next + x] as i32) + (src[r_next + x + 1] as i32);
+
+            // Gradient magnitude normalized to [0, 255]
+            let m = ((((gx * gx + gy * gy) as f32).sqrt()) * 0.25).round().min(255.0) as u8;
+            mag[r_curr + x] = m;
+
+            // Gradient orientation angle [-PI, PI] mapped to 8 sectors [0..7]
+            if m > 12 {
+                let angle = (gy as f32).atan2(gx as f32); // [-PI, PI]
+                let norm_angle = if angle < 0.0 { angle + 2.0 * std::f32::consts::PI } else { angle };
+                let bin = ((norm_angle / (2.0 * std::f32::consts::PI) * 8.0).round() as usize) % 8;
+                ori[r_curr + x] = bin as u8;
+            } else {
+                ori[r_curr + x] = 0;
+            }
+        }
+    }
+
+    (mag, ori)
 }
 
 /// Downsamples a grayscale image by a factor of 2x using 2x2 box area averaging.
@@ -100,20 +277,25 @@ pub fn downsample_2x(src: &[u8], src_w: u32, src_h: u32) -> (Vec<u8>, u32, u32) 
     (dst, dst_w, dst_h)
 }
 
-/// Generates a multi-scale pyramid from an initial grayscale image up to max_levels or until dimension < 32px.
+/// Generates a multi-scale pyramid with CLAHE local contrast normalization and Sobel gradients.
 pub fn build_grayscale_pyramid(gray_base: &[u8], width: u32, height: u32, max_levels: usize) -> Vec<PyramidLevel> {
     let mut levels = Vec::new();
 
-    // Level 0: Original resolution
+    // Apply CLAHE on level 0 for local illumination equalization
+    let clahe_base = apply_clahe(gray_base, width, height, 8, 8, 2.5);
+    let (mag0, ori0) = compute_sobel_gradients(&clahe_base, width, height);
+
     levels.push(PyramidLevel {
         level: 0,
         width,
         height,
         scale: 1.0,
-        pixels: gray_base.to_vec(),
+        pixels: clahe_base.clone(),
+        grad_magnitude: mag0,
+        grad_orientation: ori0,
     });
 
-    let mut current_pixels = gray_base.to_vec();
+    let mut current_pixels = clahe_base;
     let mut curr_w = width;
     let mut curr_h = height;
     let mut curr_scale = 1.0f32;
@@ -124,12 +306,17 @@ pub fn build_grayscale_pyramid(gray_base: &[u8], width: u32, height: u32, max_le
         }
         let (downscaled, next_w, next_h) = downsample_2x(&current_pixels, curr_w, curr_h);
         curr_scale *= 0.5;
+
+        let (g_mag, g_ori) = compute_sobel_gradients(&downscaled, next_w, next_h);
+
         levels.push(PyramidLevel {
             level: lvl,
             width: next_w,
             height: next_h,
             scale: curr_scale,
             pixels: downscaled.clone(),
+            grad_magnitude: g_mag,
+            grad_orientation: g_ori,
         });
         current_pixels = downscaled;
         curr_w = next_w;
@@ -196,6 +383,132 @@ pub fn compute_slot_grid(
     }
 
     slots
+}
+
+/// Convert sRGB [0..255] to CIELAB (D65 illuminant).
+pub fn rgb_to_cielab(r: u8, g: u8, b: u8) -> [f32; 3] {
+    // 1. sRGB to linear RGB
+    let to_linear = |val: u8| -> f32 {
+        let v = (val as f32) / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let lr = to_linear(r);
+    let lg = to_linear(g);
+    let lb = to_linear(b);
+
+    // 2. Linear RGB to XYZ
+    let x = lr * 0.4124564 + lg * 0.3575761 + lb * 0.1804375;
+    let y = lr * 0.2126729 + lg * 0.7151522 + lb * 0.0721750;
+    let z = lr * 0.0193339 + lg * 0.1191920 + lb * 0.9503041;
+
+    // 3. XYZ to CIELAB with D65 reference white (Xn=0.95047, Yn=1.00000, Zn=1.08883)
+    let f = |t: f32| -> f32 {
+        let delta = 6.0 / 29.0;
+        if t > delta * delta * delta {
+            t.cbrt()
+        } else {
+            t / (3.0 * delta * delta) + 4.0 / 29.0
+        }
+    };
+
+    let fx = f(x / 0.95047);
+    let fy = f(y / 1.00000);
+    let fz = f(z / 1.08883);
+
+    let l_star = (116.0 * fy - 16.0).max(0.0);
+    let a_star = 500.0 * (fx - fy);
+    let b_star = 200.0 * (fy - fz);
+
+    [l_star, a_star, b_star]
+}
+
+/// Extracts a high-resolution RGBA slot thumbnail and computes mean RGB and CIELAB color cues
+/// for Mode C (Targeted Hole-Filling).
+pub fn extract_slot_preview(
+    rgba: &[u8],
+    img_w: u32,
+    img_h: u32,
+    cols: u32,
+    rows: u32,
+    col: u32,
+    row: u32,
+) -> Result<SlotPreview, String> {
+    if col >= cols || row >= rows {
+        return Err(format!("Slot [{}, {}] is out of bounds for grid {}x{}", col, row, cols, rows));
+    }
+    let cell_w = (img_w as f32 / cols as f32).round() as u32;
+    let cell_h = (img_h as f32 / rows as f32).round() as u32;
+
+    let x0 = (col as f32 * (img_w as f32 / cols as f32)).round() as u32;
+    let y0 = (row as f32 * (img_h as f32 / rows as f32)).round() as u32;
+    let x1 = (x0 + cell_w).min(img_w);
+    let y1 = (y0 + cell_h).min(img_h);
+
+    let crop_w = x1 - x0;
+    let crop_h = y1 - y0;
+    let mut crop_rgba = vec![0u8; (crop_w * crop_h * 4) as usize];
+
+    let mut sum_r = 0u64;
+    let mut sum_g = 0u64;
+    let mut sum_b = 0u64;
+    let mut count = 0u64;
+
+    for y in 0..crop_h {
+        let src_y = y0 + y;
+        let src_row = (src_y * img_w) as usize;
+        let dst_row = (y * crop_w) as usize;
+
+        for x in 0..crop_w {
+            let src_x = x0 + x;
+            let src_idx = (src_row + (src_x as usize)) * 4;
+            let dst_idx = (dst_row + (x as usize)) * 4;
+
+            let r = rgba[src_idx];
+            let g = rgba[src_idx + 1];
+            let b = rgba[src_idx + 2];
+            let a = rgba[src_idx + 3];
+
+            crop_rgba[dst_idx] = r;
+            crop_rgba[dst_idx + 1] = g;
+            crop_rgba[dst_idx + 2] = b;
+            crop_rgba[dst_idx + 3] = a;
+
+            sum_r += r as u64;
+            sum_g += g as u64;
+            sum_b += b as u64;
+            count += 1;
+        }
+    }
+
+    let mean_r = if count > 0 { (sum_r / count) as u8 } else { 0 };
+    let mean_g = if count > 0 { (sum_g / count) as u8 } else { 0 };
+    let mean_b = if count > 0 { (sum_b / count) as u8 } else { 0 };
+
+    let lab = rgb_to_cielab(mean_r, mean_g, mean_b);
+
+    let is_left = col == 0;
+    let is_right = col == cols - 1;
+    let is_top = row == 0;
+    let is_bottom = row == rows - 1;
+
+    let is_corner = (is_left || is_right) && (is_top || is_bottom);
+    let is_border = is_left || is_right || is_top || is_bottom;
+
+    Ok(SlotPreview {
+        col,
+        row,
+        width: crop_w,
+        height: crop_h,
+        is_border,
+        is_corner,
+        rgba_crop: crop_rgba,
+        mean_rgb: [mean_r, mean_g, mean_b],
+        mean_lab: lab,
+    })
 }
 
 /// Ingests a master reference poster RGBA buffer and generates the precomputed multi-scale pyramid.
@@ -292,3 +605,18 @@ pub fn get_poster_grid_slots(
     serde_wasm_bindgen::to_value(&slots).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// WASM entry point: Extracts a high-resolution slot thumbnail and color cue metadata for Mode C (Targeted Hole-Filling).
+#[wasm_bindgen]
+pub fn get_slot_preview(
+    rgba: &[u8],
+    img_w: u32,
+    img_h: u32,
+    cols: u32,
+    rows: u32,
+    col: u32,
+    row: u32,
+) -> Result<JsValue, JsValue> {
+    let preview = extract_slot_preview(rgba, img_w, img_h, cols, rows, col, row)
+        .map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&preview).map_err(|e| JsValue::from_str(&e.to_string()))
+}
