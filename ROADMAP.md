@@ -88,17 +88,14 @@ This roadmap documents the end-to-end architecture, current completion status, a
 
 ---
 
-### Phase 7: Step 2 — Piece Inventory Management & Interactive Board UI (Current Task)
+### Phase 7: Step 2 — Piece Inventory Management & Interactive Board UI (Completed)
 * **Rationale**: Creates the critical **human-in-the-loop reactive harness** (Literature Principle 4). As pieces are scanned, they are indexed in an offline persistent tray. Tapping any board slot triggers Mode C targeted hole-filling previews using the poster's visual cues and filters the inventory.
-* **Key Tasks**:
-  1. **Persistent Piece Tray (IndexedDB / LocalStorage)**:
-     - Repository storing scanned piece crops, sub-pixel corners, classification badges (Corner, Border, Interior; Tab/Hole/Flat count), and metric dimensions ($W \times H\text{ mm}$).
-     - Ability to tag, inspect, favorite, or pair physical pieces manually.
-  2. **Interactive Assembly Board (`components/BoardView.tsx`) with Mode C Hole Targeting**:
-     - 2D grid canvas showing empty slots, placed pieces, and candidate slots.
-     - Slot targeting: Click any empty slot to load expected artwork crop (`get_slot_preview`), color cue, and filter the tray for compatible complementary tabs/holes.
-     - Drag-and-drop piece placement from tray onto the board.
-     - Export/import ground-truth assembly pairs as JSON test fixtures for validating Phase 8.
+* **Accomplishments**:
+  - **Zero-Dependency IndexedDB Engine (`src/storage/db.ts`)**: Stores piece records (`StoredPiece`), thumbnail crops, sub-pixel corners, metric dimensions ($W \times H\text{ mm}$), cardinal edge classifications, placed board slot coordinates, and ground-truth pairing fixtures with full persistence across page refreshes.
+  - **Piece Tray Component (`src/components/PieceTray.tsx`)**: Responsive, interactive tray supporting search, category pills (All, Corners, Borders, Interior, Favorites), edge signature indicators (N/E/S/W tabs/holes/flats), favorite toggling, manual pair designation, and HTML5 drag-and-drop.
+  - **Mode C Slot Hole Targeting (`src/components/BoardView.tsx`)**: Zoomable/pannable 2D assembly grid canvas with real-time neighbor constraint resolution (N/E/S/W complementary requirements), dynamic slot inspection, artwork preview extraction via WASM `get_slot_preview`, mean RGB & color cues, and auto-filtering of the piece tray for compatible matching candidates.
+  - **Drag-and-Drop Placement & Board Control**: Drag pieces from tray directly into board slots, click placed pieces to rotate in 90° increments, or unplace pieces back into the tray.
+  - **Assembly Fixtures Export / Import**: One-click JSON export/import of verified assembly datasets and mating pairs (`assembly_pairs.json`) to serve as ground-truth test vectors for Phase 8.
 
 ---
 

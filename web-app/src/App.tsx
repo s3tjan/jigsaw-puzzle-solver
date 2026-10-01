@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import init, {
   dewarp_quad,
   snap_fiducial_corner,
@@ -7,6 +7,22 @@ import init, {
   map_dewarped_points_to_camera,
 } from './pkg/cv_engine'
 import { PosterCanvas } from './components/PosterCanvas'
+import { PieceTray } from './components/PieceTray'
+import type { SlotRequirementFilter } from './components/PieceTray'
+import { BoardView } from './components/BoardView'
+import type { StoredPiece, PlacedBoardSlot } from './storage/db'
+import {
+  getAllPieces,
+  savePiece,
+  deletePiece,
+  clearAllPieces,
+  getAllPlacedSlots,
+  placePieceOnBoard,
+  unplacePieceFromBoard,
+  exportAssemblyDataset,
+  importAssemblyDataset,
+  savePairedFixture,
+} from './storage/db'
 import './App.css'
 
 interface Point2D {
@@ -68,7 +84,42 @@ export default function App() {
   const [focusScore, setFocusScore] = useState<number>(0)
   const [detectedPiece, setDetectedPiece] = useState<ScannedPiece | null>(null)
   const [scannedPieces, setScannedPieces] = useState<ScannedPiece[]>([])
-  const [activeTab, setActiveTab] = useState<'camera' | 'poster'>('camera')
+  const [activeTab, setActiveTab] = useState<'camera' | 'poster' | 'board'>('camera')
+
+  // Phase 7: Persistent Inventory & Board State
+  const [trayPieces, setTrayPieces] = useState<StoredPiece[]>([])
+  const [placedSlots, setPlacedSlots] = useState<Record<string, PlacedBoardSlot>>({})
+  const [selectedTrayPieceId, setSelectedTrayPieceId] = useState<string | null>(null)
+  const [selectedBoardSlot, setSelectedBoardSlot] = useState<{ row: number; col: number } | null>(null)
+  const [slotRequirementFilter, setSlotRequirementFilter] = useState<SlotRequirementFilter | null>(null)
+  const [pairingSourcePieceId, setPairingSourcePieceId] = useState<string | null>(null)
+
+  // Shared Reference Poster for Mode C Hole-Targeting Previews
+  const [posterRgba, setPosterRgba] = useState<Uint8Array | null>(null)
+  const [posterDims, setPosterDims] = useState<{ w: number; h: number; cols: number; rows: number }>({
+    w: 0,
+    h: 0,
+    cols: 36,
+    rows: 28,
+  })
+
+  // Load persistent pieces and board state from IndexedDB on startup
+  const refreshStorage = useCallback(async () => {
+    try {
+      const [allPieces, allSlots] = await Promise.all([
+        getAllPieces(),
+        getAllPlacedSlots(),
+      ])
+      setTrayPieces(allPieces)
+      setPlacedSlots(allSlots)
+    } catch (err) {
+      console.error('Failed to load from IndexedDB:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshStorage()
+  }, [refreshStorage])
 
   // Controls
   const [lensDistortion, setLensDistortion] = useState<number>(() => {
@@ -999,10 +1050,167 @@ export default function App() {
     }
   }
 
-  const handleRecordPiece = () => {
-    if (detectedPiece) {
-      setScannedPieces((prev) => [detectedPiece, ...prev])
+  const handleRecordPiece = async () => {
+    if (!detectedPiece) return
+
+    // Add to session list
+    setScannedPieces((prev) => [detectedPiece, ...prev])
+
+    // Generate clean thumbnail crop from rectified pieceCanvas or latestDewarpedRef
+    let thumbUrl = ''
+    if (pieceCanvasRef.current) {
+      thumbUrl = pieceCanvasRef.current.toDataURL('image/jpeg', 0.88)
     }
+
+    const flatCount = detectedPiece.edges.filter((e) => e.edge_type === 'Flat').length
+    const tabCount = detectedPiece.edges.filter((e) => e.edge_type === 'Tab').length
+    const holeCount = detectedPiece.edges.filter((e) => e.edge_type === 'Hole').length
+    const classification: 'Corner' | 'Border' | 'Interior' =
+      detectedPiece.is_corner || flatCount >= 2
+        ? 'Corner'
+        : detectedPiece.is_border || flatCount === 1
+        ? 'Border'
+        : 'Interior'
+
+    // Compute metric dimensions: stage is 96mm x 96mm across 384x384 px (0.25 mm/px)
+    const mmPerPx = 96.0 / 384.0
+    const metricW = detectedPiece.bounding_width * mmPerPx
+    const metricH = detectedPiece.bounding_height * mmPerPx
+
+    const now = Date.now()
+    const nextPieceNum = trayPieces.length + 1
+    const stored: StoredPiece = {
+      id: `piece_${now}_${nextPieceNum}`,
+      piece_number: nextPieceNum,
+      timestamp: now,
+      thumbnailDataUrl: thumbUrl,
+      corners: [
+        { ...detectedPiece.corners[0] },
+        { ...detectedPiece.corners[1] },
+        { ...detectedPiece.corners[2] },
+        { ...detectedPiece.corners[3] },
+      ],
+      edges: detectedPiece.edges.map((e) => ({
+        edge_type: e.edge_type,
+        start_corner: { ...e.start_corner },
+        end_corner: { ...e.end_corner },
+        curvature_depth: e.curvature_depth,
+        curve_samples: e.curve_samples ? e.curve_samples.map((p) => ({ ...p })) : [],
+      })) as any,
+      bounding_width_px: detectedPiece.bounding_width,
+      bounding_height_px: detectedPiece.bounding_height,
+      metric_width_mm: metricW,
+      metric_height_mm: metricH,
+      classification,
+      flat_count: flatCount,
+      tab_count: tabCount,
+      hole_count: holeCount,
+      status: 'InTray',
+      placed_slot: null,
+      is_favorite: false,
+      tags: [],
+      paired_piece_id: null,
+    }
+
+    try {
+      await savePiece(stored)
+      await refreshStorage()
+    } catch (err) {
+      console.error('Failed to save piece to IndexedDB:', err)
+    }
+  }
+
+  // Tray management callbacks
+  const handleToggleFavorite = async (pieceId: string) => {
+    const piece = trayPieces.find((p) => p.id === pieceId)
+    if (!piece) return
+    const updated: StoredPiece = { ...piece, is_favorite: !piece.is_favorite }
+    await savePiece(updated)
+    await refreshStorage()
+  }
+
+  const handleDeletePiece = async (pieceId: string) => {
+    await deletePiece(pieceId)
+    if (selectedTrayPieceId === pieceId) setSelectedTrayPieceId(null)
+    await refreshStorage()
+  }
+
+  const handleClearAllPieces = async () => {
+    await clearAllPieces()
+    setScannedPieces([])
+    setSelectedTrayPieceId(null)
+    setSelectedBoardSlot(null)
+    await refreshStorage()
+  }
+
+  // Board placement callbacks
+  const handlePlacePiece = async (row: number, col: number, pieceId: string, rotation: number) => {
+    await placePieceOnBoard(row, col, pieceId, rotation)
+    await refreshStorage()
+  }
+
+  const handleUnplacePiece = async (row: number, col: number) => {
+    await unplacePieceFromBoard(row, col)
+    await refreshStorage()
+  }
+
+  // Pair designation for Phase 8 ground truth
+  const handleStartPairing = (pieceId: string) => {
+    if (!pairingSourcePieceId) {
+      setPairingSourcePieceId(pieceId)
+    } else if (pairingSourcePieceId !== pieceId) {
+      // Complete pair fixture
+      const fixture = {
+        id: `pair_${Date.now()}`,
+        piece_a_id: pairingSourcePieceId,
+        piece_a_edge_idx: 0,
+        piece_b_id: pieceId,
+        piece_b_edge_idx: 2,
+        created_at: Date.now(),
+      }
+      savePairedFixture(fixture).then(() => {
+        setPairingSourcePieceId(null)
+        refreshStorage()
+        alert('Pair designated and saved to Ground-Truth Assembly dataset!')
+      })
+    }
+  }
+
+  // Export / Import fixtures
+  const handleExportFixtures = async () => {
+    const bundle = await exportAssemblyDataset({
+      rows: posterDims.rows,
+      cols: posterDims.cols,
+      physical_width_mm: 700,
+      physical_height_mm: 500,
+    })
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `jigsaw_assembly_dataset_${Date.now()}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleImportFixtures = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+      try {
+        const text = await file.text()
+        const bundle = JSON.parse(text)
+        await importAssemblyDataset(bundle)
+        await refreshStorage()
+        alert(`Successfully imported ${bundle.pieces?.length || 0} pieces and ${Object.keys(bundle.placed_slots || {}).length} board placements!`)
+      } catch (err: any) {
+        alert(`Failed to import dataset: ${err.message}`)
+      }
+    }
+    input.click()
   }
 
   // Freeze current piece into ground truth workbench
@@ -1129,6 +1337,12 @@ export default function App() {
             >
               [2] POSTER &amp; GRID
             </button>
+            <button
+              className={`nav-tab ${activeTab === 'board' ? 'active' : ''}`}
+              onClick={() => setActiveTab('board')}
+            >
+              [3] ASSEMBLY BOARD &amp; TRAY ({trayPieces.length})
+            </button>
           </nav>
         </div>
 
@@ -1145,10 +1359,65 @@ export default function App() {
         </div>
       </header>
 
-      {/* 2. Main View: Poster Canvas OR Camera Workbench */}
+      {/* 2. Main View: Poster Canvas, Board & Tray, OR Camera Workbench */}
       {activeTab === 'poster' ? (
         <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <PosterCanvas wasmReady={wasmReady} />
+          <PosterCanvas
+            wasmReady={wasmReady}
+            onPosterIngested={(poster, img) => {
+              setPosterDims({
+                w: img.naturalWidth,
+                h: img.naturalHeight,
+                cols: poster.metadata.grid_cols,
+                rows: poster.metadata.grid_rows,
+              })
+              // Cache RGBA buffer from image
+              const off = document.createElement('canvas')
+              off.width = img.naturalWidth
+              off.height = img.naturalHeight
+              const ctx = off.getContext('2d')
+              if (ctx) {
+                ctx.drawImage(img, 0, 0)
+                const imgData = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight)
+                setPosterRgba(new Uint8Array(imgData.data.buffer))
+              }
+            }}
+          />
+        </main>
+      ) : activeTab === 'board' ? (
+        <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
+          <BoardView
+            rows={posterDims.rows}
+            cols={posterDims.cols}
+            pieces={trayPieces}
+            placedSlots={placedSlots}
+            onPlacePiece={handlePlacePiece}
+            onUnplacePiece={handleUnplacePiece}
+            selectedSlot={selectedBoardSlot}
+            onSelectSlot={setSelectedBoardSlot}
+            onSetSlotFilter={setSlotRequirementFilter}
+            posterRgba={posterRgba}
+            posterWidth={posterDims.w}
+            posterHeight={posterDims.h}
+            onExportFixtures={handleExportFixtures}
+            onImportFixtures={handleImportFixtures}
+          />
+          <PieceTray
+            pieces={trayPieces}
+            selectedPieceId={selectedTrayPieceId}
+            onSelectPiece={(piece) => setSelectedTrayPieceId(piece ? piece.id : null)}
+            onToggleFavorite={handleToggleFavorite}
+            onDeletePiece={handleDeletePiece}
+            onClearAllPieces={handleClearAllPieces}
+            slotFilter={slotRequirementFilter}
+            onClearSlotFilter={() => {
+              setSelectedBoardSlot(null)
+              setSlotRequirementFilter(null)
+            }}
+            onStartPairingWith={handleStartPairing}
+            pairingSourcePieceId={pairingSourcePieceId}
+            onCancelPairing={() => setPairingSourcePieceId(null)}
+          />
         </main>
       ) : (
       <main className="main-workbench">
