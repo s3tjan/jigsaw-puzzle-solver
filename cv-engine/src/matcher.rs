@@ -94,7 +94,7 @@ pub fn fast_rejection_filter(
     if max_d > 0.05 {
         let depth_delta = (abs_da - abs_db).abs();
         let depth_ratio = depth_delta / max_d;
-        if depth_ratio > 0.40 {
+        if depth_ratio > 0.55 {
             return Some(format!(
                 "Rejection: Incompatible tab/hole depth (depth_a={:.3}, depth_b={:.3}, ratio={:.1}%)",
                 abs_da, abs_db, depth_ratio * 100.0
@@ -482,382 +482,414 @@ pub fn solve_perimeter_1d_loop(
         };
     }
 
-    let mut placements: Vec<SolvedBorderPlacement> = Vec::new();
-    let mut used_piece_ids = std::collections::HashSet::new();
+    // Helper to get the edge pointing in world direction `dir` under clockwise rotation `rot`.
+    // dir: 0: North, 1: East, 2: South, 3: West
+    fn get_oriented_edge<'a>(p: &'a IndexedPieceData, rot: usize, dir: usize) -> &'a IndexedEdgeData {
+        let original_idx = (dir + 4 - (rot % 4)) % 4;
+        &p.edges[original_idx]
+    }
 
-    // 1. Identify the 4 corners and their canonical orientations:
-    // Corner TL: (0, 0)           Flat on Top (0) and Left (3)
-    // Corner TR: (0, cols - 1)    Flat on Top (0) and Right (1)
-    // Corner BR: (rows - 1, cols - 1) Flat on Bottom (2) and Right (1)
-    // Corner BL: (rows - 1, 0)    Flat on Bottom (2) and Left (3)
-    let find_corner_rotation = |p: &IndexedPieceData, req_a: usize, req_b: usize| -> Option<usize> {
+    // Helper to find rotation (0..4 CW) where world directions `req_a` and `req_b` are both Flat.
+    fn find_corner_rotation(p: &IndexedPieceData, req_a: usize, req_b: usize) -> Option<usize> {
         for rot in 0..4 {
-            let edge_a = (req_a + rot) % 4;
-            let edge_b = (req_b + rot) % 4;
+            let edge_a = (req_a + 4 - (rot % 4)) % 4;
+            let edge_b = (req_b + 4 - (rot % 4)) % 4;
             if p.edges[edge_a].edge_type == EdgeType::Flat && p.edges[edge_b].edge_type == EdgeType::Flat {
                 return Some(rot);
             }
         }
         None
-    };
-
-    fn get_oriented_edge<'a>(p: &'a IndexedPieceData, rot: usize, dir: usize) -> &'a IndexedEdgeData {
-        &p.edges[(dir + rot) % 4]
     }
 
-    // Assign the 4 corners:
-    let mut corner_tl = None;
-    let mut corner_tr = None;
-    let mut corner_br = None;
-    let mut corner_bl = None;
-
-    for &c in &corners {
-        if corner_tl.is_none() {
-            if let Some(r) = find_corner_rotation(c, 0, 3) {
-                corner_tl = Some((c, r));
-                continue;
+    // Helper to find rotation (0..4 CW) where world direction `flat_dir` is Flat.
+    fn find_border_rotation(p: &IndexedPieceData, flat_dir: usize) -> Option<usize> {
+        for rot in 0..4 {
+            let edge_idx = (flat_dir + 4 - (rot % 4)) % 4;
+            if p.edges[edge_idx].edge_type == EdgeType::Flat {
+                return Some(rot);
             }
         }
-        if corner_tr.is_none() {
-            if let Some(r) = find_corner_rotation(c, 0, 1) {
-                corner_tr = Some((c, r));
-                continue;
-            }
-        }
-        if corner_br.is_none() {
-            if let Some(r) = find_corner_rotation(c, 2, 1) {
-                corner_br = Some((c, r));
-                continue;
-            }
-        }
-        if corner_bl.is_none() {
-            if let Some(r) = find_corner_rotation(c, 2, 3) {
-                corner_bl = Some((c, r));
-                continue;
-            }
-        }
+        None
     }
 
-    let (c_tl, r_tl) = match corner_tl {
-        Some(v) => v,
-        None => return SolvedPerimeterResult {
-            success: false,
-            total_pieces_placed: 0,
-            placements: vec![],
-            error_message: Some("Could not orient Corner TL [0, 0]".to_string()),
-        },
-    };
-    used_piece_ids.insert(c_tl.id.clone());
+    fn chain_border_side<'a>(
+        prev_start_edge: &'a IndexedEdgeData,
+        count: usize,
+        flat_dir: usize,
+        mate_dir: usize,
+        next_edge_dir: usize,
+        corner_target_edge: &'a IndexedEdgeData,
+        borders: &[&'a IndexedPieceData],
+        used: &mut std::collections::HashSet<String>,
+        row_col_fn: &dyn Fn(usize) -> (usize, usize),
+        out_placements: &mut Vec<SolvedBorderPlacement>,
+    ) -> (&'a IndexedEdgeData, f32, bool) {
+        let mut prev_edge = prev_start_edge;
+        let mut side_score = 0.0f32;
 
-    let (c_tr, r_tr) = match corner_tr {
-        Some(v) => v,
-        None => return SolvedPerimeterResult {
-            success: false,
-            total_pieces_placed: 0,
-            placements: vec![],
-            error_message: Some(format!("Could not orient Corner TR [0, {}]", cols - 1)),
-        },
-    };
-    used_piece_ids.insert(c_tr.id.clone());
-
-    let (c_br, r_br) = match corner_br {
-        Some(v) => v,
-        None => return SolvedPerimeterResult {
-            success: false,
-            total_pieces_placed: 0,
-            placements: vec![],
-            error_message: Some(format!("Could not orient Corner BR [{}, {}]", rows - 1, cols - 1)),
-        },
-    };
-    used_piece_ids.insert(c_br.id.clone());
-
-    let (c_bl, r_bl) = match corner_bl {
-        Some(v) => v,
-        None => return SolvedPerimeterResult {
-            success: false,
-            total_pieces_placed: 0,
-            placements: vec![],
-            error_message: Some(format!("Could not orient Corner BL [{}, 0]", rows - 1)),
-        },
-    };
-    used_piece_ids.insert(c_bl.id.clone());
-
-    // Place Corner TL
-    placements.push(SolvedBorderPlacement {
-        piece_id: c_tl.id.clone(),
-        piece_number: c_tl.piece_number,
-        row: 0,
-        col: 0,
-        rotation: r_tl,
-        next_mate_id: None,
-        curve_l2_residual: 0.0,
-        confidence: 100.0,
-    });
-
-    // -----------------------------------------------------------------------
-    // Chain 1: Top Edge (c = 1 .. cols - 2) from Corner TL -> Corner TR
-    // -----------------------------------------------------------------------
-    let mut prev_east_edge = get_oriented_edge(c_tl, r_tl, 1); // East of TL
-    for c in 1..(cols - 1) {
-        let mut best_cand: Option<(&IndexedPieceData, usize, f32)> = None;
-
-        for &bp in &borders {
-            if used_piece_ids.contains(&bp.id) {
-                continue;
-            }
-
-            // Border piece must orient with Flat edge on North (dir = 0)
-            for rot in 0..4 {
-                if get_oriented_edge(bp, rot, 0).edge_type == EdgeType::Flat {
-                    let west_edge = get_oriented_edge(bp, rot, 3);
-                    // Match prev_east_edge with west_edge
-                    if let None = fast_rejection_filter(
-                        prev_east_edge.edge_type,
-                        prev_east_edge.curvature_depth,
-                        west_edge.edge_type,
-                        west_edge.curvature_depth,
-                    ) {
+        for step in 0..count {
+            let mut candidates: Vec<(&'a IndexedPieceData, usize, f32)> = Vec::new();
+            for &bp in borders {
+                if used.contains(&bp.id) {
+                    continue;
+                }
+                if let Some(rot) = find_border_rotation(bp, flat_dir) {
+                    let mate_edge = get_oriented_edge(bp, rot, mate_dir);
+                    if fast_rejection_filter(
+                        prev_edge.edge_type,
+                        prev_edge.curvature_depth,
+                        mate_edge.edge_type,
+                        mate_edge.curvature_depth,
+                    ).is_none() {
                         let (l2, _) = compute_complementary_l2_distance(
-                            &prev_east_edge.normalized_profile,
-                            &west_edge.normalized_profile,
-                            2,
+                            &prev_edge.normalized_profile,
+                            &mate_edge.normalized_profile,
+                            3,
                         );
-                        if l2 < 0.065 {
-                            if best_cand.is_none() || l2 < best_cand.as_ref().unwrap().2 {
-                                best_cand = Some((bp, rot, l2));
-                            }
+                        if l2 < 0.16 {
+                            candidates.push((bp, rot, l2));
                         }
                     }
                 }
             }
-        }
 
-        if let Some((bp, rot, l2)) = best_cand {
-            used_piece_ids.insert(bp.id.clone());
-            let conf = ((1.0 - l2 / 0.075).max(0.0) * 100.0).min(100.0);
-            placements.push(SolvedBorderPlacement {
+            if candidates.is_empty() {
+                break;
+            }
+
+            candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+            let mut chosen = None;
+            for &(cand_bp, cand_rot, cand_l2) in candidates.iter().take(2) {
+                let cand_next_edge = get_oriented_edge(cand_bp, cand_rot, next_edge_dir);
+                if step + 1 == count {
+                    if fast_rejection_filter(
+                        cand_next_edge.edge_type,
+                        cand_next_edge.curvature_depth,
+                        corner_target_edge.edge_type,
+                        corner_target_edge.curvature_depth,
+                    ).is_none() {
+                        let (seam_l2, _) = compute_complementary_l2_distance(
+                            &cand_next_edge.normalized_profile,
+                            &corner_target_edge.normalized_profile,
+                            3,
+                        );
+                        if seam_l2 < 0.18 {
+                            chosen = Some((cand_bp, cand_rot, cand_l2));
+                            break;
+                        }
+                    }
+                } else {
+                    let mut has_successor = false;
+                    for &next_bp in borders {
+                        if used.contains(&next_bp.id) || next_bp.id == cand_bp.id {
+                            continue;
+                        }
+                        if let Some(n_rot) = find_border_rotation(next_bp, flat_dir) {
+                            let n_mate = get_oriented_edge(next_bp, n_rot, mate_dir);
+                            if fast_rejection_filter(
+                                cand_next_edge.edge_type,
+                                cand_next_edge.curvature_depth,
+                                n_mate.edge_type,
+                                n_mate.curvature_depth,
+                            ).is_none() {
+                                let (n_l2, _) = compute_complementary_l2_distance(
+                                    &cand_next_edge.normalized_profile,
+                                    &n_mate.normalized_profile,
+                                    3,
+                                );
+                                if n_l2 < 0.16 {
+                                    has_successor = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if has_successor {
+                        chosen = Some((cand_bp, cand_rot, cand_l2));
+                        break;
+                    }
+                }
+            }
+
+            let (bp, rot, l2) = chosen.unwrap_or(candidates[0]);
+
+            used.insert(bp.id.clone());
+            side_score += 10.0 + (0.16 - l2);
+            let conf = ((1.0 - l2 / 0.16).max(0.0) * 100.0).min(100.0);
+            let (r, c) = row_col_fn(step);
+            out_placements.push(SolvedBorderPlacement {
                 piece_id: bp.id.clone(),
                 piece_number: bp.piece_number,
-                row: 0,
+                row: r,
                 col: c,
                 rotation: rot,
                 next_mate_id: None,
                 curve_l2_residual: l2,
                 confidence: conf,
             });
-            prev_east_edge = get_oriented_edge(bp, rot, 1);
+
+            prev_edge = get_oriented_edge(bp, rot, next_edge_dir);
         }
+
+        let mut seam_closed = false;
+        if fast_rejection_filter(
+            prev_edge.edge_type,
+            prev_edge.curvature_depth,
+            corner_target_edge.edge_type,
+            corner_target_edge.curvature_depth,
+        ).is_none() {
+            let (seam_l2, _) = compute_complementary_l2_distance(
+                &prev_edge.normalized_profile,
+                &corner_target_edge.normalized_profile,
+                3,
+            );
+            if seam_l2 < 0.18 {
+                seam_closed = true;
+                side_score += 50.0 + (0.18 - seam_l2);
+            }
+        }
+
+        (prev_edge, side_score, seam_closed)
     }
 
-    // Place Corner TR
-    placements.push(SolvedBorderPlacement {
-        piece_id: c_tr.id.clone(),
-        piece_number: c_tr.piece_number,
-        row: 0,
-        col: cols - 1,
-        rotation: r_tr,
-        next_mate_id: None,
-        curve_l2_residual: 0.0,
-        confidence: 100.0,
-    });
+    fn try_perimeter_permutation<'a>(
+        c_tl: &'a IndexedPieceData,
+        c_tr: &'a IndexedPieceData,
+        c_br: &'a IndexedPieceData,
+        c_bl: &'a IndexedPieceData,
+        borders: &[&'a IndexedPieceData],
+        rows: usize,
+        cols: usize,
+    ) -> (Vec<SolvedBorderPlacement>, f32, usize) {
+        let r_tl = match find_corner_rotation(c_tl, 0, 3) {
+            Some(r) => r,
+            None => return (vec![], -1e9, 0),
+        };
+        let r_tr = match find_corner_rotation(c_tr, 0, 1) {
+            Some(r) => r,
+            None => return (vec![], -1e9, 0),
+        };
+        let r_br = match find_corner_rotation(c_br, 2, 1) {
+            Some(r) => r,
+            None => return (vec![], -1e9, 0),
+        };
+        let r_bl = match find_corner_rotation(c_bl, 2, 3) {
+            Some(r) => r,
+            None => return (vec![], -1e9, 0),
+        };
 
-    // -----------------------------------------------------------------------
-    // Chain 2: Right Edge (r = 1 .. rows - 2) from Corner TR -> Corner BR
-    // -----------------------------------------------------------------------
-    let mut prev_south_edge = get_oriented_edge(c_tr, r_tr, 2); // South of TR
-    for r in 1..(rows - 1) {
-        let mut best_cand: Option<(&IndexedPieceData, usize, f32)> = None;
+        let mut placements = Vec::new();
+        let mut used = std::collections::HashSet::new();
+        used.insert(c_tl.id.clone());
+        used.insert(c_tr.id.clone());
+        used.insert(c_br.id.clone());
+        used.insert(c_bl.id.clone());
 
-        for &bp in &borders {
-            if used_piece_ids.contains(&bp.id) {
-                continue;
-            }
+        let mut total_score = 0.0f32;
+        let mut closed_seams = 0usize;
 
-            // Flat edge on East (dir = 1)
-            for rot in 0..4 {
-                if get_oriented_edge(bp, rot, 1).edge_type == EdgeType::Flat {
-                    let north_edge = get_oriented_edge(bp, rot, 0);
-                    if let None = fast_rejection_filter(
-                        prev_south_edge.edge_type,
-                        prev_south_edge.curvature_depth,
-                        north_edge.edge_type,
-                        north_edge.curvature_depth,
-                    ) {
-                        let (l2, _) = compute_complementary_l2_distance(
-                            &prev_south_edge.normalized_profile,
-                            &north_edge.normalized_profile,
-                            2,
-                        );
-                        if l2 < 0.065 {
-                            if best_cand.is_none() || l2 < best_cand.as_ref().unwrap().2 {
-                                best_cand = Some((bp, rot, l2));
-                            }
-                        }
+        // Corner TL
+        placements.push(SolvedBorderPlacement {
+            piece_id: c_tl.id.clone(),
+            piece_number: c_tl.piece_number,
+            row: 0,
+            col: 0,
+            rotation: r_tl,
+            next_mate_id: None,
+            curve_l2_residual: 0.0,
+            confidence: 100.0,
+        });
+
+        // Chain 1: Top (col 1 .. cols - 2)
+        let tl_east = get_oriented_edge(c_tl, r_tl, 1);
+        let tr_west = get_oriented_edge(c_tr, r_tr, 3);
+        let (_end_top, s1_score, s1_closed) = chain_border_side(
+            tl_east,
+            cols - 2,
+            0, // Flat North
+            3, // Mate West
+            1, // Next East
+            tr_west,
+            borders,
+            &mut used,
+            &|step| (0, step + 1),
+            &mut placements,
+        );
+        total_score += s1_score;
+        if s1_closed { closed_seams += 1; }
+
+        // Corner TR
+        placements.push(SolvedBorderPlacement {
+            piece_id: c_tr.id.clone(),
+            piece_number: c_tr.piece_number,
+            row: 0,
+            col: cols - 1,
+            rotation: r_tr,
+            next_mate_id: None,
+            curve_l2_residual: 0.0,
+            confidence: 100.0,
+        });
+
+        // Chain 2: Right (row 1 .. rows - 2)
+        let tr_south = get_oriented_edge(c_tr, r_tr, 2);
+        let br_north = get_oriented_edge(c_br, r_br, 0);
+        let (_end_right, s2_score, s2_closed) = chain_border_side(
+            tr_south,
+            rows - 2,
+            1, // Flat East
+            0, // Mate North
+            2, // Next South
+            br_north,
+            borders,
+            &mut used,
+            &|step| (step + 1, cols - 1),
+            &mut placements,
+        );
+        total_score += s2_score;
+        if s2_closed { closed_seams += 1; }
+
+        // Corner BR
+        placements.push(SolvedBorderPlacement {
+            piece_id: c_br.id.clone(),
+            piece_number: c_br.piece_number,
+            row: rows - 1,
+            col: cols - 1,
+            rotation: r_br,
+            next_mate_id: None,
+            curve_l2_residual: 0.0,
+            confidence: 100.0,
+        });
+
+        // Chain 3: Bottom (col cols - 2 down to 1)
+        let br_west = get_oriented_edge(c_br, r_br, 3);
+        let bl_east = get_oriented_edge(c_bl, r_bl, 1);
+        let (_end_bottom, s3_score, s3_closed) = chain_border_side(
+            br_west,
+            cols - 2,
+            2, // Flat South
+            1, // Mate East
+            3, // Next West
+            bl_east,
+            borders,
+            &mut used,
+            &|step| (rows - 1, (cols - 2) - step),
+            &mut placements,
+        );
+        total_score += s3_score;
+        if s3_closed { closed_seams += 1; }
+
+        // Corner BL
+        placements.push(SolvedBorderPlacement {
+            piece_id: c_bl.id.clone(),
+            piece_number: c_bl.piece_number,
+            row: rows - 1,
+            col: 0,
+            rotation: r_bl,
+            next_mate_id: None,
+            curve_l2_residual: 0.0,
+            confidence: 100.0,
+        });
+
+        // Chain 4: Left (row rows - 2 down to 1)
+        let bl_north = get_oriented_edge(c_bl, r_bl, 0);
+        let tl_south = get_oriented_edge(c_tl, r_tl, 2);
+        let (_end_left, s4_score, s4_closed) = chain_border_side(
+            bl_north,
+            rows - 2,
+            3, // Flat West
+            2, // Mate South
+            0, // Next North
+            tl_south,
+            borders,
+            &mut used,
+            &|step| ((rows - 2) - step, 0),
+            &mut placements,
+        );
+        total_score += s4_score;
+        if s4_closed { closed_seams += 1; }
+
+        (placements, total_score, closed_seams)
+    }
+
+    const CORNER_PERMUTATIONS: [[usize; 4]; 24] = [
+        [0,1,2,3], [0,1,3,2], [0,2,1,3], [0,2,3,1], [0,3,1,2], [0,3,2,1],
+        [1,0,2,3], [1,0,3,2], [1,2,0,3], [1,2,3,0], [1,3,0,2], [1,3,2,0],
+        [2,0,1,3], [2,0,3,1], [2,1,0,3], [2,1,3,0], [2,3,0,1], [2,3,1,0],
+        [3,0,1,2], [3,0,2,1], [3,1,0,2], [3,1,2,0], [3,2,0,1], [3,2,1,0],
+    ];
+
+    let dim_candidates = if rows != cols {
+        vec![(rows, cols), (cols, rows)]
+    } else {
+        vec![(rows, cols)]
+    };
+
+    let corner_subsets: Vec<[&IndexedPieceData; 4]> = if corners.len() == 4 {
+        vec![[corners[0], corners[1], corners[2], corners[3]]]
+    } else {
+        let mut subs = Vec::new();
+        let n_c = corners.len().min(6);
+        for a in 0..n_c {
+            for b in (a + 1)..n_c {
+                for c in (b + 1)..n_c {
+                    for d in (c + 1)..n_c {
+                        subs.push([corners[a], corners[b], corners[c], corners[d]]);
                     }
                 }
             }
         }
+        subs
+    };
 
-        if let Some((bp, rot, l2)) = best_cand {
-            used_piece_ids.insert(bp.id.clone());
-            let conf = ((1.0 - l2 / 0.075).max(0.0) * 100.0).min(100.0);
-            placements.push(SolvedBorderPlacement {
-                piece_id: bp.id.clone(),
-                piece_number: bp.piece_number,
-                row: r,
-                col: cols - 1,
-                rotation: rot,
-                next_mate_id: None,
-                curve_l2_residual: l2,
-                confidence: conf,
-            });
-            prev_south_edge = get_oriented_edge(bp, rot, 2);
-        }
-    }
+    let mut best_placements: Vec<SolvedBorderPlacement> = Vec::new();
+    let mut best_score = -1e9f32;
+    let mut best_expected = expected_borders + 4;
 
-    // Place Corner BR
-    placements.push(SolvedBorderPlacement {
-        piece_id: c_br.id.clone(),
-        piece_number: c_br.piece_number,
-        row: rows - 1,
-        col: cols - 1,
-        rotation: r_br,
-        next_mate_id: None,
-        curve_l2_residual: 0.0,
-        confidence: 100.0,
-    });
+    for &(cur_rows, cur_cols) in &dim_candidates {
+        let cur_expected_borders = 2 * (cur_rows - 2) + 2 * (cur_cols - 2);
+        let cur_total_expected = cur_expected_borders + 4;
 
-    // -----------------------------------------------------------------------
-    // Chain 3: Bottom Edge (c = cols - 2 down to 1) from Corner BR -> Corner BL
-    // -----------------------------------------------------------------------
-    let mut prev_west_edge = get_oriented_edge(c_br, r_br, 3); // West of BR
-    for c in (1..(cols - 1)).rev() {
-        let mut best_cand: Option<(&IndexedPieceData, usize, f32)> = None;
+        for subset in &corner_subsets {
+            for perm in &CORNER_PERMUTATIONS {
+                let c_tl = subset[perm[0]];
+                let c_tr = subset[perm[1]];
+                let c_br = subset[perm[2]];
+                let c_bl = subset[perm[3]];
 
-        for &bp in &borders {
-            if used_piece_ids.contains(&bp.id) {
-                continue;
-            }
+                let (plcs, score, closed_seams) = try_perimeter_permutation(
+                    c_tl, c_tr, c_br, c_bl, &borders, cur_rows, cur_cols,
+                );
 
-            // Flat edge on South (dir = 2)
-            for rot in 0..4 {
-                if get_oriented_edge(bp, rot, 2).edge_type == EdgeType::Flat {
-                    let east_edge = get_oriented_edge(bp, rot, 1);
-                    if let None = fast_rejection_filter(
-                        prev_west_edge.edge_type,
-                        prev_west_edge.curvature_depth,
-                        east_edge.edge_type,
-                        east_edge.curvature_depth,
-                    ) {
-                        let (l2, _) = compute_complementary_l2_distance(
-                            &prev_west_edge.normalized_profile,
-                            &east_edge.normalized_profile,
-                            2,
-                        );
-                        if l2 < 0.065 {
-                            if best_cand.is_none() || l2 < best_cand.as_ref().unwrap().2 {
-                                best_cand = Some((bp, rot, l2));
-                            }
-                        }
-                    }
+                if plcs.len() == cur_total_expected && closed_seams == 4 {
+                    return SolvedPerimeterResult {
+                        success: true,
+                        total_pieces_placed: plcs.len(),
+                        placements: plcs,
+                        error_message: None,
+                    };
+                }
+
+                if score > best_score {
+                    best_score = score;
+                    best_placements = plcs;
+                    best_expected = cur_total_expected;
                 }
             }
         }
-
-        if let Some((bp, rot, l2)) = best_cand {
-            used_piece_ids.insert(bp.id.clone());
-            let conf = ((1.0 - l2 / 0.075).max(0.0) * 100.0).min(100.0);
-            placements.push(SolvedBorderPlacement {
-                piece_id: bp.id.clone(),
-                piece_number: bp.piece_number,
-                row: rows - 1,
-                col: c,
-                rotation: rot,
-                next_mate_id: None,
-                curve_l2_residual: l2,
-                confidence: conf,
-            });
-            prev_west_edge = get_oriented_edge(bp, rot, 3);
-        }
     }
 
-    // Place Corner BL
-    placements.push(SolvedBorderPlacement {
-        piece_id: c_bl.id.clone(),
-        piece_number: c_bl.piece_number,
-        row: rows - 1,
-        col: 0,
-        rotation: r_bl,
-        next_mate_id: None,
-        curve_l2_residual: 0.0,
-        confidence: 100.0,
-    });
-
-    // -----------------------------------------------------------------------
-    // Chain 4: Left Edge (r = rows - 2 down to 1) from Corner BL -> Corner TL
-    // -----------------------------------------------------------------------
-    let mut prev_north_edge = get_oriented_edge(c_bl, r_bl, 0); // North of BL
-    for r in (1..(rows - 1)).rev() {
-        let mut best_cand: Option<(&IndexedPieceData, usize, f32)> = None;
-
-        for &bp in &borders {
-            if used_piece_ids.contains(&bp.id) {
-                continue;
-            }
-
-            // Flat edge on West (dir = 3)
-            for rot in 0..4 {
-                if get_oriented_edge(bp, rot, 3).edge_type == EdgeType::Flat {
-                    let south_edge = get_oriented_edge(bp, rot, 2);
-                    if let None = fast_rejection_filter(
-                        prev_north_edge.edge_type,
-                        prev_north_edge.curvature_depth,
-                        south_edge.edge_type,
-                        south_edge.curvature_depth,
-                    ) {
-                        let (l2, _) = compute_complementary_l2_distance(
-                            &prev_north_edge.normalized_profile,
-                            &south_edge.normalized_profile,
-                            2,
-                        );
-                        if l2 < 0.065 {
-                            if best_cand.is_none() || l2 < best_cand.as_ref().unwrap().2 {
-                                best_cand = Some((bp, rot, l2));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some((bp, rot, l2)) = best_cand {
-            used_piece_ids.insert(bp.id.clone());
-            let conf = ((1.0 - l2 / 0.075).max(0.0) * 100.0).min(100.0);
-            placements.push(SolvedBorderPlacement {
-                piece_id: bp.id.clone(),
-                piece_number: bp.piece_number,
-                row: r,
-                col: 0,
-                rotation: rot,
-                next_mate_id: None,
-                curve_l2_residual: l2,
-                confidence: conf,
-            });
-            prev_north_edge = get_oriented_edge(bp, rot, 0);
-        }
-    }
-
-    let total = placements.len();
+    let total = best_placements.len();
     SolvedPerimeterResult {
-        success: total == (expected_borders + 4),
+        success: total == best_expected,
         total_pieces_placed: total,
-        placements,
-        error_message: if total < (expected_borders + 4) {
+        placements: best_placements,
+        error_message: if total < best_expected {
             Some(format!(
                 "Solved {} / {} perimeter pieces. Missing {} pieces in current scan pool.",
                 total,
-                expected_borders + 4,
-                (expected_borders + 4) - total
+                best_expected,
+                best_expected.saturating_sub(total)
             ))
         } else {
             None

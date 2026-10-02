@@ -80,6 +80,32 @@ const DEFAULT_CORNERS: [Point2D, Point2D, Point2D, Point2D] = [
   { x: 230, y: 335 },
 ]
 
+export function getOrComputeNormalizedProfile(edge: any): number[] {
+  if (edge.normalized_profile && Array.isArray(edge.normalized_profile) && edge.normalized_profile.length >= 10) {
+    return Array.from(edge.normalized_profile)
+  }
+  const samples = edge.curve_samples
+  const pStart = edge.start_corner
+  const pEnd = edge.end_corner
+  if (!samples || samples.length === 0 || !pStart || !pEnd) {
+    return new Array(100).fill(0)
+  }
+  const baseDx = pEnd.x - pStart.x
+  const baseDy = pEnd.y - pStart.y
+  const baseLen = Math.max(1.0, Math.sqrt(baseDx * baseDx + baseDy * baseDy))
+
+  const normProfile: number[] = []
+  const nS = samples.length
+  for (let k = 0; k < 100; k++) {
+    const t = k / 99.0
+    const sampleIdx = Math.min(nS - 1, Math.round(t * (nS - 1)))
+    const s = samples[sampleIdx]
+    const distToChord = ((s.x - pStart.x) * baseDy - (s.y - pStart.y) * baseDx) / baseLen
+    normProfile.push(distToChord / baseLen)
+  }
+  return normProfile
+}
+
 export default function App() {
   const [wasmReady, setWasmReady] = useState(false)
   const [isCameraActive, setIsCameraActive] = useState(false)
@@ -172,6 +198,27 @@ export default function App() {
       setStoredPieces(allPieces)
       setPlacedSlots(allSlots)
       setPairedFixtures(allFixtures)
+
+      // Auto-backfill normalized_profile for existing pieces that were recorded without it
+      const missingProfiles = allPieces.filter(
+        (p) => p.edges.some((e) => !e.normalized_profile || e.normalized_profile.length < 10)
+      )
+      if (missingProfiles.length > 0) {
+        Promise.all(
+          missingProfiles.map((p) => {
+            const updated = {
+              ...p,
+              edges: p.edges.map((e) => ({
+                ...e,
+                normalized_profile: getOrComputeNormalizedProfile(e),
+              })) as any,
+            }
+            return savePiece(updated)
+          })
+        )
+          .then(() => console.log(`✓ Auto-upgraded ${missingProfiles.length} pieces with normalized profiles`))
+          .catch((err) => console.warn('Profile backfill non-fatal error:', err))
+      }
     } catch (err) {
       console.error('Failed to load from IndexedDB:', err)
     }
@@ -1100,7 +1147,7 @@ export default function App() {
                     const queryEdges = livePiece.edges.map((e) => ({
                       edge_type: e.edge_type,
                       curvature_depth: e.curvature_depth,
-                      normalized_profile: Array.from(e.normalized_profile || []),
+                      normalized_profile: getOrComputeNormalizedProfile(e),
                     }))
                     const indexed = storedPiecesRef.current.map((p) => ({
                       id: p.id,
@@ -1109,7 +1156,7 @@ export default function App() {
                       edges: p.edges.map((e) => ({
                         edge_type: e.edge_type,
                         curvature_depth: e.curvature_depth,
-                        normalized_profile: Array.from(e.normalized_profile || []),
+                        normalized_profile: getOrComputeNormalizedProfile(e),
                       })),
                       mean_rgb: null,
                     }))
@@ -1402,6 +1449,7 @@ export default function App() {
         end_corner: { ...e.end_corner },
         curvature_depth: e.curvature_depth,
         curve_samples: e.curve_samples ? e.curve_samples.map((p) => ({ ...p })) : [],
+        normalized_profile: Array.from(e.normalized_profile || getOrComputeNormalizedProfile(e)),
       })) as any,
       bounding_width_px: detectedPiece.bounding_width,
       bounding_height_px: detectedPiece.bounding_height,
@@ -1468,8 +1516,32 @@ export default function App() {
   // Phase 9: 1D Closed Perimeter Loop Solver
   const handleSolvePerimeter = useCallback(() => {
     try {
-      const curRows = posterDims.rows > 0 ? posterDims.rows : 28
-      const curCols = posterDims.cols > 0 ? posterDims.cols : 40
+      let curRows = posterDims.rows > 0 ? posterDims.rows : 28
+      let curCols = posterDims.cols > 0 ? posterDims.cols : 36
+
+      // Count scanned perimeter pieces (corners + borders)
+      const scannedPerimeterCount = storedPieces.filter(
+        (p) =>
+          p.classification === 'Corner' ||
+          p.classification === 'Border' ||
+          p.edges.filter((e) => e.edge_type === 'Flat').length >= 1
+      ).length
+
+      // If we have a known perimeter count, ensure (curRows + curCols) matches
+      if (scannedPerimeterCount >= 8) {
+        const expectedSum = Math.round((scannedPerimeterCount + 4) / 2)
+        if (curRows + curCols !== expectedSum) {
+          if (curRows < expectedSum) {
+            curCols = expectedSum - curRows
+          } else {
+            curCols = Math.round(expectedSum / 2)
+            curRows = expectedSum - curCols
+          }
+          console.log(
+            `Auto-adjusted grid to ${curRows} rows x ${curCols} cols to match ${scannedPerimeterCount} scanned perimeter pieces.`
+          )
+        }
+      }
 
       const indexed = storedPieces.map((p) => ({
         id: p.id,
@@ -1478,7 +1550,7 @@ export default function App() {
         edges: p.edges.map((e) => ({
           edge_type: e.edge_type,
           curvature_depth: e.curvature_depth,
-          normalized_profile: Array.from(e.normalized_profile || []),
+          normalized_profile: getOrComputeNormalizedProfile(e),
         })),
         mean_rgb: null,
       }))
