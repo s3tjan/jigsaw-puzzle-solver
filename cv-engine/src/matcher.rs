@@ -289,3 +289,614 @@ pub fn evaluate_edge_pair_wasm(
     serde_wasm_bindgen::to_value(&result)
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
+
+// ---------------------------------------------------------------------------
+// Drop-to-Locate Piece Identity Recognition
+// ---------------------------------------------------------------------------
+
+/// Compute direct L2 difference between two normalized profiles of the same edge
+pub fn compute_profile_identity_distance(p_a: &[f32], p_b: &[f32]) -> f32 {
+    let n = p_a.len().min(p_b.len());
+    if n == 0 {
+        return 1.0;
+    }
+    let mut sum_sq = 0.0f32;
+    for i in 0..n {
+        let diff = p_a[i] - p_b[i];
+        sum_sq += diff * diff;
+    }
+    (sum_sq / n as f32).sqrt()
+}
+
+/// Result of identifying a physical piece placed on the stage
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct PieceIdentityMatch {
+    pub is_matched: bool,
+    pub piece_id: String,
+    pub piece_number: usize,
+    pub rotation_offset: usize, // 0..3 (0, 90, 180, 270 deg CW)
+    pub identity_distance: f32, // Mean L2 distance across 4 edges
+    pub confidence: f32,        // [0.0, 100.0]%
+}
+
+/// Fast stored piece edge descriptor for in-memory matching
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct IndexedEdgeData {
+    pub edge_type: EdgeType,
+    pub curvature_depth: f32,
+    pub normalized_profile: Vec<f32>,
+}
+
+/// Fast stored piece descriptor for in-memory matching
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct IndexedPieceData {
+    pub id: String,
+    pub piece_number: usize,
+    pub classification: String, // "Corner", "Border", "Interior"
+    pub edges: [IndexedEdgeData; 4],
+    pub mean_rgb: Option<[u8; 3]>,
+}
+
+/// Identifies which stored piece matches the piece currently staged on the camera
+pub fn identify_staged_piece_core(
+    query_edges: &[IndexedEdgeData; 4],
+    query_mean_rgb: Option<[u8; 3]>,
+    stored_pieces: &[IndexedPieceData],
+) -> Option<PieceIdentityMatch> {
+    if stored_pieces.is_empty() {
+        return None;
+    }
+
+    let mut best_piece_idx = None;
+    let mut best_rot = 0usize;
+    let mut best_dist = f32::MAX;
+
+    for (p_idx, stored) in stored_pieces.iter().enumerate() {
+        // Try all 4 rotational alignments (rot = 0, 1, 2, 3)
+        for rot in 0..4 {
+            let mut edge_types_match = true;
+            for k in 0..4 {
+                let stored_edge_idx = (k + rot) % 4;
+                if query_edges[k].edge_type != stored.edges[stored_edge_idx].edge_type {
+                    edge_types_match = false;
+                    break;
+                }
+            }
+
+            if !edge_types_match {
+                continue;
+            }
+
+            // Compute edge profile distance across all 4 edges
+            let mut total_edge_dist = 0.0f32;
+            for k in 0..4 {
+                let stored_edge_idx = (k + rot) % 4;
+                let d = compute_profile_identity_distance(
+                    &query_edges[k].normalized_profile,
+                    &stored.edges[stored_edge_idx].normalized_profile,
+                );
+                total_edge_dist += d;
+            }
+            let mean_edge_dist = total_edge_dist / 4.0;
+
+            // Optional color distance
+            let combined_dist = if let (Some(q_rgb), Some(s_rgb)) = (query_mean_rgb, stored.mean_rgb) {
+                let dr = (q_rgb[0] as f32 - s_rgb[0] as f32).abs();
+                let dg = (q_rgb[1] as f32 - s_rgb[1] as f32).abs();
+                let db = (q_rgb[2] as f32 - s_rgb[2] as f32).abs();
+                let color_dist = (dr * dr + dg * dg + db * db).sqrt() / 441.67;
+                0.80 * mean_edge_dist + 0.20 * color_dist
+            } else {
+                mean_edge_dist
+            };
+
+            if combined_dist < best_dist {
+                best_dist = combined_dist;
+                best_piece_idx = Some(p_idx);
+                best_rot = rot;
+            }
+        }
+    }
+
+    if let Some(idx) = best_piece_idx {
+        let piece = &stored_pieces[idx];
+        // Threshold: For the exact same piece on the same mat, identity distance is typically < 0.020.
+        // Threshold 0.045 tolerates lighting variation and slight hand drop jitter.
+        let is_matched = best_dist <= 0.045;
+        let confidence = ((1.0 - (best_dist / 0.045)).max(0.0) * 100.0).min(100.0);
+
+        Some(PieceIdentityMatch {
+            is_matched,
+            piece_id: piece.id.clone(),
+            piece_number: piece.piece_number,
+            rotation_offset: best_rot,
+            identity_distance: best_dist,
+            confidence,
+        })
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 1D Closed Perimeter Loop Solver
+// ---------------------------------------------------------------------------
+
+/// Placement output for a piece in the solved border loop
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SolvedBorderPlacement {
+    pub piece_id: String,
+    pub piece_number: usize,
+    pub row: usize,
+    pub col: usize,
+    pub rotation: usize, // 0, 1, 2, 3
+    pub next_mate_id: Option<String>,
+    pub curve_l2_residual: f32,
+    pub confidence: f32,
+}
+
+/// Result of solving the complete perimeter loop
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SolvedPerimeterResult {
+    pub success: bool,
+    pub total_pieces_placed: usize,
+    pub placements: Vec<SolvedBorderPlacement>,
+    pub error_message: Option<String>,
+}
+
+/// Solves the closed 1D border loop connecting the 4 corners and all border pieces
+pub fn solve_perimeter_1d_loop(
+    pieces: &[IndexedPieceData],
+    rows: usize,
+    cols: usize,
+) -> SolvedPerimeterResult {
+    if rows < 3 || cols < 3 {
+        return SolvedPerimeterResult {
+            success: false,
+            total_pieces_placed: 0,
+            placements: vec![],
+            error_message: Some("Board dimensions must be at least 3x3".to_string()),
+        };
+    }
+
+    let corners: Vec<&IndexedPieceData> = pieces
+        .iter()
+        .filter(|p| p.edges.iter().filter(|e| e.edge_type == EdgeType::Flat).count() == 2)
+        .collect();
+
+    let borders: Vec<&IndexedPieceData> = pieces
+        .iter()
+        .filter(|p| p.edges.iter().filter(|e| e.edge_type == EdgeType::Flat).count() == 1)
+        .collect();
+
+    let expected_borders = 2 * (rows - 2) + 2 * (cols - 2);
+    if corners.len() < 4 {
+        return SolvedPerimeterResult {
+            success: false,
+            total_pieces_placed: 0,
+            placements: vec![],
+            error_message: Some(format!(
+                "Need 4 corner pieces with 2 flat edges, found {}",
+                corners.len()
+            )),
+        };
+    }
+
+    let mut placements: Vec<SolvedBorderPlacement> = Vec::new();
+    let mut used_piece_ids = std::collections::HashSet::new();
+
+    // 1. Identify the 4 corners and their canonical orientations:
+    // Corner TL: (0, 0)           Flat on Top (0) and Left (3)
+    // Corner TR: (0, cols - 1)    Flat on Top (0) and Right (1)
+    // Corner BR: (rows - 1, cols - 1) Flat on Bottom (2) and Right (1)
+    // Corner BL: (rows - 1, 0)    Flat on Bottom (2) and Left (3)
+    let find_corner_rotation = |p: &IndexedPieceData, req_a: usize, req_b: usize| -> Option<usize> {
+        for rot in 0..4 {
+            let edge_a = (req_a + rot) % 4;
+            let edge_b = (req_b + rot) % 4;
+            if p.edges[edge_a].edge_type == EdgeType::Flat && p.edges[edge_b].edge_type == EdgeType::Flat {
+                return Some(rot);
+            }
+        }
+        None
+    };
+
+    fn get_oriented_edge<'a>(p: &'a IndexedPieceData, rot: usize, dir: usize) -> &'a IndexedEdgeData {
+        &p.edges[(dir + rot) % 4]
+    }
+
+    // Assign the 4 corners:
+    let mut corner_tl = None;
+    let mut corner_tr = None;
+    let mut corner_br = None;
+    let mut corner_bl = None;
+
+    for &c in &corners {
+        if corner_tl.is_none() {
+            if let Some(r) = find_corner_rotation(c, 0, 3) {
+                corner_tl = Some((c, r));
+                continue;
+            }
+        }
+        if corner_tr.is_none() {
+            if let Some(r) = find_corner_rotation(c, 0, 1) {
+                corner_tr = Some((c, r));
+                continue;
+            }
+        }
+        if corner_br.is_none() {
+            if let Some(r) = find_corner_rotation(c, 2, 1) {
+                corner_br = Some((c, r));
+                continue;
+            }
+        }
+        if corner_bl.is_none() {
+            if let Some(r) = find_corner_rotation(c, 2, 3) {
+                corner_bl = Some((c, r));
+                continue;
+            }
+        }
+    }
+
+    let (c_tl, r_tl) = match corner_tl {
+        Some(v) => v,
+        None => return SolvedPerimeterResult {
+            success: false,
+            total_pieces_placed: 0,
+            placements: vec![],
+            error_message: Some("Could not orient Corner TL [0, 0]".to_string()),
+        },
+    };
+    used_piece_ids.insert(c_tl.id.clone());
+
+    let (c_tr, r_tr) = match corner_tr {
+        Some(v) => v,
+        None => return SolvedPerimeterResult {
+            success: false,
+            total_pieces_placed: 0,
+            placements: vec![],
+            error_message: Some(format!("Could not orient Corner TR [0, {}]", cols - 1)),
+        },
+    };
+    used_piece_ids.insert(c_tr.id.clone());
+
+    let (c_br, r_br) = match corner_br {
+        Some(v) => v,
+        None => return SolvedPerimeterResult {
+            success: false,
+            total_pieces_placed: 0,
+            placements: vec![],
+            error_message: Some(format!("Could not orient Corner BR [{}, {}]", rows - 1, cols - 1)),
+        },
+    };
+    used_piece_ids.insert(c_br.id.clone());
+
+    let (c_bl, r_bl) = match corner_bl {
+        Some(v) => v,
+        None => return SolvedPerimeterResult {
+            success: false,
+            total_pieces_placed: 0,
+            placements: vec![],
+            error_message: Some(format!("Could not orient Corner BL [{}, 0]", rows - 1)),
+        },
+    };
+    used_piece_ids.insert(c_bl.id.clone());
+
+    // Place Corner TL
+    placements.push(SolvedBorderPlacement {
+        piece_id: c_tl.id.clone(),
+        piece_number: c_tl.piece_number,
+        row: 0,
+        col: 0,
+        rotation: r_tl,
+        next_mate_id: None,
+        curve_l2_residual: 0.0,
+        confidence: 100.0,
+    });
+
+    // -----------------------------------------------------------------------
+    // Chain 1: Top Edge (c = 1 .. cols - 2) from Corner TL -> Corner TR
+    // -----------------------------------------------------------------------
+    let mut prev_east_edge = get_oriented_edge(c_tl, r_tl, 1); // East of TL
+    for c in 1..(cols - 1) {
+        let mut best_cand: Option<(&IndexedPieceData, usize, f32)> = None;
+
+        for &bp in &borders {
+            if used_piece_ids.contains(&bp.id) {
+                continue;
+            }
+
+            // Border piece must orient with Flat edge on North (dir = 0)
+            for rot in 0..4 {
+                if get_oriented_edge(bp, rot, 0).edge_type == EdgeType::Flat {
+                    let west_edge = get_oriented_edge(bp, rot, 3);
+                    // Match prev_east_edge with west_edge
+                    if let None = fast_rejection_filter(
+                        prev_east_edge.edge_type,
+                        prev_east_edge.curvature_depth,
+                        west_edge.edge_type,
+                        west_edge.curvature_depth,
+                    ) {
+                        let (l2, _) = compute_complementary_l2_distance(
+                            &prev_east_edge.normalized_profile,
+                            &west_edge.normalized_profile,
+                            2,
+                        );
+                        if l2 < 0.065 {
+                            if best_cand.is_none() || l2 < best_cand.as_ref().unwrap().2 {
+                                best_cand = Some((bp, rot, l2));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((bp, rot, l2)) = best_cand {
+            used_piece_ids.insert(bp.id.clone());
+            let conf = ((1.0 - l2 / 0.075).max(0.0) * 100.0).min(100.0);
+            placements.push(SolvedBorderPlacement {
+                piece_id: bp.id.clone(),
+                piece_number: bp.piece_number,
+                row: 0,
+                col: c,
+                rotation: rot,
+                next_mate_id: None,
+                curve_l2_residual: l2,
+                confidence: conf,
+            });
+            prev_east_edge = get_oriented_edge(bp, rot, 1);
+        }
+    }
+
+    // Place Corner TR
+    placements.push(SolvedBorderPlacement {
+        piece_id: c_tr.id.clone(),
+        piece_number: c_tr.piece_number,
+        row: 0,
+        col: cols - 1,
+        rotation: r_tr,
+        next_mate_id: None,
+        curve_l2_residual: 0.0,
+        confidence: 100.0,
+    });
+
+    // -----------------------------------------------------------------------
+    // Chain 2: Right Edge (r = 1 .. rows - 2) from Corner TR -> Corner BR
+    // -----------------------------------------------------------------------
+    let mut prev_south_edge = get_oriented_edge(c_tr, r_tr, 2); // South of TR
+    for r in 1..(rows - 1) {
+        let mut best_cand: Option<(&IndexedPieceData, usize, f32)> = None;
+
+        for &bp in &borders {
+            if used_piece_ids.contains(&bp.id) {
+                continue;
+            }
+
+            // Flat edge on East (dir = 1)
+            for rot in 0..4 {
+                if get_oriented_edge(bp, rot, 1).edge_type == EdgeType::Flat {
+                    let north_edge = get_oriented_edge(bp, rot, 0);
+                    if let None = fast_rejection_filter(
+                        prev_south_edge.edge_type,
+                        prev_south_edge.curvature_depth,
+                        north_edge.edge_type,
+                        north_edge.curvature_depth,
+                    ) {
+                        let (l2, _) = compute_complementary_l2_distance(
+                            &prev_south_edge.normalized_profile,
+                            &north_edge.normalized_profile,
+                            2,
+                        );
+                        if l2 < 0.065 {
+                            if best_cand.is_none() || l2 < best_cand.as_ref().unwrap().2 {
+                                best_cand = Some((bp, rot, l2));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((bp, rot, l2)) = best_cand {
+            used_piece_ids.insert(bp.id.clone());
+            let conf = ((1.0 - l2 / 0.075).max(0.0) * 100.0).min(100.0);
+            placements.push(SolvedBorderPlacement {
+                piece_id: bp.id.clone(),
+                piece_number: bp.piece_number,
+                row: r,
+                col: cols - 1,
+                rotation: rot,
+                next_mate_id: None,
+                curve_l2_residual: l2,
+                confidence: conf,
+            });
+            prev_south_edge = get_oriented_edge(bp, rot, 2);
+        }
+    }
+
+    // Place Corner BR
+    placements.push(SolvedBorderPlacement {
+        piece_id: c_br.id.clone(),
+        piece_number: c_br.piece_number,
+        row: rows - 1,
+        col: cols - 1,
+        rotation: r_br,
+        next_mate_id: None,
+        curve_l2_residual: 0.0,
+        confidence: 100.0,
+    });
+
+    // -----------------------------------------------------------------------
+    // Chain 3: Bottom Edge (c = cols - 2 down to 1) from Corner BR -> Corner BL
+    // -----------------------------------------------------------------------
+    let mut prev_west_edge = get_oriented_edge(c_br, r_br, 3); // West of BR
+    for c in (1..(cols - 1)).rev() {
+        let mut best_cand: Option<(&IndexedPieceData, usize, f32)> = None;
+
+        for &bp in &borders {
+            if used_piece_ids.contains(&bp.id) {
+                continue;
+            }
+
+            // Flat edge on South (dir = 2)
+            for rot in 0..4 {
+                if get_oriented_edge(bp, rot, 2).edge_type == EdgeType::Flat {
+                    let east_edge = get_oriented_edge(bp, rot, 1);
+                    if let None = fast_rejection_filter(
+                        prev_west_edge.edge_type,
+                        prev_west_edge.curvature_depth,
+                        east_edge.edge_type,
+                        east_edge.curvature_depth,
+                    ) {
+                        let (l2, _) = compute_complementary_l2_distance(
+                            &prev_west_edge.normalized_profile,
+                            &east_edge.normalized_profile,
+                            2,
+                        );
+                        if l2 < 0.065 {
+                            if best_cand.is_none() || l2 < best_cand.as_ref().unwrap().2 {
+                                best_cand = Some((bp, rot, l2));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((bp, rot, l2)) = best_cand {
+            used_piece_ids.insert(bp.id.clone());
+            let conf = ((1.0 - l2 / 0.075).max(0.0) * 100.0).min(100.0);
+            placements.push(SolvedBorderPlacement {
+                piece_id: bp.id.clone(),
+                piece_number: bp.piece_number,
+                row: rows - 1,
+                col: c,
+                rotation: rot,
+                next_mate_id: None,
+                curve_l2_residual: l2,
+                confidence: conf,
+            });
+            prev_west_edge = get_oriented_edge(bp, rot, 3);
+        }
+    }
+
+    // Place Corner BL
+    placements.push(SolvedBorderPlacement {
+        piece_id: c_bl.id.clone(),
+        piece_number: c_bl.piece_number,
+        row: rows - 1,
+        col: 0,
+        rotation: r_bl,
+        next_mate_id: None,
+        curve_l2_residual: 0.0,
+        confidence: 100.0,
+    });
+
+    // -----------------------------------------------------------------------
+    // Chain 4: Left Edge (r = rows - 2 down to 1) from Corner BL -> Corner TL
+    // -----------------------------------------------------------------------
+    let mut prev_north_edge = get_oriented_edge(c_bl, r_bl, 0); // North of BL
+    for r in (1..(rows - 1)).rev() {
+        let mut best_cand: Option<(&IndexedPieceData, usize, f32)> = None;
+
+        for &bp in &borders {
+            if used_piece_ids.contains(&bp.id) {
+                continue;
+            }
+
+            // Flat edge on West (dir = 3)
+            for rot in 0..4 {
+                if get_oriented_edge(bp, rot, 3).edge_type == EdgeType::Flat {
+                    let south_edge = get_oriented_edge(bp, rot, 2);
+                    if let None = fast_rejection_filter(
+                        prev_north_edge.edge_type,
+                        prev_north_edge.curvature_depth,
+                        south_edge.edge_type,
+                        south_edge.curvature_depth,
+                    ) {
+                        let (l2, _) = compute_complementary_l2_distance(
+                            &prev_north_edge.normalized_profile,
+                            &south_edge.normalized_profile,
+                            2,
+                        );
+                        if l2 < 0.065 {
+                            if best_cand.is_none() || l2 < best_cand.as_ref().unwrap().2 {
+                                best_cand = Some((bp, rot, l2));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some((bp, rot, l2)) = best_cand {
+            used_piece_ids.insert(bp.id.clone());
+            let conf = ((1.0 - l2 / 0.075).max(0.0) * 100.0).min(100.0);
+            placements.push(SolvedBorderPlacement {
+                piece_id: bp.id.clone(),
+                piece_number: bp.piece_number,
+                row: r,
+                col: 0,
+                rotation: rot,
+                next_mate_id: None,
+                curve_l2_residual: l2,
+                confidence: conf,
+            });
+            prev_north_edge = get_oriented_edge(bp, rot, 0);
+        }
+    }
+
+    let total = placements.len();
+    SolvedPerimeterResult {
+        success: total == (expected_borders + 4),
+        total_pieces_placed: total,
+        placements,
+        error_message: if total < (expected_borders + 4) {
+            Some(format!(
+                "Solved {} / {} perimeter pieces. Missing {} pieces in current scan pool.",
+                total,
+                expected_borders + 4,
+                (expected_borders + 4) - total
+            ))
+        } else {
+            None
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WASM Bindings for Drop-to-Locate and Perimeter Solving
+// ---------------------------------------------------------------------------
+
+/// Identifies a staged piece against the pool of stored pieces
+#[wasm_bindgen]
+pub fn identify_staged_piece_wasm(
+    query_edges_json: &str,
+    stored_pieces_json: &str,
+) -> Result<JsValue, JsValue> {
+    let query_edges: [IndexedEdgeData; 4] = serde_json::from_str(query_edges_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid query_edges JSON: {}", e)))?;
+
+    let stored_pieces: Vec<IndexedPieceData> = serde_json::from_str(stored_pieces_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid stored_pieces JSON: {}", e)))?;
+
+    let match_res = identify_staged_piece_core(&query_edges, None, &stored_pieces);
+    serde_wasm_bindgen::to_value(&match_res)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Solves the perimeter 1D loop for given pieces and board dimensions
+#[wasm_bindgen]
+pub fn solve_perimeter_1d_loop_wasm(
+    pieces_json: &str,
+    rows: usize,
+    cols: usize,
+) -> Result<JsValue, JsValue> {
+    let pieces: Vec<IndexedPieceData> = serde_json::from_str(pieces_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid pieces JSON: {}", e)))?;
+
+    let result = solve_perimeter_1d_loop(&pieces, rows, cols);
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}

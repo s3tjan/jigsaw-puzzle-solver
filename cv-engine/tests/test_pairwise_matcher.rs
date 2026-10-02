@@ -138,3 +138,194 @@ fn test_turn_angles_intrinsic_curvature() {
     let expected = std::f32::consts::FRAC_PI_2; // +90 deg
     assert!((angles[0] - expected).abs() < 1e-4, "Turn angle must be +90 deg, got {}", angles[0]);
 }
+
+#[test]
+fn test_drop_to_locate_piece_identity_recognition() {
+    use cv_engine::matcher::{identify_staged_piece_core, IndexedEdgeData, IndexedPieceData};
+
+    // Helper to generate a unique synthetic edge profile
+    let make_profile = |factor: f32| -> Vec<f32> {
+        let mut p = vec![0.0f32; 100];
+        for i in 20..80 {
+            let t = (i - 20) as f32 / 60.0;
+            p[i] = factor * (std::f32::consts::PI * t).sin();
+        }
+        p
+    };
+
+    // Create 3 stored pieces
+    let piece_1 = IndexedPieceData {
+        id: "piece_1".to_string(),
+        piece_number: 1,
+        classification: "Border".to_string(),
+        edges: [
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: make_profile(0.20) },
+            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -18.0, normalized_profile: make_profile(-0.18) },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 22.0, normalized_profile: make_profile(0.22) },
+        ],
+        mean_rgb: Some([100, 120, 140]),
+    };
+
+    let piece_2 = IndexedPieceData {
+        id: "piece_2".to_string(),
+        piece_number: 2,
+        classification: "Border".to_string(),
+        edges: [
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) },
+            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) },
+        ],
+        mean_rgb: Some([200, 50, 60]),
+    };
+
+    let stored = vec![piece_1, piece_2];
+
+    // Simulate dropping Piece 2 on the stage rotated by 90 degrees CW (rot = 1)
+    // Under rot = 1 CW: query_edge[k] corresponds to stored_edge[(k + 1) % 4]
+    // So query_edge[0] = stored_edge[1] (Hole), query_edge[1] = stored_edge[2] (Tab), etc.
+    let mut query_edges = [
+        IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) },
+        IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) },
+        IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) },
+        IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+    ];
+
+    // Add small sensor noise (0.002) to verify robustness
+    for edge in &mut query_edges {
+        for val in &mut edge.normalized_profile {
+            *val += 0.002;
+        }
+    }
+
+    let match_res = identify_staged_piece_core(&query_edges, Some([201, 51, 62]), &stored);
+
+    assert!(match_res.is_some(), "Must find a candidate match");
+    let m = match_res.unwrap();
+    println!("Drop-to-Locate Identification: Piece #{} (ID: {}), rot = {}, dist = {:.6}, conf = {:.1}%",
+        m.piece_number, m.piece_id, m.rotation_offset, m.identity_distance, m.confidence);
+
+    assert_eq!(m.piece_id, "piece_2", "Must identify exact piece ID");
+    assert_eq!(m.piece_number, 2);
+    assert_eq!(m.rotation_offset, 1, "Must detect exact 90 deg (rot = 1) rotation");
+    assert!(m.is_matched, "Must be confirmed match");
+    assert!(m.confidence > 90.0, "Confidence must be > 90%");
+}
+
+#[test]
+fn test_solve_perimeter_1d_loop() {
+    use cv_engine::matcher::{solve_perimeter_1d_loop, IndexedEdgeData, IndexedPieceData};
+
+    let make_profile = |factor: f32| -> Vec<f32> {
+        let mut p = vec![0.0f32; 100];
+        for i in 25..75 {
+            let t = (i - 25) as f32 / 50.0;
+            p[i] = factor * (std::f32::consts::PI * t).sin();
+        }
+        p
+    };
+
+    let complement = |prof: &[f32]| -> Vec<f32> {
+        let mut out = vec![0.0f32; 100];
+        for j in 0..100 {
+            out[j] = -prof[99 - j];
+        }
+        out
+    };
+
+    // Construct a synthetic 3x3 puzzle perimeter:
+    // Corners:
+    // TL [0, 0]: Flat North (0), Tab East (1) [+0.20], Tab South (2) [+0.15], Flat West (3)
+    // TR [0, 2]: Flat North (0), Flat East (1), Hole South (2) [-0.18], Hole West (3) (mates with Top Border)
+    // BR [2, 2]: Tab North (0), Flat East (1), Flat South (2), Hole West (3)
+    // BL [2, 0]: Hole North (0), Tab East (1), Flat South (2), Flat West (3)
+
+    let prof_tl_e = make_profile(0.20);
+    let prof_top_w = complement(&prof_tl_e); // Mates with TL East
+    let prof_top_e = make_profile(0.18);
+    let prof_tr_w = complement(&prof_top_e); // Mates with Top East
+
+    let c_tl = IndexedPieceData {
+        id: "c_tl".to_string(),
+        piece_number: 1,
+        classification: "Corner".to_string(),
+        edges: [
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: prof_tl_e },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) },
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+        ],
+        mean_rgb: None,
+    };
+
+    let p_top = IndexedPieceData {
+        id: "p_top".to_string(),
+        piece_number: 2,
+        classification: "Border".to_string(),
+        edges: [
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 18.0, normalized_profile: prof_top_e },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 10.0, normalized_profile: make_profile(0.10) },
+            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: prof_top_w },
+        ],
+        mean_rgb: None,
+    };
+
+    let c_tr = IndexedPieceData {
+        id: "c_tr".to_string(),
+        piece_number: 3,
+        classification: "Corner".to_string(),
+        edges: [
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 25.0, normalized_profile: make_profile(0.25) },
+            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -18.0, normalized_profile: prof_tr_w },
+        ],
+        mean_rgb: None,
+    };
+
+    let c_br = IndexedPieceData {
+        id: "c_br".to_string(),
+        piece_number: 4,
+        classification: "Corner".to_string(),
+        edges: [
+            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) },
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: make_profile(0.20) },
+        ],
+        mean_rgb: None,
+    };
+
+    let c_bl = IndexedPieceData {
+        id: "c_bl".to_string(),
+        piece_number: 5,
+        classification: "Corner".to_string(),
+        edges: [
+            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -15.0, normalized_profile: make_profile(-0.15) },
+            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) },
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+        ],
+        mean_rgb: None,
+    };
+
+    let pieces = vec![c_tl, p_top, c_tr, c_br, c_bl];
+    let res = solve_perimeter_1d_loop(&pieces, 3, 3);
+
+    println!("3x3 Perimeter Solver: success = {}, total placed = {}", res.success, res.total_pieces_placed);
+    for p in &res.placements {
+        println!("  -> Placed #{} at [{}, {}] rot = {}", p.piece_number, p.row, p.col, p.rotation);
+    }
+
+    // Top edge must place TL [0, 0], Top [0, 1], TR [0, 2]
+    assert_eq!(res.placements[0].row, 0);
+    assert_eq!(res.placements[0].col, 0);
+    assert_eq!(res.placements[1].piece_id, "p_top");
+    assert_eq!(res.placements[1].row, 0);
+    assert_eq!(res.placements[1].col, 1);
+    assert_eq!(res.placements[2].piece_id, "c_tr");
+    assert_eq!(res.placements[2].row, 0);
+    assert_eq!(res.placements[2].col, 2);
+}

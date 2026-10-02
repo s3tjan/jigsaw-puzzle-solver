@@ -37,6 +37,10 @@ interface BoardViewProps {
   onImportFixtures: () => void
   onPosterIngested?: (img: HTMLImageElement, file: File) => void
   onUpdateDimensions?: (cols: number, rows: number, physWidthMm: number, physHeightMm: number) => void
+  highlightedSlot?: { row: number; col: number } | null
+  onSolvePerimeter?: () => void
+  solvedPerimeterCount?: number
+  totalPerimeterCount?: number
 }
 
 export const BoardView: React.FC<BoardViewProps> = ({
@@ -60,6 +64,10 @@ export const BoardView: React.FC<BoardViewProps> = ({
   onImportFixtures,
   onPosterIngested,
   onUpdateDimensions,
+  highlightedSlot = null,
+  onSolvePerimeter,
+  solvedPerimeterCount = 0,
+  totalPerimeterCount = 0,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -352,8 +360,12 @@ export const BoardView: React.FC<BoardViewProps> = ({
           ctx.fill()
         }
 
+        const isHighlighted = highlightedSlot && highlightedSlot.row === r && highlightedSlot.col === c
+
         // Cell border outline
-        ctx.strokeStyle = isSelected
+        ctx.strokeStyle = isHighlighted
+          ? '#00ff88'
+          : isSelected
           ? '#ffd33d'
           : isHovered
           ? '#58a6ff'
@@ -362,8 +374,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
           : is_border
           ? 'rgba(210, 153, 34, 0.25)'
           : 'rgba(255, 255, 255, 0.07)'
-        ctx.lineWidth = isSelected ? 2 / zoom : isHovered ? 1.5 / zoom : 0.75 / zoom
+        ctx.lineWidth = isHighlighted ? 3 / zoom : isSelected ? 2 / zoom : isHovered ? 1.5 / zoom : 0.75 / zoom
         ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
+
+        if (isHighlighted) {
+          ctx.fillStyle = 'rgba(0, 255, 136, 0.25)'
+          ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2)
+        }
 
         // Piece number label or slot coordinates on cell
         if (placed) {
@@ -640,6 +657,16 @@ export const BoardView: React.FC<BoardViewProps> = ({
         </div>
 
         <div className="board-header-actions">
+          {onSolvePerimeter && (
+            <button
+              className="board-btn primary highlight"
+              style={{ background: '#238636', borderColor: '#2ea043', color: '#fff', fontWeight: 'bold' }}
+              onClick={onSolvePerimeter}
+              title="Solve 1D closed border loop using Phase 9 die-cut curve matching"
+            >
+              ⚡ SOLVE PERIMETER {solvedPerimeterCount > 0 ? `(${solvedPerimeterCount} / ${totalPerimeterCount})` : ''}
+            </button>
+          )}
           <button className="board-btn" onClick={onImportFixtures} title="Import saved assembly JSON dataset">
             IMPORT JSON
           </button>

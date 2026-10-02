@@ -7,6 +7,8 @@ import init, {
   map_dewarped_points_to_camera,
   init_master_poster_spatial,
   locate_piece_spatial,
+  identify_staged_piece_wasm,
+  solve_perimeter_1d_loop_wasm,
 } from './pkg/cv_engine'
 import { BoardView } from './components/BoardView'
 import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from './storage/db'
@@ -35,6 +37,8 @@ interface PieceEdge {
   end_corner: Point2D
   curvature_depth: number
   curve_samples: Point2D[]
+  normalized_profile?: number[]
+  fourier_descriptor?: number[]
 }
 
 interface ScannedPiece {
@@ -123,6 +127,32 @@ export default function App() {
   const isPosterInitializedRef = useRef<boolean>(false)
   const lastFocusTimeRef = useRef<number>(0)
 
+  // Phase 9: Drop-to-Locate & 1D Perimeter Loop State
+  const [solvedPerimeterMap, setSolvedPerimeterMap] = useState<Record<string, {
+    piece_id: string
+    piece_number: number
+    row: number
+    col: number
+    rotation: number
+    confidence: number
+  }>>({})
+  const solvedPerimeterMapRef = useRef(solvedPerimeterMap)
+  solvedPerimeterMapRef.current = solvedPerimeterMap
+
+  const [identifiedPieceMatch, setIdentifiedPieceMatch] = useState<{
+    is_matched: boolean
+    piece_id: string
+    piece_number: number
+    rotation_offset: number
+    identity_distance: number
+    confidence: number
+  } | null>(null)
+  const identifiedPieceMatchRef = useRef(identifiedPieceMatch)
+  identifiedPieceMatchRef.current = identifiedPieceMatch
+
+  const storedPiecesRef = useRef(storedPieces)
+  storedPiecesRef.current = storedPieces
+
   // Load persistent pieces and board state from IndexedDB on startup
   const refreshStorage = useCallback(async () => {
     try {
@@ -162,13 +192,13 @@ export default function App() {
         setPosterDims({
           w: img.naturalWidth,
           h: img.naturalHeight,
-          cols: 36,
+          cols: 40,
           rows: 28,
         })
         try {
-          init_master_poster_spatial(bytes, img.naturalWidth, img.naturalHeight, 36, 28)
+          init_master_poster_spatial(bytes, img.naturalWidth, img.naturalHeight, 40, 28)
           isPosterInitializedRef.current = true
-          console.log('✓ Master poster initialized in WASM memory (36x28, 1008 slots)')
+          console.log('✓ Master poster initialized in WASM memory (40x28, 1120 slots, 128 borders)')
         } catch (err) {
           console.error('Failed to init master poster spatial:', err)
         }
@@ -641,8 +671,12 @@ export default function App() {
           ctx.fill()
         }
 
-        // Phase 8: Real-Time Poster Proposal Badge in Camera Space
-        if (activePosterMatch) {
+        // Phase 9: Drop-to-Locate or Phase 8 Poster Proposal Badge in Camera Space
+        const idMatch = identifiedPieceMatchRef.current
+        const solvedMap = solvedPerimeterMapRef.current
+        const solvedPlc = (idMatch && idMatch.is_matched) ? solvedMap[idMatch.piece_id] : null
+
+        if (idMatch?.is_matched || activePosterMatch) {
           const pCenter = map_dewarped_points_to_camera(
             new Float32Array([activePiece.center.x, activePiece.center.y]),
             w, h,
@@ -656,7 +690,24 @@ export default function App() {
           const pCX = pCenter[0]
           const pCY = pCenter[1] - 42
 
-          const hudText = `🎯 POSTER: [R${activePosterMatch.best_row}, C${activePosterMatch.best_col}] (${activePosterMatch.best_rotation_deg.toFixed(0)}°) — ${((activePosterMatch.confidence) * 100).toFixed(0)}%`
+          let hudText = ''
+          let borderColor = '#58a6ff'
+          let textColor = '#ffffff'
+
+          if (solvedPlc && idMatch) {
+            hudText = `🎯 LOCATE: PIECE #${idMatch.piece_number} ➜ [R${solvedPlc.row}, C${solvedPlc.col}] (${solvedPlc.rotation * 90}°) — ${idMatch.confidence.toFixed(0)}%`
+            borderColor = '#2ea043'
+            textColor = '#3fb950'
+          } else if (idMatch?.is_matched) {
+            hudText = `🎯 IDENTIFIED: PIECE #${idMatch.piece_number} (${idMatch.rotation_offset * 90}°) — ${idMatch.confidence.toFixed(0)}%`
+            borderColor = '#d29922'
+            textColor = '#e3b341'
+          } else if (activePosterMatch) {
+            hudText = `🎯 POSTER: [R${activePosterMatch.best_row}, C${activePosterMatch.best_col}] (${activePosterMatch.best_rotation_deg.toFixed(0)}°) — ${((activePosterMatch.confidence) * 100).toFixed(0)}%`
+            borderColor = '#ffd33d'
+            textColor = '#ffd33d'
+          }
+
           ctx.font = 'bold 14px monospace'
           const htw = ctx.measureText(hudText).width
           const hbw = htw + 16
@@ -666,11 +717,11 @@ export default function App() {
           ctx.beginPath()
           ctx.roundRect(pCX - hbw / 2, pCY - hbh / 2, hbw, hbh, 4)
           ctx.fill()
-          ctx.strokeStyle = '#ffd33d'
+          ctx.strokeStyle = borderColor
           ctx.lineWidth = 2.0
           ctx.stroke()
 
-          ctx.fillStyle = '#ffd33d'
+          ctx.fillStyle = textColor
           ctx.textAlign = 'center'
           ctx.textBaseline = 'middle'
           ctx.fillText(hudText, pCX, pCY)
@@ -1008,6 +1059,38 @@ export default function App() {
                 setDetectedPiece(livePiece)
                 detectedPieceRef.current = livePiece
 
+                // Phase 9: Drop-to-Locate Piece Identity Recognition (< 2ms)
+                if (livePiece && storedPiecesRef.current.length > 0 && pieceHistoryRef.current.length >= 2) {
+                  try {
+                    const queryEdges = livePiece.edges.map((e) => ({
+                      edge_type: e.edge_type,
+                      curvature_depth: e.curvature_depth,
+                      normalized_profile: Array.from(e.normalized_profile || []),
+                    }))
+                    const indexed = storedPiecesRef.current.map((p) => ({
+                      id: p.id,
+                      piece_number: p.piece_number,
+                      classification: p.classification,
+                      edges: p.edges.map((e) => ({
+                        edge_type: e.edge_type,
+                        curvature_depth: e.curvature_depth,
+                        normalized_profile: Array.from(e.normalized_profile || []),
+                      })),
+                      mean_rgb: null,
+                    }))
+                    const idMatch = identify_staged_piece_wasm(JSON.stringify(queryEdges), JSON.stringify(indexed))
+                    if (idMatch && idMatch.is_matched) {
+                      setIdentifiedPieceMatch(idMatch)
+                    } else {
+                      setIdentifiedPieceMatch(null)
+                    }
+                  } catch (err) {
+                    // ignore
+                  }
+                } else if (!livePiece) {
+                  setIdentifiedPieceMatch(null)
+                }
+
                 // Real-Time Poster Localization (< 4ms fast spatial pyramid candidate search)
                 // Require at least 2 frames of piece history so we have established consensus and avoid hand-shadow false borders
                 if (livePiece && isPosterInitializedRef.current && pieceHistoryRef.current.length >= 2) {
@@ -1342,6 +1425,48 @@ export default function App() {
     await refreshStorage()
   }
 
+  // Phase 9: 1D Closed Perimeter Loop Solver
+  const handleSolvePerimeter = useCallback(() => {
+    try {
+      const curRows = posterDims.rows > 0 ? posterDims.rows : 28
+      const curCols = posterDims.cols > 0 ? posterDims.cols : 40
+
+      const indexed = storedPieces.map((p) => ({
+        id: p.id,
+        piece_number: p.piece_number,
+        classification: p.classification,
+        edges: p.edges.map((e) => ({
+          edge_type: e.edge_type,
+          curvature_depth: e.curvature_depth,
+          normalized_profile: Array.from(e.normalized_profile || []),
+        })),
+        mean_rgb: null,
+      }))
+
+      const res = solve_perimeter_1d_loop_wasm(JSON.stringify(indexed), curRows, curCols)
+      if (res) {
+        if (res.placements && res.placements.length > 0) {
+          const map: Record<string, any> = {}
+          for (const plc of res.placements) {
+            map[plc.piece_id] = plc
+          }
+          setSolvedPerimeterMap(map)
+          console.log(`✓ Perimeter Solved: ${res.total_pieces_placed} pieces sequenced.`)
+        }
+        if (res.error_message) {
+          alert(`Perimeter Status: ${res.error_message}`)
+        } else {
+          alert(
+            `✓ Perimeter 100% Solved! All ${res.total_pieces_placed} border pieces sequenced into a closed loop! Drop any border piece on the mat to locate its exact placement.`
+          )
+        }
+      }
+    } catch (err) {
+      console.error('Failed to solve perimeter:', err)
+      alert('Error solving perimeter loop: ' + String(err))
+    }
+  }, [storedPieces, posterDims])
+
   // Fast Placement directly from live camera stage candidate
   const handlePlaceCandidate = async (cand: { col: number; row: number; rotation_deg: number }) => {
     const pieceToPlace = (isGtMode && gtFrozenPiece) ? gtFrozenPiece : detectedPiece
@@ -1602,7 +1727,13 @@ export default function App() {
         e.preventDefault()
         handleExitGtMode()
       } else if (e.code === 'Enter') {
-        if (activePosterMatch && detectedPiece) {
+        const idMatch = identifiedPieceMatchRef.current
+        const solvedPlc = (idMatch && idMatch.is_matched) ? solvedPerimeterMapRef.current[idMatch.piece_id] : null
+        if (idMatch && solvedPlc) {
+          e.preventDefault()
+          handlePlacePiece(solvedPlc.row, solvedPlc.col, idMatch.piece_id, solvedPlc.rotation)
+          setIdentifiedPieceMatch(null)
+        } else if (activePosterMatch && detectedPiece) {
           e.preventDefault()
           handlePlaceDetectedCandidate()
         }
@@ -1610,7 +1741,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges, activePosterMatch, handlePlaceDetectedCandidate])
+  }, [detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges, activePosterMatch, handlePlaceDetectedCandidate, handlePlacePiece])
 
 
   return (
@@ -1744,8 +1875,64 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Real-Time Poster Localization Match: Top 5 Potential Placements */}
-                {activePosterMatch && (
+                {/* Phase 9: Drop-to-Locate Identification Card */}
+                {identifiedPieceMatch?.is_matched && solvedPerimeterMap[identifiedPieceMatch.piece_id] ? (
+                  <div style={{
+                    background: '#161b22',
+                    border: '2px solid #2ea043',
+                    borderRadius: 6,
+                    padding: '10px 12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, fontWeight: 'bold', color: '#3fb950' }}>
+                        🎯 DROP-TO-LOCATE: PIECE #{identifiedPieceMatch.piece_number}
+                      </span>
+                      <span style={{ fontSize: 10, background: '#238636', color: '#fff', padding: '2px 6px', borderRadius: 3, fontWeight: 'bold' }}>
+                        {identifiedPieceMatch.confidence.toFixed(0)}% MATCH
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#21262d', padding: '6px 10px', borderRadius: 4 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 'bold', color: '#f0f6fc' }}>
+                          Target: Slot [Row {solvedPerimeterMap[identifiedPieceMatch.piece_id].row}, Col {solvedPerimeterMap[identifiedPieceMatch.piece_id].col}]
+                        </div>
+                        <div style={{ fontSize: 10, color: '#8b949e' }}>
+                          Rotation: {solvedPerimeterMap[identifiedPieceMatch.piece_id].rotation * 90}° CW
+                        </div>
+                      </div>
+                      <button
+                        className="btn primary"
+                        style={{ background: '#238636', borderColor: '#2ea043', fontWeight: 'bold' }}
+                        onClick={() => {
+                          const plc = solvedPerimeterMap[identifiedPieceMatch.piece_id]
+                          handlePlacePiece(plc.row, plc.col, identifiedPieceMatch.piece_id, plc.rotation)
+                          setIdentifiedPieceMatch(null)
+                        }}
+                      >
+                        ⚡ PLACE [ENTER]
+                      </button>
+                    </div>
+                  </div>
+                ) : identifiedPieceMatch?.is_matched ? (
+                  <div style={{
+                    background: '#161b22',
+                    border: '1px solid #d29922',
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    fontSize: 11,
+                    color: '#e3b341',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}>
+                    <span>🎯 IDENTIFIED IN INVENTORY: PIECE #{identifiedPieceMatch.piece_number} ({identifiedPieceMatch.confidence.toFixed(0)}%)</span>
+                    <span style={{ color: '#8b949e', fontSize: 10 }}>Click "Solve Perimeter" to sequence</span>
+                  </div>
+                ) : activePosterMatch && (
                   <div style={{
                     background: '#161b22',
                     border: '1px solid #d29922',
@@ -1923,7 +2110,7 @@ export default function App() {
           <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
             <BoardView
               rows={posterDims.rows > 0 ? posterDims.rows : 28}
-              cols={posterDims.cols > 0 ? posterDims.cols : 36}
+              cols={posterDims.cols > 0 ? posterDims.cols : 40}
               pieces={storedPieces}
               placedSlots={placedSlots}
               pairedFixtures={pairedFixtures}
@@ -1940,8 +2127,34 @@ export default function App() {
               physHeightMm={physDims.hMm}
               onExportFixtures={handleExportFixtures}
               onImportFixtures={handleImportFixtures}
+              highlightedSlot={
+                identifiedPieceMatch && solvedPerimeterMap[identifiedPieceMatch.piece_id]
+                  ? {
+                      row: solvedPerimeterMap[identifiedPieceMatch.piece_id].row,
+                      col: solvedPerimeterMap[identifiedPieceMatch.piece_id].col,
+                    }
+                  : null
+              }
+              onSolvePerimeter={handleSolvePerimeter}
+              solvedPerimeterCount={Object.keys(solvedPerimeterMap).length}
+              totalPerimeterCount={
+                2 * ((posterDims.rows > 0 ? posterDims.rows : 28) - 2) +
+                2 * ((posterDims.cols > 0 ? posterDims.cols : 40) - 2) + 4
+              }
+              onUpdateDimensions={(newCols, newRows, newWidthMm, newHeightMm) => {
+                setPosterDims((prev) => ({ ...prev, cols: newCols, rows: newRows }))
+                setPhysDims({ wMm: newWidthMm, hMm: newHeightMm })
+                if (posterRgba && posterDims.w > 0 && posterDims.h > 0) {
+                  try {
+                    init_master_poster_spatial(posterRgba, posterDims.w, posterDims.h, newCols, newRows)
+                    console.log(`Updated grid to ${newCols}x${newRows}`)
+                  } catch (e) {
+                    console.error(e)
+                  }
+                }
+              }}
               onPosterIngested={(img, file) => {
-                const detectedCols = posterDims.cols > 0 ? posterDims.cols : 36
+                const detectedCols = posterDims.cols > 0 ? posterDims.cols : 40
                 const detectedRows = posterDims.rows > 0 ? posterDims.rows : 28
                 setPosterFileName(file.name)
                 setPosterDims({
@@ -1971,32 +2184,6 @@ export default function App() {
                     console.log('✓ Ingested new master poster into spatial WASM memory')
                   } catch (err) {
                     console.error('Failed to initialize spatial master poster:', err)
-                  }
-                }
-              }}
-              onUpdateDimensions={(newCols, newRows, newWidthMm, newHeightMm) => {
-                setPosterDims(prev => ({
-                  ...prev,
-                  cols: newCols,
-                  rows: newRows,
-                }))
-                setPhysDims({
-                  wMm: newWidthMm,
-                  hMm: newHeightMm,
-                })
-                if (posterRgba && posterDims.w > 0 && posterDims.h > 0) {
-                  try {
-                    init_master_poster_spatial(
-                      posterRgba,
-                      posterDims.w,
-                      posterDims.h,
-                      newCols,
-                      newRows
-                    )
-                    isPosterInitializedRef.current = true
-                    console.log('✓ Recomputed spatial poster slots on dimension update')
-                  } catch (err) {
-                    console.error('Failed to recompute spatial poster slots on dimension update:', err)
                   }
                 }
               }}
