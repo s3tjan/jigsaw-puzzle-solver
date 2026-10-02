@@ -191,8 +191,10 @@ fn test_spatial_poster_localization_benchmarks() {
             rot_h,
             &descriptors,
             cols,
+            rows,
             fix.is_border,
             fix.is_corner,
+            &[],
             &[],
         );
         let search_dur = start_search.elapsed().as_secs_f64() * 1000.0;
@@ -249,4 +251,235 @@ fn test_spatial_poster_localization_benchmarks() {
         "PERFORMANCE FAILURE: Expected search time < 15ms per piece, but took {:.2}ms",
         avg_search_ms
     );
+}
+
+#[test]
+fn test_corner_cross_similarity_matrix() {
+    let poster_path = Path::new("datasets/poster_reference.jpg");
+    if !poster_path.exists() { return; }
+    let img_bytes = fs::read(poster_path).unwrap();
+    let dynamic_img = image::load_from_memory(&img_bytes).unwrap();
+    let rgba_img = dynamic_img.to_rgba8();
+    let (poster_w, poster_h) = rgba_img.dimensions();
+    let cols = 36u32;
+    let rows = 28u32;
+    let cell_w_f = poster_w as f32 / cols as f32;
+    let cell_h_f = poster_h as f32 / rows as f32;
+    let raw_rgba = rgba_img.as_raw();
+
+    let descriptors = precompute_spatial_poster_slots(raw_rgba, poster_w, poster_h, cols, rows, 1.35);
+
+    let corners = vec![
+        ("TL [0, 0]", 0, 0),
+        ("TR [0, 35]", 0, cols - 1),
+        ("BL [27, 0]", rows - 1, 0),
+        ("BR [27, 35]", rows - 1, cols - 1),
+    ];
+
+    println!("\n=== CORNER CROSS-SIMILARITY MATRIX ===");
+    for (name_src, r_src, c_src) in &corners {
+        let x0 = (*c_src as f32 * cell_w_f).round() as u32;
+        let y0 = (*r_src as f32 * cell_h_f).round() as u32;
+        let patch_w = cell_w_f.round() as u32;
+        let patch_h = cell_h_f.round() as u32;
+
+        let mut piece_patch = vec![0u8; (patch_w * patch_h * 4) as usize];
+        for py in 0..patch_h {
+            for px in 0..patch_w {
+                let sx = (x0 + px).min(poster_w - 1);
+                let sy = (y0 + py).min(poster_h - 1);
+                let src_idx = ((sy * poster_w + sx) * 4) as usize;
+                let dst_idx = ((py * patch_w + px) * 4) as usize;
+                piece_patch[dst_idx..dst_idx + 4].copy_from_slice(&raw_rgba[src_idx..src_idx + 4]);
+            }
+        }
+
+        // Test with different rotations
+        for rot_k in 0..4 {
+            let (rot_patch, rot_w, rot_h) = rotate_image_rgba(&piece_patch, patch_w, patch_h, rot_k);
+            let result = locate_piece_spatial_core(
+                &rot_patch,
+                &[],
+                rot_w,
+                rot_h,
+                &descriptors,
+                cols,
+                rows,
+                true, // is_border
+                true, // is_corner
+                &[],
+                &[],
+            );
+            println!(
+                "Piece {} (rot {}°) -> Best Match [R{:2}, C{:2}] (rot {:3}°) Conf: {:.1}% | Top5: {:?}",
+                name_src,
+                rot_k * 90,
+                result.best_row,
+                result.best_col,
+                result.best_rotation_deg as i32,
+                result.confidence * 100.0,
+                result.top_candidates.iter().map(|c| format!("[{},{}] {:.0}%", c.row, c.col, c.confidence * 100.0)).collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+#[test]
+fn test_corner_with_lighting_shift() {
+    let poster_path = Path::new("datasets/poster_reference.jpg");
+    if !poster_path.exists() { return; }
+    let img_bytes = fs::read(poster_path).unwrap();
+    let dynamic_img = image::load_from_memory(&img_bytes).unwrap();
+    let rgba_img = dynamic_img.to_rgba8();
+    let (poster_w, poster_h) = rgba_img.dimensions();
+    let cols = 36u32;
+    let rows = 28u32;
+    let cell_w_f = poster_w as f32 / cols as f32;
+    let cell_h_f = poster_h as f32 / rows as f32;
+    let raw_rgba = rgba_img.as_raw();
+
+    let descriptors = precompute_spatial_poster_slots(raw_rgba, poster_w, poster_h, cols, rows, 1.35);
+
+    let corners = vec![
+        ("TL [0, 0]", 0, 0),
+        ("TR [0, 35]", 0, cols - 1),
+        ("BL [27, 0]", rows - 1, 0),
+        ("BR [27, 35]", rows - 1, cols - 1),
+    ];
+
+    println!("\n=== CORNER MATCHING WITH LIGHTING SHIFTS ===");
+    for (name_src, r_src, c_src) in &corners {
+        let x0 = (*c_src as f32 * cell_w_f).round() as u32;
+        let y0 = (*r_src as f32 * cell_h_f).round() as u32;
+        let patch_w = cell_w_f.round() as u32;
+        let patch_h = cell_h_f.round() as u32;
+
+        let mut piece_patch = vec![0u8; (patch_w * patch_h * 4) as usize];
+        for py in 0..patch_h {
+            for px in 0..patch_w {
+                let sx = (x0 + px).min(poster_w - 1);
+                let sy = (y0 + py).min(poster_h - 1);
+                let src_idx = ((sy * poster_w + sx) * 4) as usize;
+                let dst_idx = ((py * patch_w + px) * 4) as usize;
+                // Apply a warm/dim room lighting shift: R*0.9, G*0.85, B*0.75 (typical incandescent lamp)
+                let r = (raw_rgba[src_idx] as f32 * 0.9).min(255.0) as u8;
+                let g = (raw_rgba[src_idx + 1] as f32 * 0.85).min(255.0) as u8;
+                let b = (raw_rgba[src_idx + 2] as f32 * 0.75).min(255.0) as u8;
+                piece_patch[dst_idx] = r;
+                piece_patch[dst_idx + 1] = g;
+                piece_patch[dst_idx + 2] = b;
+                piece_patch[dst_idx + 3] = 255;
+            }
+        }
+
+        let result = locate_piece_spatial_core(
+            &piece_patch,
+            &[],
+            patch_w,
+            patch_h,
+            &descriptors,
+            cols,
+            rows,
+            true, // is_border
+            true, // is_corner
+            &[],
+            &[],
+        );
+        println!(
+            "Dimmed/Warm Piece {} -> Best Match [R{:2}, C{:2}] (rot {:3}°) Conf: {:.1}% | Top4: {:?}",
+            name_src,
+            result.best_row,
+            result.best_col,
+            result.best_rotation_deg as i32,
+            result.confidence * 100.0,
+            result.top_candidates.iter().map(|c| format!("[{},{}] {:.0}%", c.row, c.col, c.confidence * 100.0)).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn test_corner_staged_arena_with_mask() {
+    let poster_path = Path::new("datasets/poster_reference.jpg");
+    if !poster_path.exists() { return; }
+    let img_bytes = fs::read(poster_path).unwrap();
+    let dynamic_img = image::load_from_memory(&img_bytes).unwrap();
+    let rgba_img = dynamic_img.to_rgba8();
+    let (poster_w, poster_h) = rgba_img.dimensions();
+    let cols = 36u32;
+    let rows = 28u32;
+    let cell_w_f = poster_w as f32 / cols as f32;
+    let cell_h_f = poster_h as f32 / rows as f32;
+    let raw_rgba = rgba_img.as_raw();
+
+    let descriptors = precompute_spatial_poster_slots(raw_rgba, poster_w, poster_h, cols, rows, 1.35);
+
+    let corners = vec![
+        ("TL [0, 0]", 0, 0),
+        ("TR [0, 35]", 0, cols - 1),
+        ("BL [27, 0]", rows - 1, 0),
+        ("BR [27, 35]", rows - 1, cols - 1),
+    ];
+
+    let arena_w = 384u32;
+    let arena_h = 384u32;
+
+    println!("\n=== CORNER MATCHING WITH REALISTIC STAGING ARENA (384x384) + MASK ===");
+    for (name_src, r_src, c_src) in &corners {
+        let x0 = (*c_src as f32 * cell_w_f).round() as u32;
+        let y0 = (*r_src as f32 * cell_h_f).round() as u32;
+        let patch_w = cell_w_f.round() as u32;
+        let patch_h = cell_h_f.round() as u32;
+
+        // Place piece in center of 384x384 white arena
+        let mut arena_rgba = vec![240u8; (arena_w * arena_h * 4) as usize];
+        let mut arena_mask = vec![0u8; (arena_w * arena_h) as usize];
+
+        let offset_x = (arena_w - patch_w) / 2;
+        let offset_y = (arena_h - patch_h) / 2;
+
+        for py in 0..patch_h {
+            for px in 0..patch_w {
+                let sx = (x0 + px).min(poster_w - 1);
+                let sy = (y0 + py).min(poster_h - 1);
+                let src_idx = ((sy * poster_w + sx) * 4) as usize;
+
+                let ax = offset_x + px;
+                let ay = offset_y + py;
+                let arena_idx = ((ay * arena_w + ax) * 4) as usize;
+                let mask_idx = (ay * arena_w + ax) as usize;
+
+                arena_rgba[arena_idx..arena_idx + 4].copy_from_slice(&raw_rgba[src_idx..src_idx + 4]);
+                arena_mask[mask_idx] = 255;
+            }
+        }
+
+        // Add 3 tiny stray threshold noise pixels near the arena edges (dust / stage bezel shadow)
+        arena_mask[5 * arena_w as usize + 5] = 255;
+        arena_mask[375 * arena_w as usize + 375] = 255;
+        arena_mask[10 * arena_w as usize + 370] = 255;
+
+        let result = locate_piece_spatial_core(
+            &arena_rgba,
+            &arena_mask,
+            arena_w,
+            arena_h,
+            &descriptors,
+            cols,
+            rows,
+            true, // is_border
+            true, // is_corner
+            &[],
+            &[],
+        );
+
+        println!(
+            "Staged Arena Piece {} -> Best Match [R{:2}, C{:2}] (rot {:3}°) Conf: {:.1}% | Top4: {:?}",
+            name_src,
+            result.best_row,
+            result.best_col,
+            result.best_rotation_deg as i32,
+            result.confidence * 100.0,
+            result.top_candidates.iter().map(|c| format!("[{},{}] {:.0}%", c.row, c.col, c.confidence * 100.0)).collect::<Vec<_>>()
+        );
+    }
 }

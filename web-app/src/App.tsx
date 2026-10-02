@@ -1015,16 +1015,15 @@ export default function App() {
                   if (nowLoc - lastLocalizationTimeRef.current >= 90) {
                     lastLocalizationTimeRef.current = nowLoc
                     try {
-                      const curDims = posterDimsRef.current
-                      const totalSlots = (curDims.rows || 28) * (curDims.cols || 36)
-                      const occupiedBytes = new Uint8Array(totalSlots)
-                      const curPlaced = placedSlotsRef.current
-                      Object.keys(curPlaced).forEach((key) => {
-                        const [r, c] = key.split(',').map(Number)
-                        if (r >= 0 && r < curDims.rows && c >= 0 && c < curDims.cols) {
-                          occupiedBytes[r * curDims.cols + c] = 1
-                        }
-                      })
+                      const cornerFloats = new Float32Array([
+                        livePiece.corners[0].x, livePiece.corners[0].y,
+                        livePiece.corners[1].x, livePiece.corners[1].y,
+                        livePiece.corners[2].x, livePiece.corners[2].y,
+                        livePiece.corners[3].x, livePiece.corners[3].y,
+                      ])
+                      const flatEdges = new Uint8Array(
+                        livePiece.edges.map(e => e.edge_type === 'Flat' ? 1 : 0)
+                      )
 
                       const match = locate_piece_spatial(
                         dewarped,
@@ -1033,7 +1032,8 @@ export default function App() {
                         dstH,
                         livePiece.is_border,
                         livePiece.is_corner,
-                        occupiedBytes
+                        cornerFloats,
+                        flatEdges
                       )
                       if (match && match.confidence > 0.35) {
                         // Append to recent match history for temporal consensus and anti-wobble

@@ -2,6 +2,7 @@ pub mod fiducial;
 pub mod contour;
 pub mod homography;
 pub mod poster;
+pub mod matcher;
 
 use wasm_bindgen::prelude::*;
 use homography::{dewarp_image, Homography, Point2D};
@@ -10,6 +11,10 @@ pub use poster::{
     process_poster_rgba, get_poster_grid_slots, get_slot_preview, precompute_poster_slots, locate_piece_fast,
     init_master_poster_spatial, locate_piece_spatial, SpatialCell, SpatialSlotDescriptor,
     precompute_spatial_poster_slots, locate_piece_spatial_core,
+};
+pub use matcher::{
+    evaluate_edge_pair_wasm, evaluate_pairwise_edge_compatibility, compute_complementary_l2_distance,
+    fast_rejection_filter, compute_turn_angles, PairwiseMatchResult, EdgeMatingCandidate,
 };
 
 

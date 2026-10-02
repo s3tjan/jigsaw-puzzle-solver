@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use std::sync::Mutex;
+use crate::homography::{Homography, Point2D};
 
 /// Representation of a single pyramid level with intensity and gradient orientations.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -1102,11 +1103,59 @@ pub fn rotate_spatial_grid(cells: &[SpatialCell; 16], k: usize) -> [SpatialCell;
 }
 
 /// Computes multi-cell similarity across all 16 spatial cells in the 4x4 grid.
-/// Combines local CIELAB color distance and localized Sobel gradient orientation.
+/// Combines illumination-invariant relative spatial color contrast and centered Sobel gradient orientation.
 pub fn compute_spatial_similarity(
     piece_cells: &[SpatialCell; 16],
     slot_cells: &[SpatialCell; 16],
 ) -> f32 {
+    let mut p_sum_l = 0.0f32;
+    let mut p_sum_a = 0.0f32;
+    let mut p_sum_b = 0.0f32;
+    let mut p_valid_cells = 0f32;
+
+    let mut s_sum_l = 0.0f32;
+    let mut s_sum_a = 0.0f32;
+    let mut s_sum_b = 0.0f32;
+    let mut s_valid_cells = 0f32;
+
+    for i in 0..16 {
+        let pc = &piece_cells[i];
+        let sc = &slot_cells[i];
+        if pc.sample_count > 0 {
+            p_sum_l += pc.mean_lab[0];
+            p_sum_a += pc.mean_lab[1];
+            p_sum_b += pc.mean_lab[2];
+            p_valid_cells += 1.0;
+        }
+        if sc.sample_count > 0 {
+            s_sum_l += sc.mean_lab[0];
+            s_sum_a += sc.mean_lab[1];
+            s_sum_b += sc.mean_lab[2];
+            s_valid_cells += 1.0;
+        }
+    }
+
+    if p_valid_cells == 0.0 || s_valid_cells == 0.0 {
+        return 0.0;
+    }
+
+    let p_mean_l = p_sum_l / p_valid_cells;
+    let p_mean_a = p_sum_a / p_valid_cells;
+    let p_mean_b = p_sum_b / p_valid_cells;
+
+    let s_mean_l = s_sum_l / s_valid_cells;
+    let s_mean_a = s_sum_a / s_valid_cells;
+    let s_mean_b = s_sum_b / s_valid_cells;
+
+    // 1. Global chromaticity distance:
+    // L* has 0.30 weight (robust against ambient room dimming)
+    // a* and b* have full 1.0 weight (preserves distinct chromatic identity: blue vs gray vs red)
+    let mean_dl = (p_mean_l - s_mean_l) * 0.30;
+    let mean_da = p_mean_a - s_mean_a;
+    let mean_db = p_mean_b - s_mean_b;
+    let global_delta_e = (mean_dl * mean_dl + mean_da * mean_da + mean_db * mean_db).sqrt();
+    let global_color_score = (1.0 - (global_delta_e / 40.0)).clamp(0.0, 1.0);
+
     let mut total_sim = 0.0f32;
     let mut valid_weight = 0.0f32;
 
@@ -1119,30 +1168,44 @@ pub fn compute_spatial_similarity(
         }
         let weight = 1.0f32;
 
-        // 1. CIELAB distance: chromaticity (a*, b*) has higher weight than L*
-        let dl = (pc.mean_lab[0] - sc.mean_lab[0]) * 0.4;
-        let da = pc.mean_lab[1] - sc.mean_lab[1];
-        let db = pc.mean_lab[2] - sc.mean_lab[2];
-        let delta_e = (dl * dl + da * da + db * db).sqrt();
-        let color_score = (1.0 - (delta_e / 60.0)).clamp(0.0, 1.0);
+        // 2. Relative spatial color pattern: measures internal gradient of colors across the 16 cells
+        // Invariant to room illumination and global white balance shifts
+        let p_rel_l = pc.mean_lab[0] - p_mean_l;
+        let p_rel_a = pc.mean_lab[1] - p_mean_a;
+        let p_rel_b = pc.mean_lab[2] - p_mean_b;
 
-        // 2. Cosine similarity between local gradient orientation histograms
+        let s_rel_l = sc.mean_lab[0] - s_mean_l;
+        let s_rel_a = sc.mean_lab[1] - s_mean_a;
+        let s_rel_b = sc.mean_lab[2] - s_mean_b;
+
+        let d_rel_l = (p_rel_l - s_rel_l) * 0.5;
+        let d_rel_a = p_rel_a - s_rel_a;
+        let d_rel_b = p_rel_b - s_rel_b;
+        let rel_delta_e = (d_rel_l * d_rel_l + d_rel_a * d_rel_a + d_rel_b * d_rel_b).sqrt();
+        let rel_color_score = (1.0 - (rel_delta_e / 35.0)).clamp(0.0, 1.0);
+
+        // 3. Centered gradient orientation similarity:
+        // Subtract baseline 0.125 from histograms before dot product to eliminate diffuse/uniform inflation!
+        // An untextured or flat cell has near-zero centered norm, avoiding high cosine scores against everything.
         let mut dot = 0.0f32;
         let mut norm_a = 0.0f32;
         let mut norm_b = 0.0f32;
         for b in 0..8 {
-            dot += pc.grad_hist[b] * sc.grad_hist[b];
-            norm_a += pc.grad_hist[b] * pc.grad_hist[b];
-            norm_b += sc.grad_hist[b] * sc.grad_hist[b];
+            let ha = pc.grad_hist[b] - 0.125;
+            let hb = sc.grad_hist[b] - 0.125;
+            dot += ha * hb;
+            norm_a += ha * ha;
+            norm_b += hb * hb;
         }
-        let grad_score = if norm_a > 0.0 && norm_b > 0.0 {
-            (dot / (norm_a.sqrt() * norm_b.sqrt())).clamp(0.0, 1.0)
+        let grad_score = if norm_a > 1e-4 && norm_b > 1e-4 {
+            let cos_sim = dot / (norm_a.sqrt() * norm_b.sqrt());
+            ((cos_sim + 1.0) * 0.5).clamp(0.0, 1.0)
         } else {
             0.5
         };
 
-        // Weighted fusion per cell: 60% color + 40% structural edge direction
-        let cell_score = 0.60 * color_score + 0.40 * grad_score;
+        // Tri-factor fusion: 45% spatial relative color + 35% global chromaticity + 20% gradient orientation
+        let cell_score = 0.45 * rel_color_score + 0.35 * global_color_score + 0.20 * grad_score;
         total_sim += cell_score * weight;
         valid_weight += weight;
     }
@@ -1223,18 +1286,57 @@ pub fn precompute_spatial_poster_slots(
     descriptors
 }
 
-/// Core spatial piece localization against precomputed spatial slot descriptors.
-pub fn locate_piece_spatial_core(
+/// Warps a quadrilateral region defined by 4 corner points into an orthographic rectified patch.
+pub fn warp_piece_core(
+    src_rgba: &[u8],
+    src_w: u32,
+    src_h: u32,
+    corners: &[f32],
+    dst_w: u32,
+    dst_h: u32,
+) -> Option<Vec<u8>> {
+    if corners.len() < 8 || src_w == 0 || src_h == 0 || dst_w == 0 || dst_h == 0 {
+        return None;
+    }
+    let src_pts = [
+        Point2D { x: corners[0], y: corners[1] },
+        Point2D { x: corners[2], y: corners[3] },
+        Point2D { x: corners[4], y: corners[5] },
+        Point2D { x: corners[6], y: corners[7] },
+    ];
+    let dst_pts = [
+        Point2D { x: 0.0, y: 0.0 },
+        Point2D { x: dst_w as f32, y: 0.0 },
+        Point2D { x: dst_w as f32, y: dst_h as f32 },
+        Point2D { x: 0.0, y: dst_h as f32 },
+    ];
+    let h = Homography::from_4_points(&src_pts, &dst_pts)?;
+    let inv_h = h.invert()?;
+
+    let mut dst = vec![0u8; (dst_w * dst_h * 4) as usize];
+    for y in 0..dst_h {
+        let row_offset = (y * dst_w * 4) as usize;
+        for x in 0..dst_w {
+            let pt = inv_h.transform_point(Point2D { x: x as f32, y: y as f32 });
+            let sx = (pt.x.round() as i32).clamp(0, src_w as i32 - 1) as u32;
+            let sy = (pt.y.round() as i32).clamp(0, src_h as i32 - 1) as u32;
+            let dst_idx = row_offset + (x * 4) as usize;
+            let src_idx = ((sy * src_w + sx) * 4) as usize;
+            if src_idx + 3 < src_rgba.len() {
+                dst[dst_idx..dst_idx + 4].copy_from_slice(&src_rgba[src_idx..src_idx + 4]);
+            }
+        }
+    }
+    Some(dst)
+}
+
+/// Fallback extraction when 4-corner homography is not supplied (e.g. synthetic test patches)
+fn fallback_extract_spatial_cells(
     piece_rgba: &[u8],
     piece_mask: &[u8],
     piece_w: u32,
     piece_h: u32,
-    descriptors: &[SpatialSlotDescriptor],
-    grid_cols: u32,
-    is_border_hint: bool,
-    is_corner_hint: bool,
-    occupied_slots: &[u8],
-) -> PiecePosterMatch {
+) -> [SpatialCell; 16] {
     let mut fg_count = 0usize;
     let mut col_hist = vec![0u32; piece_w as usize];
     let mut row_hist = vec![0u32; piece_h as usize];
@@ -1253,7 +1355,6 @@ pub fn locate_piece_spatial_core(
     }
 
     let (roi_x0, roi_y0, roi_w, roi_h) = if fg_count > 100 {
-        // Robust 1.5% percentile bounding box: rejects stray dust specks and stage edge shadows
         let thresh_count = (fg_count as f32 * 0.015).max(1.0) as u32;
 
         let mut min_x = 0u32;
@@ -1311,7 +1412,7 @@ pub fn locate_piece_spatial_core(
     let (mag, ori) = compute_sobel_gradients(&clahe, piece_w, piece_h);
 
     let mask_opt = if !piece_mask.is_empty() { Some(piece_mask) } else { None };
-    let piece_cells = extract_spatial_grid_precomputed(
+    extract_spatial_grid_precomputed(
         piece_rgba,
         piece_w,
         piece_h,
@@ -1322,7 +1423,51 @@ pub fn locate_piece_spatial_core(
         roi_y0,
         roi_w,
         roi_h,
-    );
+    )
+}
+
+/// Core spatial piece localization against precomputed spatial slot descriptors.
+/// Enforces geometric edge topology constraints (corner/border outer edges) and rectifies
+/// physical piece orientation using sub-pixel corner homography.
+pub fn locate_piece_spatial_core(
+    piece_rgba: &[u8],
+    piece_mask: &[u8],
+    piece_w: u32,
+    piece_h: u32,
+    descriptors: &[SpatialSlotDescriptor],
+    grid_cols: u32,
+    grid_rows: u32,
+    is_border_hint: bool,
+    is_corner_hint: bool,
+    corners: &[f32],
+    flat_edges: &[u8],
+) -> PiecePosterMatch {
+    let patch_w = 48u32;
+    let patch_h = 44u32;
+
+    let piece_cells = if corners.len() >= 8 {
+        if let Some(rectified) = warp_piece_core(piece_rgba, piece_w, piece_h, corners, patch_w, patch_h) {
+            let gray = rgba_to_grayscale(&rectified, patch_w, patch_h);
+            let clahe = apply_clahe(&gray, patch_w, patch_h, 4, 4, 2.0);
+            let (mag, ori) = compute_sobel_gradients(&clahe, patch_w, patch_h);
+            extract_spatial_grid_precomputed(
+                &rectified,
+                patch_w,
+                patch_h,
+                &mag,
+                &ori,
+                None,
+                0,
+                0,
+                patch_w,
+                patch_h,
+            )
+        } else {
+            fallback_extract_spatial_cells(piece_rgba, piece_mask, piece_w, piece_h)
+        }
+    } else {
+        fallback_extract_spatial_cells(piece_rgba, piece_mask, piece_w, piece_h)
+    };
 
     let rot_grids = [
         rotate_spatial_grid(&piece_cells, 0),
@@ -1333,41 +1478,107 @@ pub fn locate_piece_spatial_core(
     let rotations_deg = [0.0f32, 90.0f32, 180.0f32, 270.0f32];
 
     let mut scored_slots: Vec<CandidatePosterSlot> = Vec::with_capacity(descriptors.len());
+    let has_flat_info = flat_edges.len() >= 4;
 
     for desc in descriptors {
-        // Exclude slots that already have a piece placed on the board
-        if !occupied_slots.is_empty() && grid_cols > 0 {
-            let slot_idx = (desc.row * grid_cols + desc.col) as usize;
-            if slot_idx < occupied_slots.len() && occupied_slots[slot_idx] > 0 {
-                continue;
-            }
-        }
-
-        if is_corner_hint {
+        // Enforce Geometric Edge Topology Constraints:
+        // A piece's flat edges MUST align with the puzzle's outer borders!
+        let (cand_rotations, cand_k): (Vec<f32>, Vec<usize>) = if is_corner_hint {
             if !desc.is_corner { continue; }
+            if has_flat_info {
+                // Determine required flat edges for this corner slot:
+                // TL (0, 0): Top (0) and Left (3)
+                // TR (0, cols-1): Top (0) and Right (1)
+                // BL (rows-1, 0): Bottom (2) and Left (3)
+                // BR (rows-1, cols-1): Bottom (2) and Right (1)
+                let (req_a, req_b) = if desc.row == 0 && desc.col == 0 {
+                    (0, 3)
+                } else if desc.row == 0 && desc.col == grid_cols.saturating_sub(1) {
+                    (0, 1)
+                } else if desc.row == grid_rows.saturating_sub(1) && desc.col == 0 {
+                    (2, 3)
+                } else {
+                    (2, 1)
+                };
+
+                let mut matched_k = None;
+                for k in 0..4 {
+                    let e_a = (req_a + 4 - k) % 4;
+                    let e_b = (req_b + 4 - k) % 4;
+                    if flat_edges[e_a] > 0 && flat_edges[e_b] > 0 {
+                        matched_k = Some(k);
+                        break;
+                    }
+                }
+
+                if let Some(k) = matched_k {
+                    (vec![rotations_deg[k]], vec![k])
+                } else {
+                    continue; // Geometrically impossible corner orientation
+                }
+            } else {
+                (rotations_deg.to_vec(), (0..4).collect())
+            }
         } else if is_border_hint {
             if !desc.is_border || desc.is_corner { continue; }
+            if has_flat_info {
+                // Determine required flat edge for this border slot:
+                // Top border: Top (0)
+                // Right border: Right (1)
+                // Bottom border: Bottom (2)
+                // Left border: Left (3)
+                let req_edge = if desc.row == 0 {
+                    0
+                } else if desc.col == grid_cols.saturating_sub(1) {
+                    1
+                } else if desc.row == grid_rows.saturating_sub(1) {
+                    2
+                } else {
+                    3
+                };
+
+                let mut matched_k = None;
+                for k in 0..4 {
+                    let e = (req_edge + 4 - k) % 4;
+                    if flat_edges[e] > 0 {
+                        matched_k = Some(k);
+                        break;
+                    }
+                }
+
+                if let Some(k) = matched_k {
+                    (vec![rotations_deg[k]], vec![k])
+                } else {
+                    continue; // Geometrically impossible border orientation
+                }
+            } else {
+                (rotations_deg.to_vec(), (0..4).collect())
+            }
         } else {
+            // Interior piece: strictly exclude borders and corners
             if desc.is_border || desc.is_corner { continue; }
-        }
+            (rotations_deg.to_vec(), (0..4).collect())
+        };
 
         let mut best_rot = 0.0f32;
         let mut max_sim = 0.0f32;
 
-        for (k, &rot_deg) in rotations_deg.iter().enumerate() {
+        for (idx, &k) in cand_k.iter().enumerate() {
             let sim = compute_spatial_similarity(&rot_grids[k], &desc.cells);
             if sim > max_sim {
                 max_sim = sim;
-                best_rot = rot_deg;
+                best_rot = cand_rotations[idx];
             }
         }
 
-        scored_slots.push(CandidatePosterSlot {
-            col: desc.col,
-            row: desc.row,
-            rotation_deg: best_rot,
-            confidence: max_sim.min(1.0),
-        });
+        if max_sim > 0.0 {
+            scored_slots.push(CandidatePosterSlot {
+                col: desc.col,
+                row: desc.row,
+                rotation_deg: best_rot,
+                confidence: max_sim.min(1.0),
+            });
+        }
     }
 
     scored_slots.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
@@ -1433,7 +1644,8 @@ pub fn locate_piece_spatial(
     piece_h: u32,
     is_border_hint: bool,
     is_corner_hint: bool,
-    occupied_slots: &[u8],
+    corners: &[f32],
+    flat_edges: &[u8],
 ) -> Result<JsValue, JsValue> {
     if let Ok(lock) = PERSISTENT_POSTER.lock() {
         if let Some(ref state) = *lock {
@@ -1444,9 +1656,11 @@ pub fn locate_piece_spatial(
                 piece_h,
                 &state.descriptors,
                 state.cols,
+                state.rows,
                 is_border_hint,
                 is_corner_hint,
-                occupied_slots,
+                corners,
+                flat_edges,
             );
             return serde_wasm_bindgen::to_value(&result)
                 .map_err(|e| JsValue::from_str(&e.to_string()));
@@ -1454,3 +1668,4 @@ pub fn locate_piece_spatial(
     }
     Err(JsValue::from_str("Master poster not initialized. Call init_master_poster_spatial first."))
 }
+

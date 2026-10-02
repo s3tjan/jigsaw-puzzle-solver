@@ -129,6 +129,54 @@ This postmortem categorizes every identified bug, details the root causes, descr
 
 ---
 
+## 5. Poster Localization, Low-Entropy Collapse & Spatial Matching Bugs
+
+### Bug 5.1: Low-Entropy Border/Corner Collapse ("Dark Magnet" Effect)
+* **Symptoms:** 3 out of 4 visually distinct corners and 5 out of 20 physical border pieces all collapsed into the exact same dark slot (`BL [27, 0]` or dark border slot). Top 5 candidate suggestions had nearly identical confidence scores ($\Delta < 0.6\%$), causing continuous banner wobble and 50% misplacements on borders.
+* **Root Cause:**
+  1. *Uncentered Histogram Cosine Inflation:* Comparing Sobel gradient histograms using uncentered cosine similarity $\frac{A \cdot B}{\|A\| \|B\|}$ yielded $\approx 0.86$ similarity between flat/uniform cells ($h_i \approx 0.125$) and ANY arbitrary cell. Dark border/corner slots with minimal texture received an automatic $86\%$ baseline gradient match for everything.
+  2. *Low-Entropy Color Ambiguity:* A $4 \times 4$ spatial grid averages colors over 16 cells. For border pieces of sky, ground, or solid borders ($L^* \in [22, 34]$), adjacent slots have near-identical mean Lab colors. The signal-to-noise ratio was too low to separate adjacent slots.
+* **Resolution:**
+  - *Centered Gradient Orientation:* Subtract uniform baseline ($h_b - 0.125$) before dot product so untextured/flat cells have near-zero centered norm, completely eliminating false cosine inflation.
+  - *Balanced Chromaticity Weighting:* Increased chromaticity weight ($a^*, b^*$ full 1.0 weight) to preserve true color identity (e.g. blue vs slate gray vs black).
+
+### Bug 5.2: Tilted Axis-Aligned Bounding Box & Exterior Edge Rotation Leaks
+* **Symptoms:** Pieces dropped at hand angles ($15^\circ$–$45^\circ$) failed matching or matched upside down on the opposite side of the board.
+* **Root Cause:**
+  1. *Skewed Grid Slicing:* Axis-aligned bounding box of a tilted piece contained diagonal voids and slanted features that never aligned with upright poster slots.
+  2. *Permissive 4-Rotation Search:* The matcher tested all 4 rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) for all border and corner slots. This allowed a Top-Left piece rotated $180^\circ$ to match Bottom-Right, or a Top border piece rotated $180^\circ$ to match a dark Bottom border slot!
+* **Resolution:**
+  - *Homography Corner Rectification (`warp_piece_core`):* Use the piece's 4 detected corners from `analyze_staged_piece` to warp the piece directly into an orthographic $48 \times 44\text{ px}$ canonical patch, zeroing out camera drop tilt.
+  - *Strict Geometric Edge Constraints:* Enforce that a piece's flat edges must align with the outer boundary of the slot. Corner slots evaluate ONLY the single rotation that aligns their outer corner with the slot; border slots evaluate ONLY the rotation that aligns the flat edge with that border; interior slots strictly reject borders and corners.
+
+### Bug 5.3: The Flawed "Occupied Slots" Exclusion Band-Aid
+* **Symptoms:** Masking out occupied slots to force diversity permanently locked out true pieces whenever an earlier piece was placed incorrectly.
+* **Root Cause:** Treating the symptom (pieces piling up) rather than the disease (lack of discriminative feature resolution and geometric constraints).
+* **Resolution:** Completely eliminated occupied slot exclusion from both Rust WASM and TypeScript. Every candidate slot is evaluated purely on visual and geometric fidelity.
+
+### Bug 5.4: The Ground-Truth Bootstrap Paradox & Single-Piece Entropy Ceiling
+* **Symptoms:**
+  - Real-world placement accuracy on physical pieces degraded significantly on boundary/low-texture regions:
+    - **Interior:** 9/10 (90%) placed correctly.
+    - **Border:** 5/10 (50%) placed correctly.
+    - **Corner:** 1/3 (33%) placed correctly.
+  - The top 5 candidate suggestions consistently had virtually identical match confidence scores ($\Delta < 0.6\%$), triggering rapid visual wobble between adjacent slots and collapsing visually distinct pieces onto the same dark boundary spots.
+  - The human operator cannot provide reliable ground-truth $(R, C, \theta)$ labels for loose pieces without physically solving the puzzle beforehand using traditional manual solving.
+* **Root Cause:**
+  1. *Physical Ground-Truth Bootstrap Paradox:* Expecting either a human or an isolated CV algorithm to know which of 1,008 coordinates a loose piece belongs to before the puzzle is solved is a circular dependency. In a 1,008-piece puzzle, dozens of pieces share indistinguishable dark border tones or sky textures in isolation.
+  2. *Single-Piece Visual Entropy Ceiling:* Averaging color into a $4 \times 4$ spatial grid yields a low-entropy feature vector. On low-contrast borders ($L^* \in [22, 34]$), adjacent slots have identical average colors and flat gradients. Tweaking heuristic feature weights cannot manufacture information that does not exist in the visual patch alone.
+  3. *Neglected Mechanical Interlock Constraints:* Jigsaw puzzles are stamped out with a physical steel rule die. Adjacent pieces interlock with sub-millimeter complementary precision: a male Tab curve profile $C_A(s)$ matches the female Hole curve profile $C_B(s)$ with near-zero $L_2$ error. By treating each piece in isolation against the poster rather than against its physical neighbors, 80% of the puzzle's physical constraints were left unused.
+* **Resolution & Architectural Paradigm Shift:**
+  - **Cease Heuristic Weight Hacking:** Do not attempt to overfit color/texture weights to break ties on low-entropy regions.
+  - **Transition to Phase 9: Pairwise Die-Cut Mating Engine (`cv-engine/src/matcher.rs`):**
+    - Resample edge contours into $N = 100$ arc-length equidistant normalized profiles.
+    - Compute pairwise curve compatibility between complementary edges (`Tab` $\leftrightarrow$ `Hole`) using $L_2$ Euclidean curve difference and turn-angle signatures.
+  - **Inverted Assembly Flow (Directed Assembly):**
+    - Instead of *“User picks arbitrary loose piece $\to$ CV guesses $[R, C]$”*, the system shifts to *“User scans pieces into digital inventory $\to$ Solver matches die-cut sequence + artwork $\to$ System guides user: 'Pick up Piece #X $\to$ place at $[R, C]$'”*.
+    - **Perimeter-First Boundary Bootstrap:** The 124 perimeter pieces (4 corners + 120 borders) form a single closed 1D loop of interlocking tabs and holes. Ingesting the 124 border pieces first enables a deterministic, closed-loop curve solver that locks the entire boundary with 100% mathematical certainty before placing a single interior piece.
+
+---
+
 ## Summary Matrix of Critical Incidents
 
 | Issue ID | Component | Root Cause | Impact | Fix Deployed |
@@ -142,12 +190,19 @@ This postmortem categorizes every identified bug, details the root causes, descr
 | **BUG-007** | `web-app` / Test | Missing `detected_corners` in ground truth JSON | Medium: Tooling opacity | Schema extended to track both CV and human-labeled corners |
 | **BUG-008** | `contour.rs` | Edge chords used raw contour pts instead of refined corners + 1-pass step noise | Medium: Baseline wobble & rough curves | Synchronized edge start/end corners + 3-pass Gaussian smoothing filter |
 | **BUG-009** | `contour.rs` | Inner tab-neck fillets formed false parallelograms & border straight-cut threshold failed | High: 50px corner error & border misclassification | Topological convexity gating, 5px zero-crossing penalty, relative edge depth bimodality |
+| **BUG-010** | `poster.rs` | Uncentered gradient cosine gave flat dark slots free 86% match score | High: 5/20 border pieces collapsed onto same dark slot | Centered gradient histograms ($h - 0.125$) + full chromaticity weighting |
+| **BUG-011** | `poster.rs` | Permissive 4-rotation search allowed upside-down pieces to match opposite borders | High: Corner & border misplacements | Strict geometric edge topology gating (only 1 valid rotation per boundary slot) |
+| **BUG-012** | `poster.rs` | Axis-aligned bounding box on tilted pieces degraded spatial pyramid | Medium: Score degradation at arbitrary angles | 4-point homography canonical rectification (`warp_piece_core`) |
+| **BUG-013** | `poster.rs` / System | Low visual entropy on borders & missing neighbor edge constraints | Critical: 50% border misplacement & bootstrap paradox | Shift from single-piece guessing to Phase 9 Pairwise Die-Cut Mating & directed assembly |
 
 ---
 
 ## Architectural Guardrails Going Forward
 
-1. **Automated Regression Suite Gate:** No changes to `contour.rs` or `lib.rs` may be merged unless `cargo test --release test_ground_truth_benchmarks` passes 100% on all physical fixtures (currently **90/90**).
-2. **Deterministic Corner Invariants:** The quad optimizer must always return strictly 4 non-overlapping corners ordered clockwise.
-3. **Guard Bands on Edge Geometry:** Never sample curvature within $8\%$ arc length of a corner vertex when determining edge type or computing curve matching signatures.
-4. **Decoupled Physics & Rendering:** Temporal smoothing filters (deadband, EMA) live strictly in the UI/session presentation layer; pure CV functions in `contour.rs` remain completely stateless and deterministic.
+1. **Automated Regression Suite Gate:** No changes to `contour.rs`, `lib.rs`, or `poster.rs` may be merged unless all test suites (`test_ground_truth_benchmarks`, `test_poster_localization`, `test_corner_and_border_invariants`) pass 100%.
+2. **Deterministic Corner & Edge Invariants:** The quad optimizer must always return strictly 4 non-overlapping corners ordered clockwise, and boundary slots may only test rotations where flat edges lie on the puzzle exterior.
+3. **No Artificial Exclusion Band-Aids:** Never lock out occupied slots to force diversity; visual and geometric discrimination must naturally separate candidates.
+4. **Physical Reality Over Heuristic Tweaks:** Low-entropy border and corner matching cannot rely solely on 16-cell color averages; pairwise complementary tab/hole die-cut contours (Phase 9) and seam continuity must resolve low-contrast visual ambiguities.
+5. **Acknowledge the Ground-Truth Bootstrap Paradox:** Never expect human operators or models to label loose pieces with unverified ground-truth $[R, C]$ coordinates. Validate matching through physical mating pairs and closed-loop solver consistency.
+
+
