@@ -112,6 +112,9 @@ export default function App() {
     confidence: number
     top_candidates: { col: number; row: number; rotation_deg: number; confidence: number }[]
   } | null>(null)
+  const activePosterMatchRef = useRef(activePosterMatch)
+  activePosterMatchRef.current = activePosterMatch
+  const recentMatchesRef = useRef<{ match: any; timestamp: number }[]>([])
   const lastLocalizationTimeRef = useRef<number>(0)
   const isPosterInitializedRef = useRef<boolean>(false)
   const lastFocusTimeRef = useRef<number>(0)
@@ -987,13 +990,14 @@ export default function App() {
                     }
                   }
                 } else {
-                  // Transient dropout tolerance (up to 2 missed frames / ~120ms):
+                  // Transient dropout tolerance (up to 4 missed frames / ~240ms):
                   // Prevents momentary finger retraction shadows from resetting history and causing perceptual wait
-                  if (pieceHistoryRef.current.length > 2) {
+                  if (pieceHistoryRef.current.length > 1) {
                     pieceHistoryRef.current.pop()
                     livePiece = detectedPieceRef.current
                   } else {
                     pieceHistoryRef.current = []
+                    recentMatchesRef.current = []
                   }
                 }
 
@@ -1001,7 +1005,8 @@ export default function App() {
                 detectedPieceRef.current = livePiece
 
                 // Real-Time Poster Localization (< 4ms fast spatial pyramid candidate search)
-                if (livePiece && isPosterInitializedRef.current) {
+                // Require at least 2 frames of piece history so we have established consensus and avoid hand-shadow false borders
+                if (livePiece && isPosterInitializedRef.current && pieceHistoryRef.current.length >= 2) {
                   const nowLoc = performance.now()
                   if (nowLoc - lastLocalizationTimeRef.current >= 90) {
                     lastLocalizationTimeRef.current = nowLoc
@@ -1015,13 +1020,65 @@ export default function App() {
                         livePiece.is_corner
                       )
                       if (match && match.confidence > 0.35) {
-                        setActivePosterMatch(match)
+                        // Append to recent match history for temporal consensus and anti-wobble
+                        const history = recentMatchesRef.current
+                        history.unshift({ match, timestamp: nowLoc })
+                        if (history.length > 5) history.pop()
+
+                        // Count votes for candidate slots in the recent window
+                        const votes = new Map<string, { count: number; totalConf: number; match: any }>()
+                        for (const item of history) {
+                          const key = `${item.match.best_row},${item.match.best_col}`
+                          const curr = votes.get(key) || { count: 0, totalConf: 0, match: item.match }
+                          curr.count += 1
+                          curr.totalConf += item.match.confidence
+                          votes.set(key, curr)
+                        }
+
+                        // Pick highest-scoring candidate
+                        let bestCandidate: any = null
+                        let maxScore = -1
+                        votes.forEach(v => {
+                          const score = v.count * 1.5 + v.totalConf
+                          if (score > maxScore) {
+                            maxScore = score
+                            bestCandidate = v.match
+                          }
+                        })
+
+                        const currentActive = activePosterMatchRef.current
+                        if (!currentActive) {
+                          // Initial lock: require at least 2 votes or high single-frame confidence (>0.75)
+                          if (bestCandidate) {
+                            const candKey = `${bestCandidate.best_row},${bestCandidate.best_col}`
+                            const candVote = votes.get(candKey)
+                            if (candVote && (candVote.count >= 2 || bestCandidate.confidence > 0.75)) {
+                              setActivePosterMatch(bestCandidate)
+                            }
+                          }
+                        } else {
+                          // Hysteresis: only switch if the new candidate is persistently better
+                          const currentKey = `${currentActive.best_row},${currentActive.best_col}`
+                          const bestKey = bestCandidate ? `${bestCandidate.best_row},${bestCandidate.best_col}` : null
+
+                          if (bestKey && bestKey !== currentKey) {
+                            const newVote = votes.get(bestKey)
+                            // Require at least 3 votes for a new candidate, or a decisive confidence lead (> 0.15)
+                            if (newVote && (newVote.count >= 3 || (newVote.count >= 2 && bestCandidate.confidence > currentActive.confidence + 0.15))) {
+                              setActivePosterMatch(bestCandidate)
+                            }
+                          } else if (bestCandidate && bestKey === currentKey) {
+                            // Update rotation or confidence on current active slot smoothly without flashing
+                            setActivePosterMatch(bestCandidate)
+                          }
+                        }
                       }
                     } catch (locErr) {
                       console.warn('Poster spatial localization error:', locErr)
                     }
                   }
                 } else if (!livePiece) {
+                  recentMatchesRef.current = []
                   setActivePosterMatch(null)
                 }
               }
