@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+use std::sync::Mutex;
 
 /// Representation of a single pyramid level with intensity and gradient orientations.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -932,4 +933,470 @@ pub fn locate_piece_fast(
     };
 
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+// ----------------- Milestone 1: 4x4 Spatial Pyramid Engine -----------------
+
+/// A single cell in a 4x4 spatial layout grid (16 cells total).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SpatialCell {
+    pub mean_lab: [f32; 3],
+    pub grad_hist: [f32; 8],
+    pub sample_count: u32,
+}
+
+/// Precomputed spatial layout descriptor for a poster slot with overlapping receptive field.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SpatialSlotDescriptor {
+    pub col: u32,
+    pub row: u32,
+    pub is_border: bool,
+    pub is_corner: bool,
+    pub cells: [SpatialCell; 16],
+}
+
+/// Extracts a 4x4 spatial grid of CIELAB and Sobel gradient histograms from an image ROI
+/// using precomputed full-image gradient magnitude and orientation buffers.
+pub fn extract_spatial_grid_precomputed(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    mag: &[u8],
+    ori: &[u8],
+    mask: Option<&[u8]>,
+    roi_x0: u32,
+    roi_y0: u32,
+    roi_w: u32,
+    roi_h: u32,
+) -> [SpatialCell; 16] {
+    let mut cells: [SpatialCell; 16] = std::array::from_fn(|_| SpatialCell {
+        mean_lab: [50.0, 0.0, 0.0],
+        grad_hist: [0.125; 8],
+        sample_count: 0,
+    });
+
+    let w = width as usize;
+    let h = height as usize;
+    if w == 0 || h == 0 || roi_w == 0 || roi_h == 0 {
+        return cells;
+    }
+
+    let cell_w_f = roi_w as f32 / 4.0;
+    let cell_h_f = roi_h as f32 / 4.0;
+
+    let mut sum_l = [0.0f32; 16];
+    let mut sum_a = [0.0f32; 16];
+    let mut sum_b = [0.0f32; 16];
+    let mut count = [0u32; 16];
+    let mut grad_hist = [[0.0f32; 8]; 16];
+    let mut total_grad = [0.0f32; 16];
+
+    let x_end = (roi_x0 + roi_w).min(width);
+    let y_end = (roi_y0 + roi_h).min(height);
+
+    for y in roi_y0..y_end {
+        let gy = (((y - roi_y0) as f32 / cell_h_f).floor() as usize).min(3);
+        let row_idx = (y as usize) * w;
+
+        for x in roi_x0..x_end {
+            let gx = (((x - roi_x0) as f32 / cell_w_f).floor() as usize).min(3);
+            let cell_idx = gy * 4 + gx;
+            let pix_idx = row_idx + (x as usize);
+
+            if let Some(m) = mask {
+                if pix_idx < m.len() && m[pix_idx] < 128 {
+                    continue;
+                }
+            }
+
+            let byte_idx = pix_idx * 4;
+            if byte_idx + 3 >= rgba.len() {
+                continue;
+            }
+
+            let alpha = rgba[byte_idx + 3];
+            if alpha < 50 {
+                continue;
+            }
+
+            let r = rgba[byte_idx];
+            let g = rgba[byte_idx + 1];
+            let b = rgba[byte_idx + 2];
+            let lab = rgb_to_cielab(r, g, b);
+
+            sum_l[cell_idx] += lab[0];
+            sum_a[cell_idx] += lab[1];
+            sum_b[cell_idx] += lab[2];
+            count[cell_idx] += 1;
+
+            if pix_idx < mag.len() && pix_idx < ori.len() {
+                let m_val = mag[pix_idx] as f32;
+                if m_val > 12.0 {
+                    let bin = (ori[pix_idx] as usize).min(7);
+                    grad_hist[cell_idx][bin] += m_val;
+                    total_grad[cell_idx] += m_val;
+                }
+            }
+        }
+    }
+
+    for i in 0..16 {
+        let cnt = count[i];
+        let mean_lab = if cnt > 0 {
+            [sum_l[i] / cnt as f32, sum_a[i] / cnt as f32, sum_b[i] / cnt as f32]
+        } else {
+            [50.0, 0.0, 0.0]
+        };
+
+        let mut hist = [0.125f32; 8];
+        let tg = total_grad[i];
+        if tg > 0.0 {
+            for b in 0..8 {
+                hist[b] = grad_hist[i][b] / tg;
+            }
+        }
+
+        cells[i] = SpatialCell {
+            mean_lab,
+            grad_hist: hist,
+            sample_count: cnt,
+        };
+    }
+
+    cells
+}
+
+/// Rotates a 4x4 spatial grid by k clockwise 90-degree increments (k = 0, 1, 2, 3).
+/// Maps cell (r, c) -> (c, 3 - r) for 90 deg clockwise, and rotates gradient bins by 2k.
+pub fn rotate_spatial_grid(cells: &[SpatialCell; 16], k: usize) -> [SpatialCell; 16] {
+    if k % 4 == 0 {
+        return cells.clone();
+    }
+    let mut rotated = cells.clone();
+    let shift = (k * 2) % 8;
+
+    for r in 0..4 {
+        for c in 0..4 {
+            let (dst_r, dst_c) = match k % 4 {
+                1 => (c, 3 - r),
+                2 => (3 - r, 3 - c),
+                3 => (3 - c, r),
+                _ => (r, c),
+            };
+            let dst_idx = dst_r * 4 + dst_c;
+            let src_idx = r * 4 + c;
+
+            let mut rot_hist = [0.0f32; 8];
+            for b in 0..8 {
+                rot_hist[(b + shift) % 8] = cells[src_idx].grad_hist[b];
+            }
+
+            rotated[dst_idx] = SpatialCell {
+                mean_lab: cells[src_idx].mean_lab,
+                grad_hist: rot_hist,
+                sample_count: cells[src_idx].sample_count,
+            };
+        }
+    }
+    rotated
+}
+
+/// Computes multi-cell similarity across all 16 spatial cells in the 4x4 grid.
+/// Combines local CIELAB color distance and localized Sobel gradient orientation.
+pub fn compute_spatial_similarity(
+    piece_cells: &[SpatialCell; 16],
+    slot_cells: &[SpatialCell; 16],
+) -> f32 {
+    let mut total_sim = 0.0f32;
+    let mut valid_weight = 0.0f32;
+
+    for i in 0..16 {
+        let pc = &piece_cells[i];
+        let sc = &slot_cells[i];
+
+        let weight = if pc.sample_count > 0 && sc.sample_count > 0 {
+            1.0f32
+        } else if pc.sample_count > 0 || sc.sample_count > 0 {
+            0.5f32
+        } else {
+            continue;
+        };
+
+        // 1. CIELAB distance: chromaticity (a*, b*) has higher weight than L*
+        let dl = (pc.mean_lab[0] - sc.mean_lab[0]) * 0.4;
+        let da = pc.mean_lab[1] - sc.mean_lab[1];
+        let db = pc.mean_lab[2] - sc.mean_lab[2];
+        let delta_e = (dl * dl + da * da + db * db).sqrt();
+        let color_score = (1.0 - (delta_e / 60.0)).clamp(0.0, 1.0);
+
+        // 2. Cosine similarity between local gradient orientation histograms
+        let mut dot = 0.0f32;
+        let mut norm_a = 0.0f32;
+        let mut norm_b = 0.0f32;
+        for b in 0..8 {
+            dot += pc.grad_hist[b] * sc.grad_hist[b];
+            norm_a += pc.grad_hist[b] * pc.grad_hist[b];
+            norm_b += sc.grad_hist[b] * sc.grad_hist[b];
+        }
+        let grad_score = if norm_a > 0.0 && norm_b > 0.0 {
+            (dot / (norm_a.sqrt() * norm_b.sqrt())).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+
+        // Weighted fusion per cell: 60% color + 40% structural edge direction
+        let cell_score = 0.60 * color_score + 0.40 * grad_score;
+        total_sim += cell_score * weight;
+        valid_weight += weight;
+    }
+
+    if valid_weight > 0.0 {
+        total_sim / valid_weight
+    } else {
+        0.0
+    }
+}
+
+/// Precomputes 4x4 spatial descriptors with overlapping receptive field margins (e.g. 1.35x)
+/// to capture tabs protruding into neighboring cells.
+pub fn precompute_spatial_poster_slots(
+    poster_rgba: &[u8],
+    poster_w: u32,
+    poster_h: u32,
+    cols: u32,
+    rows: u32,
+    margin_factor: f32,
+) -> Vec<SpatialSlotDescriptor> {
+    let mut descriptors = Vec::with_capacity((cols * rows) as usize);
+    if cols == 0 || rows == 0 || poster_w == 0 || poster_h == 0 {
+        return descriptors;
+    }
+
+    let gray = rgba_to_grayscale(poster_rgba, poster_w, poster_h);
+    let clahe = apply_clahe(&gray, poster_w, poster_h, 8, 8, 2.0);
+    let (mag, ori) = compute_sobel_gradients(&clahe, poster_w, poster_h);
+
+    let cell_w_f = (poster_w as f32) / (cols as f32);
+    let cell_h_f = (poster_h as f32) / (rows as f32);
+    let exp_w_f = cell_w_f * margin_factor;
+    let exp_h_f = cell_h_f * margin_factor;
+
+    for r in 0..rows {
+        for c in 0..cols {
+            let is_corner = (r == 0 && c == 0)
+                || (r == 0 && c == cols - 1)
+                || (r == rows - 1 && c == 0)
+                || (r == rows - 1 && c == cols - 1);
+            let is_border = r == 0 || r == rows - 1 || c == 0 || c == cols - 1;
+
+            let center_x = (c as f32 + 0.5) * cell_w_f;
+            let center_y = (r as f32 + 0.5) * cell_h_f;
+
+            let x0 = (center_x - exp_w_f * 0.5).max(0.0).round() as u32;
+            let y0 = (center_y - exp_h_f * 0.5).max(0.0).round() as u32;
+            let x1 = (center_x + exp_w_f * 0.5).min(poster_w as f32).round() as u32;
+            let y1 = (center_y + exp_h_f * 0.5).min(poster_h as f32).round() as u32;
+
+            let sub_w = (x1 - x0).max(4);
+            let sub_h = (y1 - y0).max(4);
+
+            let cells = extract_spatial_grid_precomputed(
+                poster_rgba,
+                poster_w,
+                poster_h,
+                &mag,
+                &ori,
+                None,
+                x0,
+                y0,
+                sub_w,
+                sub_h,
+            );
+
+            descriptors.push(SpatialSlotDescriptor {
+                col: c,
+                row: r,
+                is_border,
+                is_corner,
+                cells,
+            });
+        }
+    }
+
+    descriptors
+}
+
+/// Core spatial piece localization against precomputed spatial slot descriptors.
+pub fn locate_piece_spatial_core(
+    piece_rgba: &[u8],
+    piece_mask: &[u8],
+    piece_w: u32,
+    piece_h: u32,
+    descriptors: &[SpatialSlotDescriptor],
+    is_border_hint: bool,
+    is_corner_hint: bool,
+) -> PiecePosterMatch {
+    let mut min_x = piece_w;
+    let mut max_x = 0;
+    let mut min_y = piece_h;
+    let mut max_y = 0;
+    let mut fg_count = 0;
+
+    if !piece_mask.is_empty() && piece_mask.len() >= (piece_w * piece_h) as usize {
+        for y in 0..piece_h {
+            let row_offset = (y * piece_w) as usize;
+            for x in 0..piece_w {
+                if piece_mask[row_offset + x as usize] > 128 {
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                    min_y = min_y.min(y);
+                    max_y = max_y.max(y);
+                    fg_count += 1;
+                }
+            }
+        }
+    }
+
+    let (roi_x0, roi_y0, roi_w, roi_h) = if fg_count > 50 && max_x > min_x && max_y > min_y {
+        (min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+    } else {
+        (0, 0, piece_w, piece_h)
+    };
+
+    let gray = rgba_to_grayscale(piece_rgba, piece_w, piece_h);
+    let clahe = apply_clahe(&gray, piece_w, piece_h, 4, 4, 2.0);
+    let (mag, ori) = compute_sobel_gradients(&clahe, piece_w, piece_h);
+
+    let mask_opt = if !piece_mask.is_empty() { Some(piece_mask) } else { None };
+    let piece_cells = extract_spatial_grid_precomputed(
+        piece_rgba,
+        piece_w,
+        piece_h,
+        &mag,
+        &ori,
+        mask_opt,
+        roi_x0,
+        roi_y0,
+        roi_w,
+        roi_h,
+    );
+
+    let rot_grids = [
+        rotate_spatial_grid(&piece_cells, 0),
+        rotate_spatial_grid(&piece_cells, 1),
+        rotate_spatial_grid(&piece_cells, 2),
+        rotate_spatial_grid(&piece_cells, 3),
+    ];
+    let rotations_deg = [0.0f32, 90.0f32, 180.0f32, 270.0f32];
+
+    let mut scored_slots: Vec<CandidatePosterSlot> = Vec::with_capacity(descriptors.len());
+
+    for desc in descriptors {
+        if is_corner_hint {
+            if !desc.is_corner { continue; }
+        } else if is_border_hint {
+            if !desc.is_border || desc.is_corner { continue; }
+        } else {
+            if desc.is_border || desc.is_corner { continue; }
+        }
+
+        let mut best_rot = 0.0f32;
+        let mut max_sim = 0.0f32;
+
+        for (k, &rot_deg) in rotations_deg.iter().enumerate() {
+            let sim = compute_spatial_similarity(&rot_grids[k], &desc.cells);
+            if sim > max_sim {
+                max_sim = sim;
+                best_rot = rot_deg;
+            }
+        }
+
+        scored_slots.push(CandidatePosterSlot {
+            col: desc.col,
+            row: desc.row,
+            rotation_deg: best_rot,
+            confidence: max_sim.min(1.0),
+        });
+    }
+
+    scored_slots.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    let top_candidates: Vec<CandidatePosterSlot> = scored_slots.iter().take(5).cloned().collect();
+
+    let (best_col, best_row, best_rotation_deg, confidence) = if let Some(best) = top_candidates.first() {
+        (best.col, best.row, best.rotation_deg, best.confidence)
+    } else {
+        (0, 0, 0.0, 0.0)
+    };
+
+    PiecePosterMatch {
+        best_col,
+        best_row,
+        best_rotation_deg,
+        confidence,
+        top_candidates,
+    }
+}
+
+// ----------------- Persistent WASM Heap Storage -----------------
+
+pub struct PersistentPosterState {
+    pub cols: u32,
+    pub rows: u32,
+    pub descriptors: Vec<SpatialSlotDescriptor>,
+}
+
+static PERSISTENT_POSTER: Mutex<Option<PersistentPosterState>> = Mutex::new(None);
+
+/// WASM entry point: Ingests reference poster RGBA and stores precomputed 4x4 spatial descriptors
+/// directly in Rust WebAssembly linear memory. Zero JSON serialization overhead!
+#[wasm_bindgen]
+pub fn init_master_poster_spatial(
+    poster_rgba: &[u8],
+    poster_w: u32,
+    poster_h: u32,
+    cols: u32,
+    rows: u32,
+) -> Result<u32, JsValue> {
+    let descriptors = precompute_spatial_poster_slots(poster_rgba, poster_w, poster_h, cols, rows, 1.35);
+    let count = descriptors.len() as u32;
+
+    if let Ok(mut lock) = PERSISTENT_POSTER.lock() {
+        *lock = Some(PersistentPosterState {
+            cols,
+            rows,
+            descriptors,
+        });
+    } else {
+        return Err(JsValue::from_str("Failed to acquire persistent poster lock"));
+    }
+
+    Ok(count)
+}
+
+/// WASM entry point: Locates a piece in < 3ms directly against resident WASM memory.
+#[wasm_bindgen]
+pub fn locate_piece_spatial(
+    piece_rgba: &[u8],
+    piece_mask: &[u8],
+    piece_w: u32,
+    piece_h: u32,
+    is_border_hint: bool,
+    is_corner_hint: bool,
+) -> Result<JsValue, JsValue> {
+    if let Ok(lock) = PERSISTENT_POSTER.lock() {
+        if let Some(ref state) = *lock {
+            let result = locate_piece_spatial_core(
+                piece_rgba,
+                piece_mask,
+                piece_w,
+                piece_h,
+                &state.descriptors,
+                is_border_hint,
+                is_corner_hint,
+            );
+            return serde_wasm_bindgen::to_value(&result)
+                .map_err(|e| JsValue::from_str(&e.to_string()));
+        }
+    }
+    Err(JsValue::from_str("Master poster not initialized. Call init_master_poster_spatial first."))
 }

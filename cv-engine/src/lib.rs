@@ -6,7 +6,11 @@ pub mod poster;
 use wasm_bindgen::prelude::*;
 use homography::{dewarp_image, Homography, Point2D};
 use contour::{trace_piece_contour, partition_edges_and_classify, ScannedPiece};
-pub use poster::{process_poster_rgba, get_poster_grid_slots, get_slot_preview, precompute_poster_slots, locate_piece_fast};
+pub use poster::{
+    process_poster_rgba, get_poster_grid_slots, get_slot_preview, precompute_poster_slots, locate_piece_fast,
+    init_master_poster_spatial, locate_piece_spatial, SpatialCell, SpatialSlotDescriptor,
+    precompute_spatial_poster_slots, locate_piece_spatial_core,
+};
 
 
 /// Snaps a manual seed coordinate to the exact sub-pixel center of the nearest fiducial bullseye
