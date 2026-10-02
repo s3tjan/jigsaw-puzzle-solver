@@ -1,8 +1,20 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from '../storage/db'
-import type { SlotRequirementFilter } from './PieceTray'
 import { get_slot_preview } from '../pkg/cv_engine'
 import './BoardView.css'
+
+export interface SlotRequirementFilter {
+  row: number
+  col: number
+  is_border: boolean
+  is_corner: boolean
+  required_edges: [
+    ('Flat' | 'Tab' | 'Hole') | null,
+    ('Flat' | 'Tab' | 'Hole') | null,
+    ('Flat' | 'Tab' | 'Hole') | null,
+    ('Flat' | 'Tab' | 'Hole') | null,
+  ]
+}
 
 interface BoardViewProps {
   rows: number
@@ -14,13 +26,17 @@ interface BoardViewProps {
   onUnplacePiece: (row: number, col: number) => void
   selectedSlot: { row: number; col: number } | null
   onSelectSlot: (slot: { row: number; col: number } | null) => void
-  onSetSlotFilter: (filter: SlotRequirementFilter | null) => void
   onUpdatePairStatus?: (pairId: string, status: 'verified' | 'rejected') => void
   posterRgba: Uint8Array | null
   posterWidth: number
   posterHeight: number
+  posterFileName?: string
+  physWidthMm?: number
+  physHeightMm?: number
   onExportFixtures: () => void
   onImportFixtures: () => void
+  onPosterIngested?: (img: HTMLImageElement, file: File) => void
+  onUpdateDimensions?: (cols: number, rows: number, physWidthMm: number, physHeightMm: number) => void
 }
 
 export const BoardView: React.FC<BoardViewProps> = ({
@@ -33,17 +49,22 @@ export const BoardView: React.FC<BoardViewProps> = ({
   onUnplacePiece,
   selectedSlot,
   onSelectSlot,
-  onSetSlotFilter,
   onUpdatePairStatus,
   posterRgba,
   posterWidth,
   posterHeight,
+  posterFileName = '',
+  physWidthMm = 700,
+  physHeightMm = 500,
   onExportFixtures,
   onImportFixtures,
+  onPosterIngested,
+  onUpdateDimensions,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const cropCanvasRef = useRef<HTMLCanvasElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Pan and Zoom transform state
   const [zoom, setZoom] = useState<number>(1.0)
@@ -51,6 +72,39 @@ export const BoardView: React.FC<BoardViewProps> = ({
   const isDraggingRef = useRef<boolean>(false)
   const lastMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const [hoverSlot, setHoverSlot] = useState<{ r: number; c: number } | null>(null)
+  const [posterOpacity, setPosterOpacity] = useState<number>(0.35)
+  const [showPosterUnderlay, setShowPosterUnderlay] = useState<boolean>(true)
+  const [showCoordinates, setShowCoordinates] = useState<boolean>(false)
+  const [isDragOver, setIsDragOver] = useState<boolean>(false)
+  const posterCanvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  // Puzzle specification configuration states
+  const [inputCols, setInputCols] = useState<number>(cols)
+  const [inputRows, setInputRows] = useState<number>(rows)
+  const [inputWidthMm, setInputWidthMm] = useState<number>(physWidthMm)
+  const [inputHeightMm, setInputHeightMm] = useState<number>(physHeightMm)
+
+  // Synchronize when external props update
+  useEffect(() => {
+    setInputCols(cols)
+    setInputRows(rows)
+  }, [cols, rows])
+
+  useEffect(() => {
+    setInputWidthMm(physWidthMm)
+    setInputHeightMm(physHeightMm)
+  }, [physWidthMm, physHeightMm])
+
+  const handleApplyDimensions = () => {
+    if (onUpdateDimensions) {
+      onUpdateDimensions(
+        Math.max(1, inputCols),
+        Math.max(1, inputRows),
+        Math.max(10, inputWidthMm),
+        Math.max(10, inputHeightMm)
+      )
+    }
+  }
 
   // Map piece_id -> StoredPiece for instant lookup
   const pieceMap = useMemo(() => {
@@ -60,6 +114,25 @@ export const BoardView: React.FC<BoardViewProps> = ({
     }
     return map
   }, [pieces])
+
+  // Convert posterRgba to an offscreen canvas for fast drawing onto board canvas
+  useEffect(() => {
+    if (!posterRgba || posterWidth <= 0 || posterHeight <= 0) {
+      posterCanvasRef.current = null
+      return
+    }
+    const off = document.createElement('canvas')
+    off.width = posterWidth
+    off.height = posterHeight
+    const ctx = off.getContext('2d')
+    if (ctx) {
+      const imgData = ctx.createImageData(posterWidth, posterHeight)
+      imgData.data.set(posterRgba)
+      ctx.putImageData(imgData, 0, 0)
+      posterCanvasRef.current = off
+      drawBoard()
+    }
+  }, [posterRgba, posterWidth, posterHeight])
 
   // Cache loaded Image objects for placed piece thumbnails to draw onto grid canvas
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
@@ -163,15 +236,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
     }
   }, [rows, cols, placedSlots, pieceMap])
 
-  // When selectedSlot changes, notify parent of slot filter requirement for PieceTray
-  useEffect(() => {
-    if (selectedSlot) {
-      const req = computeSlotRequirement(selectedSlot.row, selectedSlot.col)
-      onSetSlotFilter(req)
-    } else {
-      onSetSlotFilter(null)
-    }
-  }, [selectedSlot, computeSlotRequirement, onSetSlotFilter])
 
   // Extract slot preview from WASM poster when slot is selected
   const activeSlotPreview = useMemo(() => {
@@ -229,6 +293,14 @@ export const BoardView: React.FC<BoardViewProps> = ({
     // Board background mat
     ctx.fillStyle = '#11161d'
     ctx.fillRect(0, 0, boardTotalW, boardTotalH)
+
+    // Render reference poster underlay if available and enabled
+    if (showPosterUnderlay && posterCanvasRef.current) {
+      ctx.save()
+      ctx.globalAlpha = posterOpacity
+      ctx.drawImage(posterCanvasRef.current, 0, 0, boardTotalW, boardTotalH)
+      ctx.restore()
+    }
 
     // Render cells
     for (let r = 0; r < rows; r++) {
@@ -293,7 +365,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
         ctx.lineWidth = isSelected ? 2 / zoom : isHovered ? 1.5 / zoom : 0.75 / zoom
         ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
 
-        // Piece number label on cell
+        // Piece number label or slot coordinates on cell
         if (placed) {
           const piece = pieceMap.get(placed.piece_id)
           if (piece && cellW * zoom > 20) {
@@ -303,6 +375,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
             ctx.textBaseline = 'middle'
             ctx.fillText(`#${piece.piece_number}`, x + cellW / 2, y + cellH / 2)
           }
+        } else if ((showCoordinates || isHovered || isSelected) && cellW * zoom > 18) {
+          const fontSize = Math.max(7, Math.min(10, 8 * zoom))
+          ctx.font = `bold ${fontSize}px monospace`
+          ctx.fillStyle = isSelected ? '#ffd33d' : isHovered ? '#00e5ff' : 'rgba(255, 255, 255, 0.45)'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(`[${c},${r}]`, x + cellW / 2, y + cellH / 2)
         }
       }
     }
@@ -384,7 +463,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
     ctx.strokeRect(0, 0, boardTotalW, boardTotalH)
 
     ctx.restore()
-  }, [rows, cols, pan, zoom, placedSlots, selectedSlot, hoverSlot, pieceMap, pairedFixtures])
+  }, [rows, cols, pan, zoom, placedSlots, selectedSlot, hoverSlot, pieceMap, pairedFixtures, showPosterUnderlay, posterOpacity, showCoordinates])
 
   useEffect(() => {
     drawBoard()
@@ -457,15 +536,42 @@ export const BoardView: React.FC<BoardViewProps> = ({
     }
   }
 
-  // Drag over handler for dropping pieces from PieceTray
+  // Drag over handler for dropping pieces or master poster files
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragOver(true)
+      e.dataTransfer.dropEffect = 'copy'
+    } else {
+      e.dataTransfer.dropEffect = 'move'
+    }
   }
 
-  // Drop piece from PieceTray onto board slot
+  const handleDragLeave = () => {
+    setIsDragOver(false)
+  }
+
+  // Drop piece from inventory or image file onto board canvas
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
+    setIsDragOver(false)
+
+    // 1. Check if an image file was dropped
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0]
+      if (file.type.startsWith('image/')) {
+        const img = new Image()
+        img.src = URL.createObjectURL(file)
+        img.onload = () => {
+          if (onPosterIngested) {
+            onPosterIngested(img, file)
+          }
+        }
+        return
+      }
+    }
+
+    // 2. Otherwise handle piece drop onto slot
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
@@ -520,7 +626,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
       {/* Top Header Bar */}
       <div className="board-header">
         <div className="board-title">
-          <span>ASSEMBLY MATRIX [{cols}×{rows}]</span>
+          <span>Grid: {cols} × {rows}</span>
+          {posterFileName && <span className="stat-badge unplaced">{posterFileName}</span>}
+          {posterWidth > 0 && (
+            <span className="stat-badge unplaced">
+              {posterWidth} × {posterHeight} px
+            </span>
+          )}
           <div className="board-stats">
             <span className="stat-badge placed">PLACED: {placedCount} / {totalSlots} ({progressPct}%)</span>
             <span className="stat-badge unplaced">REMAINING: {totalSlots - placedCount}</span>
@@ -531,13 +643,85 @@ export const BoardView: React.FC<BoardViewProps> = ({
           <button className="board-btn" onClick={onImportFixtures} title="Import saved assembly JSON dataset">
             IMPORT JSON
           </button>
-          <button className="board-btn primary" onClick={onExportFixtures} title="Export ground-truth assembly fixtures for Phase 8">
-            EXPORT JSON FIXTURES
+          <button className="board-btn primary" onClick={onExportFixtures} title="Export ground-truth assembly fixtures">
+            EXPORT FIXTURES
           </button>
         </div>
       </div>
 
-      {/* Main Board View: Interactive Canvas + Mode C Inspector */}
+      {/* Specification & Dimension Controls Bar */}
+      <div className="board-spec-bar">
+        <div className="spec-group">
+          <label>PIECES:</label>
+          <span className="spec-readonly">{cols * rows}</span>
+        </div>
+
+        <div className="spec-group">
+          <label>GRID (COLS × ROWS):</label>
+          <input
+            type="number"
+            className="spec-input"
+            value={inputCols}
+            min={2}
+            max={100}
+            title="Columns"
+            onChange={(e) => setInputCols(parseInt(e.target.value) || 0)}
+          />
+          <span className="spec-unit">×</span>
+          <input
+            type="number"
+            className="spec-input"
+            value={inputRows}
+            min={2}
+            max={100}
+            title="Rows"
+            onChange={(e) => setInputRows(parseInt(e.target.value) || 0)}
+          />
+        </div>
+
+        <div className="spec-group">
+          <label>PHYSICAL (W × H):</label>
+          <input
+            type="number"
+            className="spec-input"
+            value={inputWidthMm}
+            min={50}
+            max={3000}
+            title="Width in mm"
+            onChange={(e) => setInputWidthMm(parseFloat(e.target.value) || 0)}
+          />
+          <span className="spec-unit">×</span>
+          <input
+            type="number"
+            className="spec-input"
+            value={inputHeightMm}
+            min={50}
+            max={3000}
+            title="Height in mm"
+            onChange={(e) => setInputHeightMm(parseFloat(e.target.value) || 0)}
+          />
+          <span className="spec-unit">mm</span>
+        </div>
+
+        {(inputCols !== cols || inputRows !== rows || inputWidthMm !== physWidthMm || inputHeightMm !== physHeightMm) && (
+          <button
+            className="board-btn primary"
+            style={{ padding: '2px 8px', fontSize: 10 }}
+            onClick={handleApplyDimensions}
+          >
+            APPLY SPECS
+          </button>
+        )}
+
+        <div className="spec-slot-info">
+          SLOT: <b>{cols > 0 ? (physWidthMm / cols).toFixed(1) : 0} × {rows > 0 ? (physHeightMm / rows).toFixed(1) : 0} mm</b>
+          {posterWidth > 0 && (
+            <span> ({cols > 0 ? (posterWidth / cols).toFixed(0) : 0} × {rows > 0 ? (posterHeight / rows).toFixed(0) : 0} px)</span>
+          )}
+        </div>
+      </div>
+
+      {/* Main Board View: Interactive Canvas + Slot Inspector */}
       <div className="board-main-layout">
         {/* Canvas Pane */}
         <div className="board-canvas-pane" ref={containerRef}>
@@ -545,28 +729,148 @@ export const BoardView: React.FC<BoardViewProps> = ({
             <button className="board-tool-btn" onClick={() => setZoom((z) => Math.min(4.0, z * 1.25))}>+</button>
             <button className="board-tool-btn" onClick={() => setZoom((z) => Math.max(0.4, z * 0.8))}>−</button>
             <button className="board-tool-btn" onClick={() => { setZoom(1.0); setPan({ x: 40, y: 40 }) }}>RESET</button>
+            <button
+              className={`board-tool-btn ${showCoordinates ? 'active' : ''}`}
+              onClick={() => setShowCoordinates(!showCoordinates)}
+              title="Toggle coordinate labels in slots"
+            >
+              COORDS: {showCoordinates ? 'ON' : 'OFF'}
+            </button>
+            {posterRgba ? (
+              <>
+                <button
+                  className={`board-tool-btn ${showPosterUnderlay ? 'active' : ''}`}
+                  onClick={() => setShowPosterUnderlay(!showPosterUnderlay)}
+                  style={{
+                    background: showPosterUnderlay ? '#238636' : undefined,
+                    color: showPosterUnderlay ? '#fff' : undefined,
+                    fontWeight: 'bold',
+                  }}
+                  title="Toggle Reference Poster background"
+                >
+                  {showPosterUnderlay ? 'POSTER ON' : 'POSTER OFF'}
+                </button>
+                {showPosterUnderlay && (
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1.0"
+                    step="0.05"
+                    value={posterOpacity}
+                    onChange={(e) => setPosterOpacity(parseFloat(e.target.value))}
+                    style={{ width: 60, accentColor: '#2ea043' }}
+                    title={`Poster Opacity: ${(posterOpacity * 100).toFixed(0)}%`}
+                  />
+                )}
+                <button
+                  className="board-tool-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Change reference poster image"
+                >
+                  CHANGE POSTER
+                </button>
+              </>
+            ) : (
+              <button
+                className="board-tool-btn primary"
+                onClick={() => fileInputRef.current?.click()}
+                title="Load reference poster image"
+                style={{ background: '#238636', borderColor: '#2ea043', color: '#fff' }}
+              >
+                LOAD POSTER
+              </button>
+            )}
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                const img = new Image()
+                img.src = URL.createObjectURL(file)
+                img.onload = () => {
+                  if (onPosterIngested) {
+                    onPosterIngested(img, file)
+                  }
+                }
+              }}
+            />
           </div>
 
           <canvas
             ref={canvasRef}
-            className="board-canvas-viewport"
+            className={`board-canvas-viewport ${isDragOver ? 'dragover' : ''}`}
             onWheel={handleWheel}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
+            onDragLeave={handleDragLeave}
             onClick={handleClick}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
           />
+
+          {/* Hover HUD Overlay showing physical and pixel coordinates */}
+          {hoverSlot && (
+            <div className="board-hud-overlay">
+              <div className="board-hud-row">
+                <span className="board-hud-label">SLOT:</span>
+                <span className="board-hud-val highlight">[{hoverSlot.c}, {hoverSlot.r}]</span>
+                <span className="board-hud-label">TYPE:</span>
+                <span className={`board-hud-val ${
+                  (hoverSlot.r === 0 && hoverSlot.c === 0) ||
+                  (hoverSlot.r === 0 && hoverSlot.c === cols - 1) ||
+                  (hoverSlot.r === rows - 1 && hoverSlot.c === 0) ||
+                  (hoverSlot.r === rows - 1 && hoverSlot.c === cols - 1)
+                    ? 'red'
+                    : hoverSlot.r === 0 || hoverSlot.r === rows - 1 || hoverSlot.c === 0 || hoverSlot.c === cols - 1
+                    ? 'yellow'
+                    : 'green'
+                }`}>
+                  {(hoverSlot.r === 0 && hoverSlot.c === 0) ||
+                  (hoverSlot.r === 0 && hoverSlot.c === cols - 1) ||
+                  (hoverSlot.r === rows - 1 && hoverSlot.c === 0) ||
+                  (hoverSlot.r === rows - 1 && hoverSlot.c === cols - 1)
+                    ? 'CORNER'
+                    : hoverSlot.r === 0 || hoverSlot.r === rows - 1 || hoverSlot.c === 0 || hoverSlot.c === cols - 1
+                    ? 'BORDER'
+                    : 'INTERIOR'}
+                </span>
+                {placedSlots[`${hoverSlot.r},${hoverSlot.c}`] && (
+                  <span className="board-hud-val highlight-green">
+                    [PIECE #{pieceMap.get(placedSlots[`${hoverSlot.r},${hoverSlot.c}`].piece_id)?.piece_number ?? '?'}]
+                  </span>
+                )}
+              </div>
+              {posterWidth > 0 && posterHeight > 0 && (
+                <div className="board-hud-row">
+                  <span className="board-hud-label">POSTER POS:</span>
+                  <span className="board-hud-val">
+                    X:{((hoverSlot.c + 0.5) * (posterWidth / cols)).toFixed(0)} Y:{((hoverSlot.r + 0.5) * (posterHeight / rows)).toFixed(0)} px
+                  </span>
+                </div>
+              )}
+              {physWidthMm > 0 && physHeightMm > 0 && (
+                <div className="board-hud-row">
+                  <span className="board-hud-label">PHYSICAL:</span>
+                  <span className="board-hud-val">
+                    X:{((hoverSlot.c + 0.5) * (physWidthMm / cols)).toFixed(1)} Y:{((hoverSlot.r + 0.5) * (physHeightMm / rows)).toFixed(1)} mm
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Mode C Hole Inspector Sidebar */}
+        {/* Slot Inspector Sidebar */}
         <div className="mode-c-inspector">
           <div className="inspector-header">
-            <span className="inspector-title">MODE C: HOLE TARGETING</span>
+            <span className="inspector-title">SLOT INSPECTOR</span>
             {selectedSlot && (
-              <button className="inspector-close-btn" onClick={() => onSelectSlot(null)}>✕</button>
+              <button className="inspector-close-btn" onClick={() => onSelectSlot(null)}>CLOSE</button>
             )}
           </div>
 
@@ -585,7 +889,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 <div className="placed-piece-detail">
                   <div className="placed-piece-header">
                     <strong>PIECE #{selectedSlotPiece.piece_number}</strong>
-                    <span className="stat-badge placed">LOCKED</span>
+                    <span className="stat-badge placed">PLACED</span>
                   </div>
                   <img
                     src={selectedSlotPiece.thumbnailDataUrl}
@@ -606,12 +910,12 @@ export const BoardView: React.FC<BoardViewProps> = ({
                     className="unplace-btn"
                     onClick={() => onUnplacePiece(selectedSlot.row, selectedSlot.col)}
                   >
-                    UNPLACE BACK TO TRAY
+                    UNPLACE PIECE
                   </button>
 
                   {/* Manual Mating Pair Overrides */}
                   <div className="inspector-artwork-section" style={{ marginTop: 12 }}>
-                    <span className="inspector-label">PHYSICAL MATING PAIRS & OVERRIDES</span>
+                    <span className="inspector-label">MATING PAIRS</span>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
                       {pairedFixtures
                         .filter(f => f.piece_a_id === selectedSlotPiece.id || f.piece_b_id === selectedSlotPiece.id)
@@ -633,7 +937,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                             }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <span style={{ fontSize: 11, fontWeight: 'bold' }}>
-                                  Mate ↔ #{otherPiece?.piece_number ?? otherId.slice(0, 5)}
+                                  Pair with #{otherPiece?.piece_number ?? otherId.slice(0, 5)}
                                 </span>
                                 <span style={{
                                   fontSize: 9,
@@ -663,7 +967,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                                     }}
                                     onClick={() => onUpdatePairStatus(fix.id, 'verified')}
                                   >
-                                    ✓ CONFIRM
+                                    CONFIRM
                                   </button>
                                   <button
                                     className="board-btn"
@@ -677,7 +981,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                                     }}
                                     onClick={() => onUpdatePairStatus(fix.id, 'rejected')}
                                   >
-                                    ✕ REJECT
+                                    REJECT
                                   </button>
                                 </div>
                               )}
@@ -686,7 +990,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                         })}
                       {pairedFixtures.filter(f => f.piece_a_id === selectedSlotPiece.id || f.piece_b_id === selectedSlotPiece.id).length === 0 && (
                         <div style={{ fontSize: 10, color: '#8b949e', fontStyle: 'italic' }}>
-                          No adjacent placed pieces yet to form mating pairs.
+                          No adjacent placed pieces yet.
                         </div>
                       )}
                     </div>
@@ -694,9 +998,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 </div>
               ) : (
                 <>
-                  {/* Expected Artwork Crop (Mode C) */}
+                  {/* Expected Artwork Crop */}
                   <div className="inspector-artwork-section">
-                    <span className="inspector-label">EXPECTED ARTWORK PREVIEW</span>
+                    <span className="inspector-label">EXPECTED ARTWORK</span>
                     <div className="artwork-preview-card">
                       {activeSlotPreview ? (
                         <>
@@ -712,12 +1016,23 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               RGB: [{activeSlotPreview.mean_rgb.join(', ')}]
                             </span>
                           </div>
+                          {activeSlotPreview.mean_lab && (
+                            <div style={{ fontSize: 10, fontFamily: 'monospace', color: '#8b949e' }}>
+                              LAB: L*{activeSlotPreview.mean_lab[0].toFixed(0)} a*{activeSlotPreview.mean_lab[1].toFixed(0)} b*{activeSlotPreview.mean_lab[2].toFixed(0)}
+                            </div>
+                          )}
+                          <div style={{ fontSize: 10, color: '#8b949e', marginTop: 2 }}>
+                            SIZE: {activeSlotPreview.width} × {activeSlotPreview.height} px
+                            {physWidthMm > 0 && physHeightMm > 0 && (
+                              <span> ({(physWidthMm / cols).toFixed(1)} × {(physHeightMm / rows).toFixed(1)} mm)</span>
+                            )}
+                          </div>
                         </>
                       ) : (
                         <div style={{ fontSize: 11, color: '#8b949e', padding: '16px 0', textAlign: 'center' }}>
                           {posterRgba
                             ? 'Generating slot crop...'
-                            : 'Upload reference poster in [2] POSTER & GRID to unlock Mode C artwork previews.'}
+                            : 'Upload reference poster to preview artwork crops.'}
                         </div>
                       )}
                     </div>
@@ -726,7 +1041,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   {/* Required Edge Constraints */}
                   {selectedSlotReq && (
                     <div className="inspector-artwork-section">
-                      <span className="inspector-label">REQUIRED EDGE SIGNATURES</span>
+                      <span className="inspector-label">REQUIRED EDGES</span>
                       <div className="edge-constraints-grid">
                         {(['NORTH', 'EAST', 'SOUTH', 'WEST'] as const).map((dir, idx) => {
                           const req = selectedSlotReq.required_edges[idx]
@@ -744,14 +1059,14 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   )}
 
                   <div className="inspector-help-hint">
-                    💡 The Piece Tray has been automatically filtered for pieces matching this slot. Drag a compatible piece from the tray onto this slot to lock it in!
+                    Place piece under camera to match and place it into this slot.
                   </div>
                 </>
               )}
             </div>
           ) : (
             <div className="inspector-help-hint" style={{ marginTop: 40 }}>
-              Tap any slot on the grid to inspect missing piece requirements, trigger Mode C artwork previews, and filter your piece inventory.
+              Select any slot on the grid to inspect artwork previews and edge requirements.
             </div>
           )}
         </div>

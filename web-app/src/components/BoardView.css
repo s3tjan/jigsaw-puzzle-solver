@@ -87,6 +87,74 @@
   background: #2ea043;
 }
 
+/* Specification & Dimension Controls Bar */
+.board-spec-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: #11151c;
+  border-bottom: 1px solid #30363d;
+  font-size: 11px;
+}
+
+.spec-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spec-group label {
+  color: #8b949e;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.spec-readonly {
+  font-family: monospace;
+  font-weight: 700;
+  color: #58a6ff;
+  padding: 2px 6px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.spec-input {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #f0f6fc;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 11px;
+  width: 52px;
+  text-align: right;
+}
+
+.spec-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.spec-unit {
+  color: #8b949e;
+  font-size: 11px;
+}
+
+.spec-slot-info {
+  margin-left: auto;
+  color: #8b949e;
+  font-size: 10px;
+}
+
+.spec-slot-info b {
+  color: #f0f6fc;
+}
+
 /* Main interactive canvas area */
 .board-main-layout {
   display: flex;
@@ -144,6 +212,66 @@
 
 .board-canvas-viewport:active {
   cursor: grabbing;
+}
+
+.board-canvas-viewport.dragover {
+  outline: 2px dashed #58a6ff;
+  outline-offset: -4px;
+}
+
+/* Hover HUD overlay showing slot coordinates and physical size */
+.board-hud-overlay {
+  position: absolute;
+  top: 48px;
+  left: 12px;
+  background: rgba(13, 17, 23, 0.92);
+  border: 1px solid #30363d;
+  padding: 6px 10px;
+  border-radius: 4px;
+  pointer-events: none;
+  font-size: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+  z-index: 10;
+}
+
+.board-hud-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.board-hud-label {
+  color: #8b949e;
+  font-weight: 600;
+}
+
+.board-hud-val {
+  color: #c9d1d9;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.board-hud-val.highlight {
+  color: #58a6ff;
+}
+
+.board-hud-val.highlight-green {
+  color: #3fb950;
+}
+
+.board-hud-val.red {
+  color: #f85149;
+}
+
+.board-hud-val.yellow {
+  color: #e3b341;
+}
+
+.board-hud-val.green {
+  color: #3fb950;
 }
 
 /* Mode C Hole Inspector Sidebar */

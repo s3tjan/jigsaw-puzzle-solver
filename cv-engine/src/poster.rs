@@ -640,8 +640,11 @@ pub struct PiecePosterMatch {
 }
 
 /// Compute average CIELAB chrominance and 8-bin Sobel gradient histogram for an RGBA image buffer.
+/// If `mask` is provided (e.g. from piece contour segmentation), only pixels where `mask[i] > 128`
+/// are sampled, completely ignoring the surrounding white staging arena paper.
 pub fn extract_visual_fingerprint(
     rgba: &[u8],
+    mask: Option<&[u8]>,
     width: u32,
     height: u32,
 ) -> ([f32; 3], [f32; 8]) {
@@ -655,14 +658,19 @@ pub fn extract_visual_fingerprint(
     let mut sum_a = 0.0f32;
     let mut sum_b = 0.0f32;
 
-    // Subsample step for speed if piece crop is large
-    let step = (pixel_count / 1000).max(1);
+    let step = (pixel_count / 1500).max(1);
     let mut sampled_count = 0.0f32;
 
     for i in (0..pixel_count).step_by(step) {
+        // If a segmentation mask is supplied, only accept piece foreground pixels
+        if let Some(m) = mask {
+            if i < m.len() && m[i] < 128 {
+                continue;
+            }
+        }
         let alpha = rgba[i * 4 + 3];
         if alpha < 50 {
-            continue; // Skip transparent / background
+            continue; // Skip transparent
         }
         let r = rgba[i * 4];
         let g = rgba[i * 4 + 1];
@@ -689,6 +697,11 @@ pub fn extract_visual_fingerprint(
     let mut total_grad = 0.0f32;
 
     for i in 0..pixel_count {
+        if let Some(m) = mask {
+            if m[i] < 128 {
+                continue;
+            }
+        }
         let m = mag[i] as f32;
         if m > 15.0 {
             let bin = (ori[i] as usize).min(7);
@@ -754,62 +767,56 @@ pub fn compute_slot_similarity(
     0.55 * color_score + 0.45 * grad_score
 }
 
-/// WASM entry point: Real-time candidate poster localization.
-/// Scans the piece against all slots across 4 cardinal rotations (0°, 90°, 180°, 270°)
-/// and returns the best matching slots with confidence scores.
+/// Precomputed visual descriptor for a single poster grid slot.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrecomputedSlotDescriptor {
+    pub col: u32,
+    pub row: u32,
+    pub mean_lab: [f32; 3],
+    pub grad_hist: [f32; 8],
+    pub is_border: bool,
+    pub is_corner: bool,
+}
+
+/// Precomputes visual descriptors (CIELAB color & Sobel orientation histogram) for all grid slots
+/// once when poster is ingested, eliminating per-frame convolutions.
 #[wasm_bindgen]
-pub fn locate_piece_on_poster(
-    piece_rgba: &[u8],
-    piece_w: u32,
-    piece_h: u32,
+pub fn precompute_poster_slots(
     poster_rgba: &[u8],
     poster_w: u32,
     poster_h: u32,
     cols: u32,
     rows: u32,
-    is_border_hint: bool,
-    is_corner_hint: bool,
 ) -> Result<JsValue, JsValue> {
-    if cols == 0 || rows == 0 || poster_w == 0 || poster_h == 0 || piece_w == 0 || piece_h == 0 {
-        return Err(JsValue::from_str("Invalid dimensions for poster localization"));
+    if cols == 0 || rows == 0 || poster_w == 0 || poster_h == 0 {
+        return Err(JsValue::from_str("Invalid dimensions for poster precomputation"));
     }
-
-    // Extract piece fingerprint
-    let (piece_lab, piece_hist) = extract_visual_fingerprint(piece_rgba, piece_w, piece_h);
 
     let cell_w = (poster_w as f32 / cols as f32).round() as usize;
     let cell_h = (poster_h as f32 / rows as f32).round() as usize;
 
-    let mut scored_slots: Vec<CandidatePosterSlot> = Vec::new();
-
-    // Rotations: 0 = 0°, 1 = 90°, 2 = 180°, 3 = 270°
-    let rotations_deg = [0.0f32, 90.0f32, 180.0f32, 270.0f32];
+    let mut descriptors: Vec<PrecomputedSlotDescriptor> = Vec::with_capacity((cols * rows) as usize);
 
     for r in 0..rows {
         for c in 0..cols {
-            let is_slot_corner = (r == 0 && c == 0) || (r == 0 && c == cols - 1)
+            let is_corner = (r == 0 && c == 0) || (r == 0 && c == cols - 1)
                 || (r == rows - 1 && c == 0) || (r == rows - 1 && c == cols - 1);
-            let is_slot_border = r == 0 || r == rows - 1 || c == 0 || c == cols - 1;
+            let is_border = r == 0 || r == rows - 1 || c == 0 || c == cols - 1;
 
-            // Geometry filter: if piece is known corner/border, only check appropriate slots
-            if is_corner_hint && !is_slot_corner {
-                continue;
-            }
-            if is_border_hint && !is_corner_hint && (!is_slot_border || is_slot_corner) {
-                continue;
-            }
-            if !is_border_hint && is_slot_border {
-                // If piece is pure interior, penalize or skip borders
-                continue;
-            }
-
-            // Extract slot crop sample (downsampled central region for speed)
             let x0 = (c as f32 * (poster_w as f32 / cols as f32)) as usize;
             let y0 = (r as f32 * (poster_h as f32 / rows as f32)) as usize;
             let sub_w = cell_w.min(poster_w as usize - x0);
             let sub_h = cell_h.min(poster_h as usize - y0);
 
             if sub_w < 4 || sub_h < 4 {
+                descriptors.push(PrecomputedSlotDescriptor {
+                    col: c,
+                    row: r,
+                    mean_lab: [50.0, 0.0, 0.0],
+                    grad_hist: [0.125; 8],
+                    is_border,
+                    is_corner,
+                });
                 continue;
             }
 
@@ -823,33 +830,91 @@ pub fn locate_piece_on_poster(
                 }
             }
 
-            let (slot_lab, slot_hist) = extract_visual_fingerprint(&slot_rgba, sub_w as u32, sub_h as u32);
-
-            // Test across 4 rotations
-            let mut best_rot = 0.0f32;
-            let mut max_sim = 0.0f32;
-
-            for (k, &rot_deg) in rotations_deg.iter().enumerate() {
-                let rot_hist = rotate_gradient_histogram(&piece_hist, k);
-                let sim = compute_slot_similarity(&piece_lab, &rot_hist, &slot_lab, &slot_hist);
-                if sim > max_sim {
-                    max_sim = sim;
-                    best_rot = rot_deg;
-                }
-            }
-
-            scored_slots.push(CandidatePosterSlot {
+            let (slot_lab, slot_hist) = extract_visual_fingerprint(&slot_rgba, None, sub_w as u32, sub_h as u32);
+            descriptors.push(PrecomputedSlotDescriptor {
                 col: c,
                 row: r,
-                rotation_deg: best_rot,
-                confidence: max_sim,
+                mean_lab: slot_lab,
+                grad_hist: slot_hist,
+                is_border,
+                is_corner,
             });
         }
     }
 
-    // Sort descending by confidence
-    scored_slots.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    serde_wasm_bindgen::to_value(&descriptors).map_err(|e| JsValue::from_str(&e.to_string()))
+}
 
+/// Fast candidate search running against precomputed slot descriptors in < 2ms.
+#[wasm_bindgen]
+pub fn locate_piece_fast(
+    piece_rgba: &[u8],
+    piece_mask: &[u8],
+    piece_w: u32,
+    piece_h: u32,
+    precomputed_slots_json: JsValue,
+    is_border_hint: bool,
+    is_corner_hint: bool,
+) -> Result<JsValue, JsValue> {
+    if piece_w == 0 || piece_h == 0 {
+        return Err(JsValue::from_str("Invalid piece dimensions"));
+    }
+
+    let descriptors: Vec<PrecomputedSlotDescriptor> = serde_wasm_bindgen::from_value(precomputed_slots_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse descriptors: {}", e)))?;
+
+    let mask_opt = if !piece_mask.is_empty() { Some(piece_mask) } else { None };
+    let (piece_lab, piece_hist) = extract_visual_fingerprint(piece_rgba, mask_opt, piece_w, piece_h);
+
+    let rotations_deg = [0.0f32, 90.0f32, 180.0f32, 270.0f32];
+    let rot_hists: [[f32; 8]; 4] = [
+        rotate_gradient_histogram(&piece_hist, 0),
+        rotate_gradient_histogram(&piece_hist, 1),
+        rotate_gradient_histogram(&piece_hist, 2),
+        rotate_gradient_histogram(&piece_hist, 3),
+    ];
+
+    let mut scored_slots: Vec<CandidatePosterSlot> = Vec::with_capacity(descriptors.len());
+
+    // Literature Constraint Satisfaction Problem (CSP) Topological Domain Partitioning:
+    // A piece with 0 flat edges is strictly interior; 1 flat edge is strictly border; 2 flat edges is strictly corner.
+    // Rather than scaling similarity scores with arbitrary numbers, filter the search domain directly.
+    for desc in &descriptors {
+        if is_corner_hint {
+            if !desc.is_corner {
+                continue;
+            }
+        } else if is_border_hint {
+            if !desc.is_border || desc.is_corner {
+                continue;
+            }
+        } else {
+            // Interior piece: strictly exclude borders and corners
+            if desc.is_border || desc.is_corner {
+                continue;
+            }
+        }
+
+        let mut best_rot = 0.0f32;
+        let mut max_sim = 0.0f32;
+
+        for (k, &rot_deg) in rotations_deg.iter().enumerate() {
+            let sim = compute_slot_similarity(&piece_lab, &rot_hists[k], &desc.mean_lab, &desc.grad_hist);
+            if sim > max_sim {
+                max_sim = sim;
+                best_rot = rot_deg;
+            }
+        }
+
+        scored_slots.push(CandidatePosterSlot {
+            col: desc.col,
+            row: desc.row,
+            rotation_deg: best_rot,
+            confidence: max_sim.min(1.0),
+        });
+    }
+
+    scored_slots.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
     let top_candidates: Vec<CandidatePosterSlot> = scored_slots.iter().take(5).cloned().collect();
 
     let (best_col, best_row, best_rotation_deg, confidence) = if let Some(best) = top_candidates.first() {

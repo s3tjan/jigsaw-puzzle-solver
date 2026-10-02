@@ -5,24 +5,19 @@ import init, {
   measure_stage_focus,
   analyze_staged_piece,
   map_dewarped_points_to_camera,
-  locate_piece_on_poster,
+  precompute_poster_slots,
+  locate_piece_fast,
 } from './pkg/cv_engine'
-import { PosterCanvas } from './components/PosterCanvas'
-import { PieceTray } from './components/PieceTray'
-import type { SlotRequirementFilter } from './components/PieceTray'
 import { BoardView } from './components/BoardView'
 import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from './storage/db'
 import {
   getAllPieces,
   savePiece,
-  deletePiece,
-  clearAllPieces,
   getAllPlacedSlots,
   placePieceOnBoard,
   unplacePieceFromBoard,
   exportAssemblyDataset,
   importAssemblyDataset,
-  savePairedFixture,
   getAllPairedFixtures,
   syncBoardMatingPairs,
   updatePairedFixtureStatus,
@@ -88,23 +83,24 @@ export default function App() {
   const [focusScore, setFocusScore] = useState<number>(0)
   const [detectedPiece, setDetectedPiece] = useState<ScannedPiece | null>(null)
   const [scannedPieces, setScannedPieces] = useState<ScannedPiece[]>([])
-  const [activeTab, setActiveTab] = useState<'camera' | 'poster' | 'board'>('camera')
 
   // Phase 7: Persistent Inventory & Board State
-  const [trayPieces, setTrayPieces] = useState<StoredPiece[]>([])
+  const [storedPieces, setStoredPieces] = useState<StoredPiece[]>([])
   const [placedSlots, setPlacedSlots] = useState<Record<string, PlacedBoardSlot>>({})
-  const [selectedTrayPieceId, setSelectedTrayPieceId] = useState<string | null>(null)
   const [selectedBoardSlot, setSelectedBoardSlot] = useState<{ row: number; col: number } | null>(null)
-  const [slotRequirementFilter, setSlotRequirementFilter] = useState<SlotRequirementFilter | null>(null)
-  const [pairingSourcePieceId, setPairingSourcePieceId] = useState<string | null>(null)
 
-  // Shared Reference Poster for Mode C Hole-Targeting Previews
+  // Shared Reference Poster for Underlay, Mode C Previews, and Coordinate Localization
   const [posterRgba, setPosterRgba] = useState<Uint8Array | null>(null)
+  const [posterFileName, setPosterFileName] = useState<string>('')
   const [posterDims, setPosterDims] = useState<{ w: number; h: number; cols: number; rows: number }>({
     w: 0,
     h: 0,
-    cols: 36,
-    rows: 28,
+    cols: 0,
+    rows: 0,
+  })
+  const [physDims, setPhysDims] = useState<{ wMm: number; hMm: number }>({
+    wMm: 700,
+    hMm: 500,
   })
 
   // Phase 8: Unified Cockpit & Real-Time Poster Localization State
@@ -117,6 +113,7 @@ export default function App() {
     top_candidates: { col: number; row: number; rotation_deg: number; confidence: number }[]
   } | null>(null)
   const lastLocalizationTimeRef = useRef<number>(0)
+  const precomputedSlotsRef = useRef<any>(null)
 
   // Load persistent pieces and board state from IndexedDB on startup
   const refreshStorage = useCallback(async () => {
@@ -126,7 +123,7 @@ export default function App() {
         getAllPlacedSlots(),
         getAllPairedFixtures(),
       ])
-      setTrayPieces(allPieces)
+      setStoredPieces(allPieces)
       setPlacedSlots(allSlots)
       setPairedFixtures(allFixtures)
     } catch (err) {
@@ -862,11 +859,15 @@ export default function App() {
               latestDewarpedRef.current = new Uint8Array(dewarped)
 
               let livePiece: ScannedPiece | null = null
+              let liveMask: Uint8Array | null = null
 
               // Piece boundary & corner analysis (only update live piece if not in GT mode)
               if (!isGtModeRef.current) {
                 const result = analyze_staged_piece(dewarped, dstW, dstH, curSens)
                 const rawPiece: ScannedPiece | null = result?.piece || null
+                if (result?.binary_mask) {
+                  liveMask = new Uint8Array(result.binary_mask)
+                }
 
                 // Multi-Frame Stability Consensus Filter:
                 if (rawPiece) {
@@ -962,29 +963,26 @@ export default function App() {
                 setDetectedPiece(livePiece)
                 detectedPieceRef.current = livePiece
 
-                // Real-Time Poster Localization (Literature Principle 2: Vision Proposal Tier)
-                if (livePiece && posterRgba && posterDims.w > 0 && posterDims.h > 0) {
+                // Real-Time Poster Localization (< 2ms fast precomputed candidate search)
+                if (livePiece && precomputedSlotsRef.current) {
                   const nowLoc = performance.now()
-                  if (nowLoc - lastLocalizationTimeRef.current >= 150) {
+                  if (nowLoc - lastLocalizationTimeRef.current >= 120) {
                     lastLocalizationTimeRef.current = nowLoc
                     try {
-                      const match = locate_piece_on_poster(
+                      const match = locate_piece_fast(
                         dewarped,
+                        liveMask || new Uint8Array(0),
                         dstW,
                         dstH,
-                        posterRgba,
-                        posterDims.w,
-                        posterDims.h,
-                        posterDims.cols,
-                        posterDims.rows,
+                        precomputedSlotsRef.current,
                         livePiece.is_border,
                         livePiece.is_corner
                       )
-                      if (match && match.confidence > 0.4) {
+                      if (match && match.confidence > 0.35) {
                         setActivePosterMatch(match)
                       }
                     } catch (locErr) {
-                      console.warn('Poster localization error:', locErr)
+                      console.warn('Poster fast localization error:', locErr)
                     }
                   }
                 } else if (!livePiece) {
@@ -1159,7 +1157,7 @@ export default function App() {
     const metricH = detectedPiece.bounding_height * mmPerPx
 
     const now = Date.now()
-    const nextPieceNum = trayPieces.length + 1
+    const nextPieceNum = storedPieces.length + 1
     const stored: StoredPiece = {
       id: `piece_${now}_${nextPieceNum}`,
       piece_number: nextPieceNum,
@@ -1201,28 +1199,6 @@ export default function App() {
     }
   }
 
-  // Tray management callbacks
-  const handleToggleFavorite = async (pieceId: string) => {
-    const piece = trayPieces.find((p) => p.id === pieceId)
-    if (!piece) return
-    const updated: StoredPiece = { ...piece, is_favorite: !piece.is_favorite }
-    await savePiece(updated)
-    await refreshStorage()
-  }
-
-  const handleDeletePiece = async (pieceId: string) => {
-    await deletePiece(pieceId)
-    if (selectedTrayPieceId === pieceId) setSelectedTrayPieceId(null)
-    await refreshStorage()
-  }
-
-  const handleClearAllPieces = async () => {
-    await clearAllPieces()
-    setScannedPieces([])
-    setSelectedTrayPieceId(null)
-    setSelectedBoardSlot(null)
-    await refreshStorage()
-  }
 
   // Board placement callbacks
   const handlePlacePiece = async (row: number, col: number, pieceId: string, rotation: number) => {
@@ -1232,7 +1208,7 @@ export default function App() {
       ...placedSlots,
       [`${row},${col}`]: { row, col, piece_id: pieceId, rotation, placed_at: Date.now() },
     }
-    await syncBoardMatingPairs(posterDims.rows, posterDims.cols, updatedPlacedSlots, trayPieces)
+    await syncBoardMatingPairs(posterDims.rows, posterDims.cols, updatedPlacedSlots, storedPieces)
     await refreshStorage()
   }
 
@@ -1266,7 +1242,7 @@ export default function App() {
     const metricH = detectedPiece.bounding_height * mmPerPx
 
     const now = Date.now()
-    const nextPieceNum = trayPieces.length + 1
+    const nextPieceNum = storedPieces.length + 1
     const pieceId = `piece_${now}_${nextPieceNum}`
 
     // Map rotation_deg (0, 90, 180, 270) to board rotation index (0, 1, 2, 3)
@@ -1315,29 +1291,6 @@ export default function App() {
     await refreshStorage()
   }
 
-  // Pair designation for Phase 8 ground truth
-  const handleStartPairing = (pieceId: string) => {
-    if (!pairingSourcePieceId) {
-      setPairingSourcePieceId(pieceId)
-    } else if (pairingSourcePieceId !== pieceId) {
-      // Complete pair fixture
-      const fixture: GroundTruthPairFixture = {
-        id: `pair_${Date.now()}`,
-        piece_a_id: pairingSourcePieceId,
-        piece_a_edge_idx: 0,
-        piece_b_id: pieceId,
-        piece_b_edge_idx: 2,
-        status: 'verified',
-        source: 'manual',
-        created_at: Date.now(),
-      }
-      savePairedFixture(fixture).then(() => {
-        setPairingSourcePieceId(null)
-        refreshStorage()
-        alert('Pair designated and saved to Ground-Truth Assembly dataset!')
-      })
-    }
-  }
 
   // Export / Import fixtures (with Phase 8 ground-truth mating pair filtering)
   const handleExportFixtures = async () => {
@@ -1503,26 +1456,9 @@ export default function App() {
         <div className="header-brand">
           <strong>JIGSAW SOLVER</strong>
           <span className="badge">100mm MAT</span>
-          <nav className="header-nav" style={{ marginLeft: 16 }}>
-            <button
-              className={`nav-tab ${activeTab === 'camera' ? 'active' : ''}`}
-              onClick={() => setActiveTab('camera')}
-            >
-              [1] LIVE CAMERA &amp; SCANNER
-            </button>
-            <button
-              className={`nav-tab ${activeTab === 'poster' ? 'active' : ''}`}
-              onClick={() => setActiveTab('poster')}
-            >
-              [2] POSTER &amp; GRID
-            </button>
-            <button
-              className={`nav-tab ${activeTab === 'board' ? 'active' : ''}`}
-              onClick={() => setActiveTab('board')}
-            >
-              [3] ASSEMBLY BOARD &amp; TRAY ({trayPieces.length})
-            </button>
-          </nav>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+            CAMERA | BOARD | POSTER ({storedPieces.length} saved)
+          </span>
         </div>
 
         <div className="header-status">
@@ -1538,79 +1474,24 @@ export default function App() {
         </div>
       </header>
 
-      {/* 2. Main View: Poster Canvas, Board & Tray, OR Camera Workbench */}
-      {activeTab === 'poster' ? (
-        <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <PosterCanvas
-            wasmReady={wasmReady}
-            onPosterIngested={(poster, img) => {
-              setPosterDims({
-                w: img.naturalWidth,
-                h: img.naturalHeight,
-                cols: poster.metadata.grid_cols,
-                rows: poster.metadata.grid_rows,
-              })
-              // Cache RGBA buffer from image
-              const off = document.createElement('canvas')
-              off.width = img.naturalWidth
-              off.height = img.naturalHeight
-              const ctx = off.getContext('2d')
-              if (ctx) {
-                ctx.drawImage(img, 0, 0)
-                const imgData = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight)
-                setPosterRgba(new Uint8Array(imgData.data.buffer))
-              }
-            }}
-          />
-        </main>
-      ) : activeTab === 'board' ? (
-        <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
-          <BoardView
-            rows={posterDims.rows}
-            cols={posterDims.cols}
-            pieces={trayPieces}
-            placedSlots={placedSlots}
-            pairedFixtures={pairedFixtures}
-            onPlacePiece={handlePlacePiece}
-            onUnplacePiece={handleUnplacePiece}
-            selectedSlot={selectedBoardSlot}
-            onSelectSlot={setSelectedBoardSlot}
-            onSetSlotFilter={setSlotRequirementFilter}
-            onUpdatePairStatus={handleUpdatePairStatus}
-            posterRgba={posterRgba}
-            posterWidth={posterDims.w}
-            posterHeight={posterDims.h}
-            onExportFixtures={handleExportFixtures}
-            onImportFixtures={handleImportFixtures}
-          />
-          <PieceTray
-            pieces={trayPieces}
-            selectedPieceId={selectedTrayPieceId}
-            onSelectPiece={(piece) => setSelectedTrayPieceId(piece ? piece.id : null)}
-            onToggleFavorite={handleToggleFavorite}
-            onDeletePiece={handleDeletePiece}
-            onClearAllPieces={handleClearAllPieces}
-            slotFilter={slotRequirementFilter}
-            onClearSlotFilter={() => {
-              setSelectedBoardSlot(null)
-              setSlotRequirementFilter(null)
-            }}
-            onStartPairingWith={handleStartPairing}
-            pairingSourcePieceId={pairingSourcePieceId}
-            onCancelPairing={() => setPairingSourcePieceId(null)}
-          />
-        </main>
-      ) : (
+      {/* Main Workbench: Camera Scanner (Left), Assembly Board & Reference Poster (Right) */}
       <main className="main-workbench">
-        {/* Left: Overhead Camera */}
-        <section className="workbench-panel">
+        {/* Left Column: Camera View & Piece Diagnostics */}
+        <section className="workbench-panel" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="panel-header">
-            <span>[1] CAMERA VIEW</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>CAMERA &amp; SCANNER</span>
+              {gtSavedCount > 0 && (
+                <span className="badge" style={{ background: '#2b6cb0', color: '#fff', fontSize: 9 }}>
+                  GT #{gtSavedCount}
+                </span>
+              )}
+            </div>
             <div className="panel-actions">
               {isCameraActive ? (
-                <button className="btn small" onClick={stopCamera}>STOP CAMERA</button>
+                <button className="btn small" onClick={stopCamera}>STOP</button>
               ) : (
-                <button className="btn small primary" onClick={startCamera}>START CAMERA</button>
+                <button className="btn small primary" onClick={startCamera}>START</button>
               )}
               <button
                 className={`btn small ${isMirror ? 'primary' : ''}`}
@@ -1620,12 +1501,12 @@ export default function App() {
                 {isMirror ? 'MIRRORED' : 'MIRROR'}
               </button>
               <button className="btn small" onClick={handleSnapAll} title="Snap fiducial corners to nearest target">
-                SNAP CORNERS
+                SNAP
               </button>
             </div>
           </div>
 
-          <div className="panel-view">
+          <div className="panel-view" style={{ minHeight: 440, flex: 1, background: '#000' }}>
             <video
               ref={videoRef}
               playsInline
@@ -1651,27 +1532,15 @@ export default function App() {
               </div>
             )}
           </div>
-        </section>
 
-        {/* Offscreen 384x384 canvas for Ground Truth JPEG export */}
-        <canvas ref={pieceCanvasRef} width={384} height={384} style={{ display: 'none' }} />
+          {/* Offscreen 384x384 canvas for Ground Truth JPEG export */}
+          <canvas ref={pieceCanvasRef} width={384} height={384} style={{ display: 'none' }} />
 
-        {/* Right: Piece Diagnostics & Ground-Truth Station */}
-        <section className="workbench-panel">
-          <div className="panel-header">
-            <span>[2] PIECE & GROUND TRUTH STATION</span>
-            <div className="panel-actions">
-              <span className={detectedPiece ? 'green' : 'muted'} style={{ marginRight: 6 }}>
-                {detectedPiece ? 'TARGET IN STAGE' : 'NO PIECE'}
-              </span>
-              <span className="badge" style={{ background: '#2b6cb0' }}>BENCHMARK #{gtSavedCount}</span>
-            </div>
-          </div>
-
-          <div className="panel-body" style={{ padding: 14, gap: 12, alignItems: 'stretch' }}>
+          {/* Staged Piece Diagnostics & Fast Placement */}
+          <div className="panel-body" style={{ padding: 10, gap: 8, alignItems: 'stretch' }}>
             {!isGtMode ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%', justifyContent: 'space-between' }}>
-                <div className="piece-data-card" style={{ width: '100%', maxWidth: 'none' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%', justifyContent: 'space-between' }}>
+                <div className="piece-data-card" style={{ width: '100%', maxWidth: 'none', padding: 8 }}>
                   <div className="data-row">
                     <span className="data-label">AUTO TYPE:</span>
                     <span className={`data-val ${detectedPiece ? (detectedPiece.is_corner ? 'red' : detectedPiece.is_border ? 'yellow' : 'green') : ''}`}>
@@ -1696,7 +1565,7 @@ export default function App() {
                   </div>
 
                   <div className="data-row">
-                    <span className="data-label">AUTO EDGES:</span>
+                    <span className="data-label">EDGES:</span>
                     <div className="edge-pills">
                       {detectedPiece ? (
                         detectedPiece.edges.map((e, idx) => (
@@ -1711,27 +1580,27 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Phase 8: Real-Time Poster Localization Proposal & 1-Click Fast Placement */}
+                {/* Real-Time Poster Localization Match & Fast Placement Button */}
                 {activePosterMatch && (
                   <div style={{
                     background: '#161b22',
                     border: '1px solid #d29922',
                     borderRadius: 4,
-                    padding: '10px 12px',
+                    padding: '8px 10px',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 8,
+                    gap: 6,
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 11, fontWeight: 'bold', color: '#ffd33d' }}>
-                        🎯 POSTER CANDIDATE
+                      <span style={{ fontSize: 11, fontWeight: 'bold', color: '#58a6ff' }}>
+                        CANDIDATE SLOT
                       </span>
                       <span className="badge" style={{ background: '#d2992222', color: '#d29922', border: '1px solid #d29922' }}>
                         {((activePosterMatch.confidence) * 100).toFixed(0)}% MATCH
                       </span>
                     </div>
 
-                    <div style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                    <div style={{ fontSize: 11, display: 'flex', justifyContent: 'space-between' }}>
                       <span>SLOT: <b>[R{activePosterMatch.best_row}, C{activePosterMatch.best_col}]</b></span>
                       <span>ORIENTATION: <b>{activePosterMatch.best_rotation_deg.toFixed(0)}°</b></span>
                     </div>
@@ -1743,31 +1612,25 @@ export default function App() {
                         borderColor: '#2ea043',
                         color: '#fff',
                         fontWeight: 'bold',
-                        padding: '8px',
-                        fontSize: 12,
+                        padding: '6px',
+                        fontSize: 11,
                       }}
                       onClick={handlePlaceDetectedCandidate}
                     >
-                      ⚡ PLACE AT [R{activePosterMatch.best_row}, C{activePosterMatch.best_col}] [ENTER]
+                      PLACE AT [R{activePosterMatch.best_row}, C{activePosterMatch.best_col}]
                     </button>
                   </div>
                 )}
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <button
                     className="btn"
                     disabled={!detectedPiece}
                     onClick={handleRecordPiece}
-                    title="Add detected piece to session collection"
+                    title="Save detected piece to database"
                   >
-                    RECORD TO TRAY ONLY
+                    SAVE PIECE
                   </button>
-
-                  <div style={{ background: '#161b22', padding: 10, borderRadius: 4, border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                    <strong style={{ color: '#fff' }}>Ground Truth Benchmark:</strong>
-                    <br />
-                    Freeze current piece frame to accurately verify corners and edge classifications for regression testing.
-                  </div>
 
                   <button
                     className="btn"
@@ -1775,24 +1638,23 @@ export default function App() {
                     disabled={!detectedPiece}
                     onClick={handleFreezeGroundTruth}
                   >
-                    START LABELING [SPACE]
+                    LABEL GROUND TRUTH
                   </button>
                 </div>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  Drag <b>cyan pins (C1..C4)</b> on preview or click a corner below to reposition:
+                  Drag <b>cyan pins (C1..C4)</b> on preview:
                 </div>
 
-                {/* Corner Coordinates & Reposition Controls */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, background: '#161b22', padding: 6, borderRadius: 4, border: '1px solid var(--border)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, background: '#161b22', padding: 4, borderRadius: 4, border: '1px solid var(--border)' }}>
                   {gtCorners && gtCorners.map((pt, i) => (
                     <div
                       key={i}
                       onClick={() => setDraggingGtCorner(draggingGtCorner === i ? null : i)}
                       style={{
-                        padding: '4px 6px',
+                        padding: '3px 5px',
                         background: draggingGtCorner === i ? '#00e5ff22' : '#21262d',
                         border: `1px solid ${draggingGtCorner === i ? '#00e5ff' : 'var(--border)'}`,
                         borderRadius: 3,
@@ -1800,9 +1662,7 @@ export default function App() {
                         fontSize: 9,
                         display: 'flex',
                         justifyContent: 'space-between',
-                        alignItems: 'center',
                       }}
-                      title={`Click to place C${i + 1}`}
                     >
                       <b style={{ color: draggingGtCorner === i ? '#00e5ff' : 'var(--text)' }}>C{i + 1}</b>
                       <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
@@ -1810,20 +1670,17 @@ export default function App() {
                   ))}
                 </div>
 
-                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  Set true physical edge characteristics:
-                </div>
-
                 <div className="gt-edge-list">
                   {gtEdges.map((type, idx) => (
-                    <div key={idx} className={`gt-edge-item ${type.toLowerCase()}`}>
-                      <span className="gt-edge-label">Edge {idx + 1} (C{idx + 1}→C{((idx + 1) % 4) + 1}):</span>
+                    <div key={idx} className={`gt-edge-item ${type.toLowerCase()}`} style={{ padding: '3px 6px' }}>
+                      <span className="gt-edge-label" style={{ fontSize: 10 }}>E{idx + 1}:</span>
                       <div className="gt-edge-toggle">
                         {(['Tab', 'Hole', 'Flat'] as const).map((t) => (
                           <button
                             key={t}
                             className={`gt-edge-btn ${type === t ? `active ${t.toLowerCase()}` : ''}`}
                             onClick={() => handleToggleEdgeType(idx, t)}
+                            style={{ padding: '2px 5px', fontSize: 9 }}
                           >
                             {t}
                           </button>
@@ -1833,28 +1690,17 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="data-row" style={{ marginTop: 2, padding: '2px 4px' }}>
-                  <span className="data-label">VERIFIED TYPE:</span>
-                  <b style={{
-                    color: gtEdges.filter(t => t === 'Flat').length >= 2 ? 'var(--red)' :
-                      gtEdges.filter(t => t === 'Flat').length === 1 ? 'var(--yellow)' : 'var(--green)'
-                  }}>
-                    {gtEdges.filter(t => t === 'Flat').length >= 2 ? 'CORNER' :
-                      gtEdges.filter(t => t === 'Flat').length === 1 ? 'BORDER' : 'INTERIOR'}
-                  </b>
-                </div>
-
                 {gtSaveStatus && (
                   <div style={{ fontSize: 10, textAlign: 'center', color: gtSaveStatus.startsWith('✓') ? '#38a169' : '#e53e3e' }}>
                     {gtSaveStatus}
                   </div>
                 )}
 
-                <div className="gt-actions" style={{ marginTop: 8 }}>
-                  <button className="btn" onClick={handleExitGtMode}>
+                <div className="gt-actions" style={{ marginTop: 4 }}>
+                  <button className="btn small" onClick={handleExitGtMode}>
                     CANCEL [ESC]
                   </button>
-                  <button className="btn primary" onClick={handleSaveGroundTruth}>
+                  <button className="btn small primary" onClick={handleSaveGroundTruth}>
                     SAVE [SPACE]
                   </button>
                 </div>
@@ -1863,9 +1709,88 @@ export default function App() {
           </div>
         </section>
 
-
+        {/* Right Column: Unified Assembly Board & Reference Poster */}
+        <section className="workbench-panel center-panel">
+          <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
+            <BoardView
+              rows={posterDims.rows > 0 ? posterDims.rows : 28}
+              cols={posterDims.cols > 0 ? posterDims.cols : 36}
+              pieces={storedPieces}
+              placedSlots={placedSlots}
+              pairedFixtures={pairedFixtures}
+              onPlacePiece={handlePlacePiece}
+              onUnplacePiece={handleUnplacePiece}
+              selectedSlot={selectedBoardSlot}
+              onSelectSlot={setSelectedBoardSlot}
+              onUpdatePairStatus={handleUpdatePairStatus}
+              posterRgba={posterRgba}
+              posterWidth={posterDims.w}
+              posterHeight={posterDims.h}
+              posterFileName={posterFileName}
+              physWidthMm={physDims.wMm}
+              physHeightMm={physDims.hMm}
+              onExportFixtures={handleExportFixtures}
+              onImportFixtures={handleImportFixtures}
+              onPosterIngested={(img, file) => {
+                const detectedCols = posterDims.cols > 0 ? posterDims.cols : 36
+                const detectedRows = posterDims.rows > 0 ? posterDims.rows : 28
+                setPosterFileName(file.name)
+                setPosterDims({
+                  w: img.naturalWidth,
+                  h: img.naturalHeight,
+                  cols: detectedCols,
+                  rows: detectedRows,
+                })
+                const off = document.createElement('canvas')
+                off.width = img.naturalWidth
+                off.height = img.naturalHeight
+                const ctx = off.getContext('2d')
+                if (ctx) {
+                  ctx.drawImage(img, 0, 0)
+                  const imgData = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight)
+                  const bytes = new Uint8Array(imgData.data.buffer)
+                  setPosterRgba(bytes)
+                  try {
+                    precomputedSlotsRef.current = precompute_poster_slots(
+                      bytes,
+                      img.naturalWidth,
+                      img.naturalHeight,
+                      detectedCols,
+                      detectedRows
+                    )
+                  } catch (err) {
+                    console.error('Failed to precompute poster slots:', err)
+                  }
+                }
+              }}
+              onUpdateDimensions={(newCols, newRows, newWidthMm, newHeightMm) => {
+                setPosterDims(prev => ({
+                  ...prev,
+                  cols: newCols,
+                  rows: newRows,
+                }))
+                setPhysDims({
+                  wMm: newWidthMm,
+                  hMm: newHeightMm,
+                })
+                if (posterRgba && posterDims.w > 0 && posterDims.h > 0) {
+                  try {
+                    precomputedSlotsRef.current = precompute_poster_slots(
+                      posterRgba,
+                      posterDims.w,
+                      posterDims.h,
+                      newCols,
+                      newRows
+                    )
+                  } catch (err) {
+                    console.error('Failed to recompute poster slots on dimension update:', err)
+                  }
+                }
+              }}
+            />
+          </div>
+        </section>
       </main>
-      )}
 
       {/* 3. Bottom Controls & Scanned Piece History */}
       <footer className="app-footer">

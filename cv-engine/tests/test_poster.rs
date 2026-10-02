@@ -203,8 +203,8 @@ fn test_locate_piece_on_poster_synthetic() {
         }
     }
 
-    let (red_lab, red_hist) = extract_visual_fingerprint(&red_rgba, 32, 32);
-    let (blue_lab, blue_hist) = extract_visual_fingerprint(&blue_rgba, 32, 32);
+    let (red_lab, red_hist) = extract_visual_fingerprint(&red_rgba, None, 32, 32);
+    let (blue_lab, blue_hist) = extract_visual_fingerprint(&blue_rgba, None, 32, 32);
 
     // Self similarity should be near 1.0
     let self_sim = compute_slot_similarity(&red_lab, &red_hist, &red_lab, &red_hist);
