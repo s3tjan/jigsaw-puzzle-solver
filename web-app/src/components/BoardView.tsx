@@ -16,6 +16,38 @@ export interface SlotRequirementFilter {
   ]
 }
 
+export function suggestGridForPieceCount(targetPieces: number, targetAspect = 1.4): { cols: number; rows: number; total: number } {
+  if (targetPieces <= 4) return { cols: 2, rows: 2, total: 4 }
+
+  let bestCols = Math.round(Math.sqrt(targetPieces * targetAspect))
+  let bestRows = Math.round(targetPieces / (bestCols || 1))
+  let bestDiff = Math.abs(bestCols * bestRows - targetPieces)
+  let bestAspectDiff = Math.abs((bestCols / (bestRows || 1)) - targetAspect)
+
+  const maxR = Math.max(10, Math.floor(Math.sqrt(targetPieces * 2)))
+  for (let r = 2; r <= maxR; r++) {
+    const c = Math.round(targetPieces / r)
+    const total = c * r
+    const diff = Math.abs(total - targetPieces)
+    const aspectDiff = Math.abs((c / (r || 1)) - targetAspect)
+
+    if (diff < bestDiff || (diff === bestDiff && aspectDiff < bestAspectDiff)) {
+      bestCols = c
+      bestRows = r
+      bestDiff = diff
+      bestAspectDiff = aspectDiff
+    }
+  }
+
+  if (targetAspect >= 1.0 && bestCols < bestRows) {
+    const tmp = bestCols
+    bestCols = bestRows
+    bestRows = tmp
+  }
+
+  return { cols: bestCols, rows: bestRows, total: bestCols * bestRows }
+}
+
 interface BoardViewProps {
   rows: number
   cols: number
@@ -89,13 +121,16 @@ export const BoardView: React.FC<BoardViewProps> = ({
   // Puzzle specification configuration states
   const [inputCols, setInputCols] = useState<number>(cols)
   const [inputRows, setInputRows] = useState<number>(rows)
+  const [inputTotalPieces, setInputTotalPieces] = useState<number>(cols * rows)
   const [inputWidthMm, setInputWidthMm] = useState<number>(physWidthMm)
   const [inputHeightMm, setInputHeightMm] = useState<number>(physHeightMm)
+  const [appliedFeedback, setAppliedFeedback] = useState<boolean>(false)
 
   // Synchronize when external props update
   useEffect(() => {
     setInputCols(cols)
     setInputRows(rows)
+    setInputTotalPieces(cols * rows)
   }, [cols, rows])
 
   useEffect(() => {
@@ -103,14 +138,52 @@ export const BoardView: React.FC<BoardViewProps> = ({
     setInputHeightMm(physHeightMm)
   }, [physWidthMm, physHeightMm])
 
+  const handleTotalPiecesChange = (valStr: string) => {
+    const val = parseInt(valStr) || 0
+    setInputTotalPieces(val)
+    if (val >= 4) {
+      const aspect = (inputWidthMm > 0 && inputHeightMm > 0) ? (inputWidthMm / inputHeightMm) : 1.4
+      const suggested = suggestGridForPieceCount(val, aspect)
+      setInputCols(suggested.cols)
+      setInputRows(suggested.rows)
+    }
+  }
+
+  const handleColsChange = (valStr: string) => {
+    const newCols = parseInt(valStr) || 0
+    setInputCols(newCols)
+    if (newCols > 0 && inputRows > 0) {
+      setInputTotalPieces(newCols * inputRows)
+    }
+  }
+
+  const handleRowsChange = (valStr: string) => {
+    const newRows = parseInt(valStr) || 0
+    setInputRows(newRows)
+    if (newRows > 0 && inputCols > 0) {
+      setInputTotalPieces(inputCols * newRows)
+    }
+  }
+
   const handleApplyDimensions = () => {
+    const c = Math.max(1, inputCols)
+    const r = Math.max(1, inputRows)
+    const w = Math.max(10, inputWidthMm)
+    const h = Math.max(10, inputHeightMm)
+    setInputCols(c)
+    setInputRows(r)
+    setInputTotalPieces(c * r)
     if (onUpdateDimensions) {
-      onUpdateDimensions(
-        Math.max(1, inputCols),
-        Math.max(1, inputRows),
-        Math.max(10, inputWidthMm),
-        Math.max(10, inputHeightMm)
-      )
+      onUpdateDimensions(c, r, w, h)
+      setAppliedFeedback(true)
+      setTimeout(() => setAppliedFeedback(false), 1500)
+    }
+  }
+
+  const handleKeyDownSpec = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleApplyDimensions()
     }
   }
 
@@ -680,7 +753,18 @@ export const BoardView: React.FC<BoardViewProps> = ({
       <div className="board-spec-bar">
         <div className="spec-group">
           <label>PIECES:</label>
-          <span className="spec-readonly">{cols * rows}</span>
+          <input
+            type="number"
+            className="spec-input"
+            style={{ width: 64, fontWeight: 'bold', color: '#58a6ff', textAlign: 'center' }}
+            value={inputTotalPieces || ''}
+            min={4}
+            max={10000}
+            title="Total puzzle piece count (e.g. 1008, 1000, 1120). Press Enter to apply."
+            onChange={(e) => handleTotalPiecesChange(e.target.value)}
+            onKeyDown={handleKeyDownSpec}
+            onBlur={handleApplyDimensions}
+          />
         </div>
 
         <div className="spec-group">
@@ -688,21 +772,25 @@ export const BoardView: React.FC<BoardViewProps> = ({
           <input
             type="number"
             className="spec-input"
-            value={inputCols}
+            value={inputCols || ''}
             min={2}
             max={100}
-            title="Columns"
-            onChange={(e) => setInputCols(parseInt(e.target.value) || 0)}
+            title="Columns. Press Enter to apply."
+            onChange={(e) => handleColsChange(e.target.value)}
+            onKeyDown={handleKeyDownSpec}
+            onBlur={handleApplyDimensions}
           />
           <span className="spec-unit">×</span>
           <input
             type="number"
             className="spec-input"
-            value={inputRows}
+            value={inputRows || ''}
             min={2}
             max={100}
-            title="Rows"
-            onChange={(e) => setInputRows(parseInt(e.target.value) || 0)}
+            title="Rows. Press Enter to apply."
+            onChange={(e) => handleRowsChange(e.target.value)}
+            onKeyDown={handleKeyDownSpec}
+            onBlur={handleApplyDimensions}
           />
         </div>
 
@@ -711,40 +799,56 @@ export const BoardView: React.FC<BoardViewProps> = ({
           <input
             type="number"
             className="spec-input"
-            value={inputWidthMm}
+            value={inputWidthMm || ''}
             min={50}
             max={3000}
-            title="Width in mm"
+            title="Width in mm. Press Enter to apply."
             onChange={(e) => setInputWidthMm(parseFloat(e.target.value) || 0)}
+            onKeyDown={handleKeyDownSpec}
+            onBlur={handleApplyDimensions}
           />
           <span className="spec-unit">×</span>
           <input
             type="number"
             className="spec-input"
-            value={inputHeightMm}
+            value={inputHeightMm || ''}
             min={50}
             max={3000}
-            title="Height in mm"
+            title="Height in mm. Press Enter to apply."
             onChange={(e) => setInputHeightMm(parseFloat(e.target.value) || 0)}
+            onKeyDown={handleKeyDownSpec}
+            onBlur={handleApplyDimensions}
           />
           <span className="spec-unit">mm</span>
         </div>
 
-        {(inputCols !== cols || inputRows !== rows || inputWidthMm !== physWidthMm || inputHeightMm !== physHeightMm) && (
-          <button
-            className="board-btn primary"
-            style={{ padding: '2px 8px', fontSize: 10 }}
-            onClick={handleApplyDimensions}
-          >
-            APPLY SPECS
-          </button>
-        )}
+        {(() => {
+          const isDirty = inputCols !== cols || inputRows !== rows || inputWidthMm !== physWidthMm || inputHeightMm !== physHeightMm
+          return (
+            <button
+              className="board-btn primary"
+              style={{
+                padding: '3px 10px',
+                fontSize: 10,
+                background: appliedFeedback ? '#238636' : (isDirty ? '#1f6feb' : '#21262d'),
+                borderColor: appliedFeedback ? '#2ea043' : (isDirty ? '#388bfd' : '#30363d'),
+                color: '#fff',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+              }}
+              onClick={handleApplyDimensions}
+              title="Apply grid and physical dimensions [Enter]"
+            >
+              {appliedFeedback ? '✓ APPLIED' : isDirty ? 'APPLY SPECS ⏎' : 'APPLY SPECS'}
+            </button>
+          )
+        })()}
 
         <div className="spec-slot-info">
           SLOT: <b>{cols > 0 ? (physWidthMm / cols).toFixed(1) : 0} × {rows > 0 ? (physHeightMm / rows).toFixed(1) : 0} mm</b>
-          {posterWidth > 0 && (
-            <span> ({cols > 0 ? (posterWidth / cols).toFixed(0) : 0} × {rows > 0 ? (posterHeight / rows).toFixed(0) : 0} px)</span>
-          )}
+          <span style={{ marginLeft: 6, color: '#8b949e', fontSize: 10 }}>
+            (Perimeter: 4 corners + {2 * Math.max(0, cols - 2) + 2 * Math.max(0, rows - 2)} borders = {2 * Math.max(0, cols - 2) + 2 * Math.max(0, rows - 2) + 4} total)
+          </span>
         </div>
       </div>
 

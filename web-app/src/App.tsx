@@ -96,15 +96,23 @@ export default function App() {
   // Shared Reference Poster for Underlay, Mode C Previews, and Coordinate Localization
   const [posterRgba, setPosterRgba] = useState<Uint8Array | null>(null)
   const [posterFileName, setPosterFileName] = useState<string>('')
-  const [posterDims, setPosterDims] = useState<{ w: number; h: number; cols: number; rows: number }>({
-    w: 0,
-    h: 0,
-    cols: 0,
-    rows: 0,
+  const [posterDims, setPosterDims] = useState<{ w: number; h: number; cols: number; rows: number }>(() => {
+    const savedCols = localStorage.getItem('jigsaw_grid_cols')
+    const savedRows = localStorage.getItem('jigsaw_grid_rows')
+    return {
+      w: 0,
+      h: 0,
+      cols: savedCols ? parseInt(savedCols) || 40 : 40,
+      rows: savedRows ? parseInt(savedRows) || 28 : 28,
+    }
   })
-  const [physDims, setPhysDims] = useState<{ wMm: number; hMm: number }>({
-    wMm: 700,
-    hMm: 500,
+  const [physDims, setPhysDims] = useState<{ wMm: number; hMm: number }>(() => {
+    const savedW = localStorage.getItem('jigsaw_phys_w')
+    const savedH = localStorage.getItem('jigsaw_phys_h')
+    return {
+      wMm: savedW ? parseFloat(savedW) || 700 : 700,
+      hMm: savedH ? parseFloat(savedH) || 500 : 500,
+    }
   })
 
   // Phase 8: Unified Cockpit & Real-Time Poster Localization State
@@ -189,16 +197,20 @@ export default function App() {
         const bytes = new Uint8Array(imgData.data.buffer)
         setPosterRgba(bytes)
         setPosterFileName('poster_reference.jpg')
+        const savedCols = localStorage.getItem('jigsaw_grid_cols')
+        const savedRows = localStorage.getItem('jigsaw_grid_rows')
+        const initCols = savedCols ? parseInt(savedCols) || 40 : 40
+        const initRows = savedRows ? parseInt(savedRows) || 28 : 28
         setPosterDims({
           w: img.naturalWidth,
           h: img.naturalHeight,
-          cols: 40,
-          rows: 28,
+          cols: initCols,
+          rows: initRows,
         })
         try {
-          init_master_poster_spatial(bytes, img.naturalWidth, img.naturalHeight, 40, 28)
+          init_master_poster_spatial(bytes, img.naturalWidth, img.naturalHeight, initCols, initRows)
           isPosterInitializedRef.current = true
-          console.log('✓ Master poster initialized in WASM memory (40x28, 1120 slots, 128 borders)')
+          console.log(`✓ Master poster initialized in WASM memory (${initCols}x${initRows}, ${initCols * initRows} slots)`)
         } catch (err) {
           console.error('Failed to init master poster spatial:', err)
         }
@@ -2251,12 +2263,16 @@ export default function App() {
                 2 * ((posterDims.cols > 0 ? posterDims.cols : 40) - 2) + 4
               }
               onUpdateDimensions={(newCols, newRows, newWidthMm, newHeightMm) => {
+                localStorage.setItem('jigsaw_grid_cols', newCols.toString())
+                localStorage.setItem('jigsaw_grid_rows', newRows.toString())
+                localStorage.setItem('jigsaw_phys_w', newWidthMm.toString())
+                localStorage.setItem('jigsaw_phys_h', newHeightMm.toString())
                 setPosterDims((prev) => ({ ...prev, cols: newCols, rows: newRows }))
                 setPhysDims({ wMm: newWidthMm, hMm: newHeightMm })
                 if (posterRgba && posterDims.w > 0 && posterDims.h > 0) {
                   try {
                     init_master_poster_spatial(posterRgba, posterDims.w, posterDims.h, newCols, newRows)
-                    console.log(`Updated grid to ${newCols}x${newRows}`)
+                    console.log(`Updated grid to ${newCols}x${newRows} (${newCols * newRows} pieces)`)
                   } catch (e) {
                     console.error(e)
                   }
