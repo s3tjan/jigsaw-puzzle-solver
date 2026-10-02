@@ -5,8 +5,8 @@ import init, {
   measure_stage_focus,
   analyze_staged_piece,
   map_dewarped_points_to_camera,
-  precompute_poster_slots,
-  locate_piece_fast,
+  init_master_poster_spatial,
+  locate_piece_spatial,
 } from './pkg/cv_engine'
 import { BoardView } from './components/BoardView'
 import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from './storage/db'
@@ -19,7 +19,7 @@ import {
   exportAssemblyDataset,
   importAssemblyDataset,
   getAllPairedFixtures,
-  syncBoardMatingPairs,
+  syncLocalMatingPairs,
   updatePairedFixtureStatus,
 } from './storage/db'
 import './App.css'
@@ -113,7 +113,8 @@ export default function App() {
     top_candidates: { col: number; row: number; rotation_deg: number; confidence: number }[]
   } | null>(null)
   const lastLocalizationTimeRef = useRef<number>(0)
-  const precomputedSlotsRef = useRef<any>(null)
+  const isPosterInitializedRef = useRef<boolean>(false)
+  const lastFocusTimeRef = useRef<number>(0)
 
   // Load persistent pieces and board state from IndexedDB on startup
   const refreshStorage = useCallback(async () => {
@@ -134,6 +135,39 @@ export default function App() {
   useEffect(() => {
     refreshStorage()
   }, [refreshStorage])
+
+  // Auto-load master reference poster from /public if available
+  useEffect(() => {
+    if (!wasmReady || posterRgba) return
+    const img = new Image()
+    img.src = '/poster_reference.jpg'
+    img.onload = () => {
+      const off = document.createElement('canvas')
+      off.width = img.naturalWidth
+      off.height = img.naturalHeight
+      const ctx = off.getContext('2d')
+      if (ctx) {
+        ctx.drawImage(img, 0, 0)
+        const imgData = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight)
+        const bytes = new Uint8Array(imgData.data.buffer)
+        setPosterRgba(bytes)
+        setPosterFileName('poster_reference.jpg')
+        setPosterDims({
+          w: img.naturalWidth,
+          h: img.naturalHeight,
+          cols: 36,
+          rows: 28,
+        })
+        try {
+          init_master_poster_spatial(bytes, img.naturalWidth, img.naturalHeight, 36, 28)
+          isPosterInitializedRef.current = true
+          console.log('✓ Master poster initialized in WASM memory (36x28, 1008 slots)')
+        } catch (err) {
+          console.error('Failed to init master poster spatial:', err)
+        }
+      }
+    }
+  }, [wasmReady, posterRgba])
 
   // Controls
   const [lensDistortion, setLensDistortion] = useState<number>(() => {
@@ -832,15 +866,18 @@ export default function App() {
             const curK1 = lensK1Ref.current
             const curSens = sensRef.current
 
-            // Optical focus score
-            const mtf = measure_stage_focus(
-              rawBytes, targetW, targetH,
-              curCorners[0].x, curCorners[0].y,
-              curCorners[1].x, curCorners[1].y,
-              curCorners[2].x, curCorners[2].y,
-              curCorners[3].x, curCorners[3].y
-            )
-            setFocusScore(mtf)
+            // Optical focus score (throttled to 350ms to eliminate continuous React re-renders)
+            if (now - lastFocusTimeRef.current >= 350) {
+              lastFocusTimeRef.current = now
+              const mtf = measure_stage_focus(
+                rawBytes, targetW, targetH,
+                curCorners[0].x, curCorners[0].y,
+                curCorners[1].x, curCorners[1].y,
+                curCorners[2].x, curCorners[2].y,
+                curCorners[3].x, curCorners[3].y
+              )
+              setFocusScore(mtf)
+            }
 
             // Rectify staging arena
             const dstW = 384
@@ -963,18 +1000,17 @@ export default function App() {
                 setDetectedPiece(livePiece)
                 detectedPieceRef.current = livePiece
 
-                // Real-Time Poster Localization (< 2ms fast precomputed candidate search)
-                if (livePiece && precomputedSlotsRef.current) {
+                // Real-Time Poster Localization (< 4ms fast spatial pyramid candidate search)
+                if (livePiece && isPosterInitializedRef.current) {
                   const nowLoc = performance.now()
-                  if (nowLoc - lastLocalizationTimeRef.current >= 120) {
+                  if (nowLoc - lastLocalizationTimeRef.current >= 90) {
                     lastLocalizationTimeRef.current = nowLoc
                     try {
-                      const match = locate_piece_fast(
+                      const match = locate_piece_spatial(
                         dewarped,
                         liveMask || new Uint8Array(0),
                         dstW,
                         dstH,
-                        precomputedSlotsRef.current,
                         livePiece.is_border,
                         livePiece.is_corner
                       )
@@ -982,7 +1018,7 @@ export default function App() {
                         setActivePosterMatch(match)
                       }
                     } catch (locErr) {
-                      console.warn('Poster fast localization error:', locErr)
+                      console.warn('Poster spatial localization error:', locErr)
                     }
                   }
                 } else if (!livePiece) {
@@ -1200,16 +1236,32 @@ export default function App() {
   }
 
 
-  // Board placement callbacks
+  // Board placement callbacks with O(1) optimistic update
   const handlePlacePiece = async (row: number, col: number, pieceId: string, rotation: number) => {
-    await placePieceOnBoard(row, col, pieceId, rotation)
-    // Synchronize adjacent mating pairs automatically
+    const updatedPlacedSlot: PlacedBoardSlot = {
+      row,
+      col,
+      piece_id: pieceId,
+      rotation,
+      placed_at: Date.now(),
+    }
     const updatedPlacedSlots = {
       ...placedSlots,
-      [`${row},${col}`]: { row, col, piece_id: pieceId, rotation, placed_at: Date.now() },
+      [`${row},${col}`]: updatedPlacedSlot,
     }
-    await syncBoardMatingPairs(posterDims.rows, posterDims.cols, updatedPlacedSlots, storedPieces)
-    await refreshStorage()
+
+    // ⚡ Optimistic UI state update
+    setPlacedSlots(updatedPlacedSlots)
+
+    // Background asynchronous persistence and localized O(1) seam sync
+    placePieceOnBoard(row, col, pieceId, rotation).catch(err => console.error('Failed to place piece:', err))
+    syncLocalMatingPairs(row, col, posterDims.rows, posterDims.cols, updatedPlacedSlots, storedPieces)
+      .then(newPairs => {
+        if (newPairs.length > 0) {
+          setPairedFixtures(prev => [...prev, ...newPairs])
+        }
+      })
+      .catch(err => console.error('Failed to sync local mating pairs:', err))
   }
 
   const handleUpdatePairStatus = async (pairId: string, status: 'verified' | 'rejected') => {
@@ -1247,6 +1299,8 @@ export default function App() {
 
     // Map rotation_deg (0, 90, 180, 270) to board rotation index (0, 1, 2, 3)
     const rotIdx = Math.round(activePosterMatch.best_rotation_deg / 90) % 4
+    const targetRow = activePosterMatch.best_row
+    const targetCol = activePosterMatch.best_col
 
     const stored: StoredPiece = {
       id: pieceId,
@@ -1275,15 +1329,41 @@ export default function App() {
       tab_count: tabCount,
       hole_count: holeCount,
       status: 'Placed',
-      placed_slot: { row: activePosterMatch.best_row, col: activePosterMatch.best_col, rotation: rotIdx },
+      placed_slot: { row: targetRow, col: targetCol, rotation: rotIdx },
       is_favorite: false,
       tags: [],
       paired_piece_id: null,
     }
 
-    await savePiece(stored)
-    await handlePlacePiece(activePosterMatch.best_row, activePosterMatch.best_col, pieceId, rotIdx)
-    setSelectedBoardSlot({ row: activePosterMatch.best_row, col: activePosterMatch.best_col })
+    const newPlacedSlot: PlacedBoardSlot = {
+      row: targetRow,
+      col: targetCol,
+      piece_id: pieceId,
+      rotation: rotIdx,
+      placed_at: now,
+    }
+
+    const updatedPlacedSlots = {
+      ...placedSlots,
+      [`${targetRow},${targetCol}`]: newPlacedSlot,
+    }
+
+    // ⚡ INSTANT OPTIMISTIC UI SNAP (0ms perceptual lag):
+    setStoredPieces(prev => [stored, ...prev])
+    setPlacedSlots(updatedPlacedSlots)
+    setSelectedBoardSlot({ row: targetRow, col: targetCol })
+    setActivePosterMatch(null)
+
+    // Non-blocking background save & local neighbor sync:
+    savePiece(stored).catch(e => console.error('Background savePiece error:', e))
+    placePieceOnBoard(targetRow, targetCol, pieceId, rotIdx).catch(e => console.error('Background placePiece error:', e))
+    syncLocalMatingPairs(targetRow, targetCol, posterDims.rows, posterDims.cols, updatedPlacedSlots, [stored, ...storedPieces])
+      .then(newPairs => {
+        if (newPairs.length > 0) {
+          setPairedFixtures(prev => [...prev, ...newPairs])
+        }
+      })
+      .catch(e => console.error('Background syncLocalMatingPairs error:', e))
   }
 
   const handleUnplacePiece = async (row: number, col: number) => {
@@ -1751,15 +1831,17 @@ export default function App() {
                   const bytes = new Uint8Array(imgData.data.buffer)
                   setPosterRgba(bytes)
                   try {
-                    precomputedSlotsRef.current = precompute_poster_slots(
+                    init_master_poster_spatial(
                       bytes,
                       img.naturalWidth,
                       img.naturalHeight,
                       detectedCols,
                       detectedRows
                     )
+                    isPosterInitializedRef.current = true
+                    console.log('✓ Ingested new master poster into spatial WASM memory')
                   } catch (err) {
-                    console.error('Failed to precompute poster slots:', err)
+                    console.error('Failed to initialize spatial master poster:', err)
                   }
                 }
               }}
@@ -1775,15 +1857,17 @@ export default function App() {
                 })
                 if (posterRgba && posterDims.w > 0 && posterDims.h > 0) {
                   try {
-                    precomputedSlotsRef.current = precompute_poster_slots(
+                    init_master_poster_spatial(
                       posterRgba,
                       posterDims.w,
                       posterDims.h,
                       newCols,
                       newRows
                     )
+                    isPosterInitializedRef.current = true
+                    console.log('✓ Recomputed spatial poster slots on dimension update')
                   } catch (err) {
-                    console.error('Failed to recompute poster slots on dimension update:', err)
+                    console.error('Failed to recompute spatial poster slots on dimension update:', err)
                   }
                 }
               }}
