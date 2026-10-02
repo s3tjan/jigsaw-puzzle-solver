@@ -247,6 +247,29 @@ export default function App() {
   const [gtSavedCount, setGtSavedCount] = useState<number>(0)
   const [gtSaveStatus, setGtSaveStatus] = useState<string | null>(null)
 
+  // Scanner UI & Ergonomics
+  const [showCandidates, setShowCandidates] = useState<boolean>(false)
+  const [saveFeedback, setSaveFeedback] = useState<string | null>(null)
+
+  const playSaveSound = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      if (!AudioCtx) return
+      const ctx = new AudioCtx()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(659.25, ctx.currentTime) // E5
+      osc.frequency.exponentialRampToValueAtTime(1046.5, ctx.currentTime + 0.08) // C6
+      gain.gain.setValueAtTime(0.15, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start()
+      osc.stop(ctx.currentTime + 0.12)
+    } catch { }
+  }
+
   // Fetch count of already saved ground-truth files on mount
   useEffect(() => {
     fetch('/api/ground-truth-count')
@@ -1386,8 +1409,13 @@ export default function App() {
     try {
       await savePiece(stored)
       await refreshStorage()
+      playSaveSound()
+      setSaveFeedback(`✓ SAVED #${nextPieceNum} (${classification.toUpperCase()})`)
+      setTimeout(() => setSaveFeedback(null), 1200)
     } catch (err) {
       console.error('Failed to save piece to IndexedDB:', err)
+      setSaveFeedback('❌ FAILED TO SAVE')
+      setTimeout(() => setSaveFeedback(null), 1500)
     }
   }
 
@@ -1712,15 +1740,31 @@ export default function App() {
     }
   }
 
-  // Keyboard shortcut Space to capture
+  // Keyboard shortcuts:
+  // - [S] or [Space] (when not in GT mode): Save current detected piece to inventory
+  // - [G]: Freeze current piece into Ground Truth workbench
+  // - [Space] (in GT mode): Save ground-truth annotations
+  // - [Esc] (in GT mode): Cancel ground-truth mode
+  // - [Enter]: Place Drop-to-Locate piece or best candidate onto board
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
-      if (e.code === 'Space') {
+
+      const isS = e.code === 'KeyS' || e.key === 's' || e.key === 'S'
+      const isSpace = e.code === 'Space'
+      const isG = e.code === 'KeyG' || e.key === 'g' || e.key === 'G'
+
+      if (isS || (isSpace && !isGtMode)) {
         e.preventDefault()
-        if (isGtMode) {
-          handleSaveGroundTruth()
-        } else {
+        if (detectedPiece) {
+          handleRecordPiece()
+        }
+      } else if (isSpace && isGtMode) {
+        e.preventDefault()
+        handleSaveGroundTruth()
+      } else if (isG && !isGtMode) {
+        e.preventDefault()
+        if (detectedPiece) {
           handleFreezeGroundTruth()
         }
       } else if (e.code === 'Escape' && isGtMode) {
@@ -1741,7 +1785,7 @@ export default function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges, activePosterMatch, handlePlaceDetectedCandidate, handlePlacePiece])
+  }, [detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges, activePosterMatch, handlePlaceDetectedCandidate, handlePlacePiece, handleRecordPiece, handleFreezeGroundTruth, handleSaveGroundTruth, handleExitGtMode])
 
 
   return (
@@ -1801,7 +1845,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="panel-view" style={{ minHeight: 440, flex: 1, background: '#000' }}>
+          <div className="panel-view" style={{ minHeight: 260, maxHeight: '50vh', flex: 1, background: '#000' }}>
             <video
               ref={videoRef}
               playsInline
@@ -1932,10 +1976,13 @@ export default function App() {
                     <span>🎯 IDENTIFIED IN INVENTORY: PIECE #{identifiedPieceMatch.piece_number} ({identifiedPieceMatch.confidence.toFixed(0)}%)</span>
                     <span style={{ color: '#8b949e', fontSize: 10 }}>Click "Solve Perimeter" to sequence</span>
                   </div>
-                ) : activePosterMatch && (
+                ) : null}
+
+                {/* Optional Expanded Candidates (Hidden by default to prevent vertical scrollbar) */}
+                {showCandidates && activePosterMatch && (
                   <div style={{
                     background: '#161b22',
-                    border: '1px solid #d29922',
+                    border: '1px solid #30363d',
                     borderRadius: 6,
                     padding: '8px 10px',
                     display: 'flex',
@@ -1944,7 +1991,7 @@ export default function App() {
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: 11, fontWeight: 'bold', color: '#58a6ff' }}>
-                        TOP 5 CANDIDATE PLACES
+                        TOP 5 CANDIDATES
                       </span>
                       <span style={{ fontSize: 10, color: '#8b949e' }}>
                         [ENTER] = #1
@@ -1966,7 +2013,7 @@ export default function App() {
                               background: isTop1 ? '#23863622' : '#21262d',
                               border: isTop1 ? '1px solid #2ea043' : '1px solid #30363d',
                               borderRadius: 4,
-                              padding: '5px 8px',
+                              padding: '4px 6px',
                               fontSize: 11,
                             }}
                           >
@@ -2018,24 +2065,86 @@ export default function App() {
                   </div>
                 )}
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {/* Primary Action Controls: Prominent, zero-scroll Save Piece + GT/Candidates */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
                   <button
-                    className="btn"
+                    className="btn primary"
+                    style={{
+                      background: detectedPiece ? '#238636' : '#21262d',
+                      borderColor: detectedPiece ? '#2ea043' : '#30363d',
+                      color: detectedPiece ? '#ffffff' : '#8b949e',
+                      padding: '10px 14px',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      cursor: detectedPiece ? 'pointer' : 'not-allowed',
+                      boxShadow: detectedPiece ? '0 2px 8px rgba(35, 134, 54, 0.4)' : 'none',
+                      transition: 'all 0.15s ease',
+                    }}
                     disabled={!detectedPiece}
                     onClick={handleRecordPiece}
-                    title="Save detected piece to database"
+                    title="Save detected piece to inventory (Shortcut: S or SPACE)"
                   >
-                    SAVE PIECE
+                    {saveFeedback ? (
+                      <span style={{ color: '#56d364', fontWeight: 'bold' }}>{saveFeedback}</span>
+                    ) : detectedPiece ? (
+                      <>
+                        <span>⚡ SAVE PIECE #{storedPieces.length + 1}</span>
+                        <span style={{
+                          fontSize: 10,
+                          background: '#196c2e',
+                          color: '#fff',
+                          padding: '2px 6px',
+                          borderRadius: 3,
+                          letterSpacing: 0.5,
+                        }}>
+                          [S] or [SPACE]
+                        </span>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 12 }}>PLACE PIECE ON MAT TO SCAN</span>
+                    )}
                   </button>
 
-                  <button
-                    className="btn"
-                    style={{ background: '#1a365d', borderColor: '#3182ce', color: '#63b3ed' }}
-                    disabled={!detectedPiece}
-                    onClick={handleFreezeGroundTruth}
-                  >
-                    LABEL GROUND TRUTH
-                  </button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      className="btn"
+                      style={{
+                        flex: 1,
+                        background: '#1a365d',
+                        borderColor: '#3182ce',
+                        color: '#63b3ed',
+                        fontSize: 10,
+                        padding: '6px 8px',
+                        fontWeight: 600,
+                      }}
+                      disabled={!detectedPiece}
+                      onClick={handleFreezeGroundTruth}
+                      title="Freeze corners to label ground truth [G]"
+                    >
+                      LABEL GT [G]
+                    </button>
+
+                    {activePosterMatch && (
+                      <button
+                        className="btn"
+                        style={{
+                          background: showCandidates ? '#30363d' : '#21262d',
+                          borderColor: '#30363d',
+                          color: showCandidates ? '#58a6ff' : '#8b949e',
+                          fontSize: 10,
+                          padding: '6px 8px',
+                        }}
+                        onClick={() => setShowCandidates(!showCandidates)}
+                        title="Toggle Top 5 Candidate Match Proposals"
+                      >
+                        {showCandidates ? 'HIDE CANDIDATES ▴' : 'CANDIDATES (5) ▾'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : (
