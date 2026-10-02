@@ -178,3 +178,46 @@ fn test_rgb_to_cielab_and_slot_preview_extraction() {
     assert!(preview.mean_lab[1] > 50.0, "Red a* should be strongly positive, got {}", preview.mean_lab[1]);
 }
 
+#[test]
+fn test_locate_piece_on_poster_synthetic() {
+    use cv_engine::poster::{extract_visual_fingerprint, compute_slot_similarity, rotate_gradient_histogram};
+
+    // Construct two distinct synthetic patterns: one red with horizontal gradient, one blue
+    let mut red_rgba = vec![0u8; 32 * 32 * 4];
+    let mut blue_rgba = vec![0u8; 32 * 32 * 4];
+
+    for y in 0..32 {
+        for x in 0..32 {
+            let idx = (y * 32 + x) * 4;
+            // Red pattern with horizontal intensity ramp (produces strong Sobel X gradients)
+            red_rgba[idx] = (x * 8).min(255) as u8;
+            red_rgba[idx + 1] = 10;
+            red_rgba[idx + 2] = 10;
+            red_rgba[idx + 3] = 255;
+
+            // Blue pattern
+            blue_rgba[idx] = 10;
+            blue_rgba[idx + 1] = 10;
+            blue_rgba[idx + 2] = 220;
+            blue_rgba[idx + 3] = 255;
+        }
+    }
+
+    let (red_lab, red_hist) = extract_visual_fingerprint(&red_rgba, 32, 32);
+    let (blue_lab, blue_hist) = extract_visual_fingerprint(&blue_rgba, 32, 32);
+
+    // Self similarity should be near 1.0
+    let self_sim = compute_slot_similarity(&red_lab, &red_hist, &red_lab, &red_hist);
+    assert!(self_sim > 0.95, "Self similarity should be close to 1.0, got {}", self_sim);
+
+    // Cross similarity between red and blue should be low
+    let cross_sim = compute_slot_similarity(&red_lab, &red_hist, &blue_lab, &blue_hist);
+    assert!(cross_sim < 0.6, "Red vs Blue similarity should be low, got {}", cross_sim);
+
+    // Rotating 360 degrees (4 steps of 90) should return to original histogram
+    let rot4 = rotate_gradient_histogram(&rotate_gradient_histogram(&rotate_gradient_histogram(&rotate_gradient_histogram(&red_hist, 1), 1), 1), 1);
+    for b in 0..8 {
+        assert!((red_hist[b] - rot4[b]).abs() < 1e-5);
+    }
+}
+

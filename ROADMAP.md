@@ -99,21 +99,25 @@ This roadmap documents the end-to-end architecture, current completion status, a
 
 ---
 
-### Phase 8: Unified Tabletop Cockpit & Real-Time Poster Localization (Next Task)
-* **Rationale**: Grounded in computer vision literature (*Bridger et al. CVPR 2020*, *Pomeranz et al. CVPR 2011*). Matching raw edge curves in isolation across 1,008 pieces produces combinatorial explosion ($>10^6$ combinations) and is impossible for a human to curate manually without placement cues. The solver must first provide coarse visual spatial priors $(col, row, \theta)$ directly against the reference poster in real-time, within a single uninterrupted cockpit view.
-* **Key Tasks**:
-  1. **Unified Single-Screen Cockpit UI (`web-app/src/App.tsx`)**:
-     - Consolidate Camera, Assembly Board / Poster Canvas, and Inventory Tray into one cohesive dashboard (no tab switching that kills camera streaming).
-     - Replace drag-and-drop with **1-click placement**:
-       - Primary action: One-click `[PLACE AT ROW r, COL c (θ°)]` button or `[ENTER]` keypress.
-       - Manual action: Click piece $\rightarrow$ click target slot on board canvas.
-  2. **WASM Real-Time Poster Localization Engine (`cv-engine/src/poster.rs`)**:
-     - Literature-based illumination-invariant feature extraction: CIELAB chromaticity $(a^*, b^*)$ + tile CLAHE + 8-bin Sobel gradient orientation fields.
-     - Multi-scale pyramid search across 4 cardinal rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$).
-     - Real-time sub-50ms feedback: As soon as a piece is placed on the staging mat, highlight its candidate slot and rotation on the live camera overlay and board canvas.
-  3. **Automatic Mating Pair Detection & Ground-Truth Exporter**:
-     - As pieces are locked into adjacent board slots, the engine automatically registers physical mates (e.g., Piece #5 East $\leftrightarrow$ Piece #6 West).
-     - One-click export to clean JSON fixtures (`mating_pairs.json`) to supply verified ground-truth test data for Phase 9.
+### Phase 8: Unified Tabletop Cockpit & Real-Time Poster Localization (Completed)
+* **Rationale**: Grounded in computer vision literature (*Bridger et al. CVPR 2020*, *Pomeranz et al. CVPR 2011*). Matching raw edge curves in isolation across 1,008 pieces produces combinatorial explosion ($>10^6$ combinations) and is impossible for a human to curate manually without placement cues. The solver first provides coarse visual spatial priors $(col, row, \theta)$ directly against the reference poster in real-time, within a single uninterrupted cockpit view.
+* **Accomplishments**:
+  - **WASM Real-Time Poster Localization Engine (`cv-engine/src/poster.rs`)**:
+    - Illumination-invariant visual fingerprinting combining CIELAB chromaticity $(a^*, b^*)$ + tile-based CLAHE + 8-bin Sobel gradient orientation fields.
+    - Multi-scale search across 4 cardinal rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) with rotation-invariant histogram shifting.
+    - WASM entry point `locate_piece_on_poster` running sub-50ms candidate ranking and confidence scoring.
+  - **In-Situ Camera HUD & 1-Click Fast Placement (`web-app/src/App.tsx`)**:
+    - Real-time augmented reality badge on live camera overlay: `🎯 POSTER: [Row r, Col c] (θ°) — Conf %`.
+    - Primary 1-click placement button `⚡ PLACE AT [Rr, Cc] [ENTER]` and hotkey listener (`[ENTER]`) saving pieces and placing directly without drag-and-drop.
+  - **Three-Tier Mating Pair Engine with Human-in-the-Loop Override (`src/storage/db.ts` & `src/components/BoardView.tsx`)**:
+    - Automated adjacency detection between adjacent board pieces with relative rotation seam mapping $(\text{side} - \text{rot} + 4) \pmod 4$.
+    - Provisional candidate state preventing corrupted ground-truth training vectors.
+    - Color-coded seam indicators on board canvas (🟡 provisional, 🟢 verified, 🔴 rejected).
+    - Inspector override panel with `[✓ CONFIRM]` and `[✕ REJECT]` controls.
+    - Clean filtered JSON exporter (`mating_pairs_dataset.json`) ready for Phase 9 curve validation.
+  - **Architecture Documentation Updated (`docs/ASSEMBLY_STRATEGY.md`)**:
+    - Added Section 6 covering the Physical Mating Pair Detection & Manual Verification Protocol.
+    - Added Section 7 documenting the Unified Tabletop Cockpit Operational Model.
 
 ---
 

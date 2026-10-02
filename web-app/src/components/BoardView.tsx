@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import type { StoredPiece, PlacedBoardSlot } from '../storage/db'
+import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from '../storage/db'
 import type { SlotRequirementFilter } from './PieceTray'
 import { get_slot_preview } from '../pkg/cv_engine'
 import './BoardView.css'
@@ -9,11 +9,13 @@ interface BoardViewProps {
   cols: number
   pieces: StoredPiece[]
   placedSlots: Record<string, PlacedBoardSlot>
+  pairedFixtures?: GroundTruthPairFixture[]
   onPlacePiece: (row: number, col: number, pieceId: string, rotation: number) => void
   onUnplacePiece: (row: number, col: number) => void
   selectedSlot: { row: number; col: number } | null
   onSelectSlot: (slot: { row: number; col: number } | null) => void
   onSetSlotFilter: (filter: SlotRequirementFilter | null) => void
+  onUpdatePairStatus?: (pairId: string, status: 'verified' | 'rejected') => void
   posterRgba: Uint8Array | null
   posterWidth: number
   posterHeight: number
@@ -26,11 +28,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
   cols,
   pieces,
   placedSlots,
+  pairedFixtures = [],
   onPlacePiece,
   onUnplacePiece,
   selectedSlot,
   onSelectSlot,
   onSetSlotFilter,
+  onUpdatePairStatus,
   posterRgba,
   posterWidth,
   posterHeight,
@@ -303,13 +307,84 @@ export const BoardView: React.FC<BoardViewProps> = ({
       }
     }
 
+    // Render Mating Pair Seam Indicators between placed neighbors
+    const fixtureLookup = new Map<string, GroundTruthPairFixture>()
+    for (const fix of pairedFixtures) {
+      fixtureLookup.set([fix.piece_a_id, fix.piece_b_id].sort().join(':'), fix)
+    }
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const slotA = placedSlots[`${r},${c}`]
+        if (!slotA) continue
+
+        // East seam
+        if (c + 1 < cols) {
+          const slotB = placedSlots[`${r},${c + 1}`]
+          if (slotB) {
+            const pairKey = [slotA.piece_id, slotB.piece_id].sort().join(':')
+            const fix = fixtureLookup.get(pairKey)
+            const seamX = (c + 1) * cellW
+            const seamY1 = r * cellH + 3
+            const seamY2 = (r + 1) * cellH - 3
+
+            ctx.lineWidth = 3 / zoom
+            if (fix?.status === 'verified') {
+              ctx.strokeStyle = '#3fb950' // Green
+              ctx.setLineDash([])
+            } else if (fix?.status === 'rejected') {
+              ctx.strokeStyle = '#f85149' // Red
+              ctx.setLineDash([4 / zoom, 2 / zoom])
+            } else {
+              ctx.strokeStyle = '#d29922' // Yellow provisional
+              ctx.setLineDash([2 / zoom, 2 / zoom])
+            }
+            ctx.beginPath()
+            ctx.moveTo(seamX, seamY1)
+            ctx.lineTo(seamX, seamY2)
+            ctx.stroke()
+            ctx.setLineDash([])
+          }
+        }
+
+        // South seam
+        if (r + 1 < rows) {
+          const slotB = placedSlots[`${r + 1},${c}`]
+          if (slotB) {
+            const pairKey = [slotA.piece_id, slotB.piece_id].sort().join(':')
+            const fix = fixtureLookup.get(pairKey)
+            const seamY = (r + 1) * cellH
+            const seamX1 = c * cellW + 3
+            const seamX2 = (c + 1) * cellW - 3
+
+            ctx.lineWidth = 3 / zoom
+            if (fix?.status === 'verified') {
+              ctx.strokeStyle = '#3fb950' // Green
+              ctx.setLineDash([])
+            } else if (fix?.status === 'rejected') {
+              ctx.strokeStyle = '#f85149' // Red
+              ctx.setLineDash([4 / zoom, 2 / zoom])
+            } else {
+              ctx.strokeStyle = '#d29922' // Yellow provisional
+              ctx.setLineDash([2 / zoom, 2 / zoom])
+            }
+            ctx.beginPath()
+            ctx.moveTo(seamX1, seamY)
+            ctx.lineTo(seamX2, seamY)
+            ctx.stroke()
+            ctx.setLineDash([])
+          }
+        }
+      }
+    }
+
     // Outer puzzle frame
     ctx.strokeStyle = '#58a6ff'
     ctx.lineWidth = 2 / zoom
     ctx.strokeRect(0, 0, boardTotalW, boardTotalH)
 
     ctx.restore()
-  }, [rows, cols, pan, zoom, placedSlots, selectedSlot, hoverSlot, pieceMap])
+  }, [rows, cols, pan, zoom, placedSlots, selectedSlot, hoverSlot, pieceMap, pairedFixtures])
 
   useEffect(() => {
     drawBoard()
@@ -533,6 +608,89 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   >
                     UNPLACE BACK TO TRAY
                   </button>
+
+                  {/* Manual Mating Pair Overrides */}
+                  <div className="inspector-artwork-section" style={{ marginTop: 12 }}>
+                    <span className="inspector-label">PHYSICAL MATING PAIRS & OVERRIDES</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                      {pairedFixtures
+                        .filter(f => f.piece_a_id === selectedSlotPiece.id || f.piece_b_id === selectedSlotPiece.id)
+                        .map(fix => {
+                          const otherId = fix.piece_a_id === selectedSlotPiece.id ? fix.piece_b_id : fix.piece_a_id
+                          const otherPiece = pieceMap.get(otherId)
+                          const isVerified = fix.status === 'verified'
+                          const isRejected = fix.status === 'rejected'
+
+                          return (
+                            <div key={fix.id} style={{
+                              background: '#161b22',
+                              border: `1px solid ${isVerified ? '#3fb950' : isRejected ? '#f85149' : '#d29922'}`,
+                              borderRadius: 4,
+                              padding: '6px 8px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 4
+                            }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: 11, fontWeight: 'bold' }}>
+                                  Mate ↔ #{otherPiece?.piece_number ?? otherId.slice(0, 5)}
+                                </span>
+                                <span style={{
+                                  fontSize: 9,
+                                  fontWeight: 'bold',
+                                  padding: '1px 5px',
+                                  borderRadius: 3,
+                                  background: isVerified ? 'rgba(63, 185, 80, 0.2)' : isRejected ? 'rgba(248, 81, 73, 0.2)' : 'rgba(210, 153, 34, 0.2)',
+                                  color: isVerified ? '#3fb950' : isRejected ? '#f85149' : '#d29922',
+                                }}>
+                                  {fix.status.toUpperCase()}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 10, color: '#8b949e' }}>
+                                {fix.notes || `Confidence: ${((fix.confidence_score ?? 0.8) * 100).toFixed(0)}%`}
+                              </div>
+                              {onUpdatePairStatus && (
+                                <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+                                  <button
+                                    className="board-btn"
+                                    style={{
+                                      fontSize: 10,
+                                      padding: '2px 8px',
+                                      flex: 1,
+                                      background: isVerified ? '#238636' : '#21262d',
+                                      borderColor: isVerified ? '#3fb950' : '#30363d',
+                                      color: isVerified ? '#ffffff' : '#3fb950',
+                                    }}
+                                    onClick={() => onUpdatePairStatus(fix.id, 'verified')}
+                                  >
+                                    ✓ CONFIRM
+                                  </button>
+                                  <button
+                                    className="board-btn"
+                                    style={{
+                                      fontSize: 10,
+                                      padding: '2px 8px',
+                                      flex: 1,
+                                      background: isRejected ? '#da3633' : '#21262d',
+                                      borderColor: isRejected ? '#f85149' : '#30363d',
+                                      color: isRejected ? '#ffffff' : '#f85149',
+                                    }}
+                                    onClick={() => onUpdatePairStatus(fix.id, 'rejected')}
+                                  >
+                                    ✕ REJECT
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      {pairedFixtures.filter(f => f.piece_a_id === selectedSlotPiece.id || f.piece_b_id === selectedSlotPiece.id).length === 0 && (
+                        <div style={{ fontSize: 10, color: '#8b949e', fontStyle: 'italic' }}>
+                          No adjacent placed pieces yet to form mating pairs.
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <>

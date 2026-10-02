@@ -212,7 +212,47 @@ To answer **"Given a piece, show its approximate location on the reference poste
 
 ---
 
-## 6. Academic Literature References
+## 6. Physical Mating Pair Detection & Manual Override Protocol
+
+### 6.1 Rationale & Risk Mitigation
+In combinatorial puzzle assembly, edge-curve mating engines (*Wolfson et al. 1988, Phase 9*) rely on clean paired training fixtures to set distance thresholds $\epsilon$. If adjacent board slots register pairs completely automatically without human-in-the-loop validation:
+- Inaccurate initial classifications or misplaced pieces silently generate false pairs.
+- Die-cut irregularities or loose interlocks can produce corrupted training vectors.
+
+### 6.2 The Three-Tier Pair Architecture
+1. **Tier 1: Dynamic Geometric Detection (Provisional State)**:
+   - When Piece $P_A$ at $(r_A, c_A, \theta_A)$ is placed adjacent to Piece $P_B$ at $(r_B, c_B, \theta_B)$ on the assembly grid:
+     - The engine determines the contact seam (East-West or North-South).
+     - It maps the cell contact side to each piece's internal edge index:
+       $$\text{edge\_idx} = (\text{cell\_side} - \text{rotation} + 4) \pmod 4$$
+     - It tests complementary edge compatibility (`Tab` $\leftrightarrow$ `Hole`).
+     - A pair record is created with `status: 'provisional'`.
+2. **Tier 2: Visual Seam Feedback & Manual Override**:
+   - On the interactive Board View, seams between placed neighbors display real-time status:
+     - 🟡 **Yellow Dashed Line**: Auto-detected provisional mate awaiting user review.
+     - 🟢 **Solid Green Line**: Human-confirmed physical mate.
+     - 🔴 **Red Dashed Line**: Rejected / non-matching seam.
+   - Selecting a placed piece displays the **Physical Mating Pairs & Overrides** inspector panel with direct `[✓ CONFIRM]` and `[✕ REJECT]` actions.
+   - Users can manually designate custom pairs between any two pieces directly in the Piece Tray.
+3. **Tier 3: Filtered Ground-Truth Export**:
+   - The JSON export bundle filters by status, ensuring Phase 9 Rust unit tests and curve fitting algorithms ingest 100% verified physical ground-truth pairs.
+
+---
+
+## 7. Unified Tabletop Cockpit Operational Model
+
+To prevent camera stream teardown and context switching during tabletop assembly:
+1. **Single-Screen Cockpit**: The overhead camera stream, reference poster canvas, interactive assembly board, and inventory tray are mounted in a single uninterrupted dashboard.
+2. **Real-Time Localization Feedback**:
+   - As soon as a piece is placed on the $65\text{ mm}$ mat, the WASM localization engine searches Poster Pyramid Level 2 across 4 cardinal rotations.
+   - The best candidate slot is highlighted on the live camera overlay (`POSTER: Slot [r, c] (θ°)`).
+3. **One-Click & Hotkey Placement**:
+   - Pressing `[ENTER]` or clicking the primary placement badge immediately saves the piece to IndexedDB and snaps it into the board slot.
+   - Automatic adjacency sync triggers in the background, updating provisional mating seams without interrupting the user.
+
+---
+
+## 8. Academic Literature References
 
 1. **Goldberg, D., Malon, C., & Bern, M. (2002)**. *A Global Approach to Solving Jigsaw Puzzles*. Proceedings of the eighteenth annual symposium on Computational geometry (SCG '02), pp. 82–87.
    - Foundational paper on global color compatibility vs boundary curve verification.
@@ -231,7 +271,7 @@ To answer **"Given a piece, show its approximate location on the reference poste
 
 ---
 
-## 7. Implementation Milestones
+## 9. Implementation Milestones
 
 For active engineering milestones, real-time completion status, and delivery checklists, see the authoritative project tracker:
 👉 **[Technical Roadmap & Implementation Milestones (ROADMAP.md)](file:///home/stbn/projects/jigsaw-puzzle-solver/ROADMAP.md)**

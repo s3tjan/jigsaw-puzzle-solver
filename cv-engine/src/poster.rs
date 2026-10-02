@@ -620,3 +620,251 @@ pub fn get_slot_preview(
         .map_err(|e| JsValue::from_str(&e))?;
     serde_wasm_bindgen::to_value(&preview).map_err(|e| JsValue::from_str(&e.to_string()))
 }
+
+/// Output match candidate from poster localization search.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CandidatePosterSlot {
+    pub col: u32,
+    pub row: u32,
+    pub rotation_deg: f32, // 0, 90, 180, 270
+    pub confidence: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PiecePosterMatch {
+    pub best_col: u32,
+    pub best_row: u32,
+    pub best_rotation_deg: f32,
+    pub confidence: f32,
+    pub top_candidates: Vec<CandidatePosterSlot>,
+}
+
+/// Compute average CIELAB chrominance and 8-bin Sobel gradient histogram for an RGBA image buffer.
+pub fn extract_visual_fingerprint(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> ([f32; 3], [f32; 8]) {
+    let pixel_count = (width * height) as usize;
+    if pixel_count == 0 || rgba.len() < pixel_count * 4 {
+        return ([50.0, 0.0, 0.0], [0.125; 8]);
+    }
+
+    // 1. Mean CIELAB
+    let mut sum_l = 0.0f32;
+    let mut sum_a = 0.0f32;
+    let mut sum_b = 0.0f32;
+
+    // Subsample step for speed if piece crop is large
+    let step = (pixel_count / 1000).max(1);
+    let mut sampled_count = 0.0f32;
+
+    for i in (0..pixel_count).step_by(step) {
+        let alpha = rgba[i * 4 + 3];
+        if alpha < 50 {
+            continue; // Skip transparent / background
+        }
+        let r = rgba[i * 4];
+        let g = rgba[i * 4 + 1];
+        let b = rgba[i * 4 + 2];
+        let lab = rgb_to_cielab(r, g, b);
+        sum_l += lab[0];
+        sum_a += lab[1];
+        sum_b += lab[2];
+        sampled_count += 1.0;
+    }
+
+    let mean_lab = if sampled_count > 0.0 {
+        [sum_l / sampled_count, sum_a / sampled_count, sum_b / sampled_count]
+    } else {
+        [50.0, 0.0, 0.0]
+    };
+
+    // 2. Grayscale + Sobel 8-bin gradient orientation histogram
+    let gray = rgba_to_grayscale(rgba, width, height);
+    let clahe_gray = apply_clahe(&gray, width, height, 4, 4, 2.0);
+    let (mag, ori) = compute_sobel_gradients(&clahe_gray, width, height);
+
+    let mut ori_hist = [0.0f32; 8];
+    let mut total_grad = 0.0f32;
+
+    for i in 0..pixel_count {
+        let m = mag[i] as f32;
+        if m > 15.0 {
+            let bin = (ori[i] as usize).min(7);
+            ori_hist[bin] += m;
+            total_grad += m;
+        }
+    }
+
+    if total_grad > 0.0 {
+        for b in 0..8 {
+            ori_hist[b] /= total_grad;
+        }
+    } else {
+        for b in 0..8 {
+            ori_hist[b] = 0.125;
+        }
+    }
+
+    (mean_lab, ori_hist)
+}
+
+/// Rotates an 8-bin gradient histogram by 90-degree increments (k = 0, 1, 2, 3).
+/// Since 8 bins span 360° (45° per bin), each 90° rotation shifts the histogram by 2 bins.
+pub fn rotate_gradient_histogram(hist: &[f32; 8], k: usize) -> [f32; 8] {
+    let shift = (k * 2) % 8;
+    let mut rotated = [0.0f32; 8];
+    for i in 0..8 {
+        rotated[(i + shift) % 8] = hist[i];
+    }
+    rotated
+}
+
+/// Fast similarity metric combining CIELAB chromaticity distance (ΔE) and Gradient Histogram cosine similarity.
+pub fn compute_slot_similarity(
+    piece_lab: &[f32; 3],
+    piece_hist: &[f32; 8],
+    slot_lab: &[f32; 3],
+    slot_hist: &[f32; 8],
+) -> f32 {
+    // 1. CIELAB distance: chromaticity (a*, b*) has higher weight than L* (since lighting finish varies)
+    let dl = (piece_lab[0] - slot_lab[0]) * 0.4;
+    let da = piece_lab[1] - slot_lab[1];
+    let db = piece_lab[2] - slot_lab[2];
+    let delta_e = (dl * dl + da * da + db * db).sqrt(); // 0 to ~150
+    let color_score = (1.0 - (delta_e / 70.0)).clamp(0.0, 1.0);
+
+    // 2. Cosine similarity between gradient orientation histograms
+    let mut dot = 0.0f32;
+    let mut norm_a = 0.0f32;
+    let mut norm_b = 0.0f32;
+    for i in 0..8 {
+        dot += piece_hist[i] * slot_hist[i];
+        norm_a += piece_hist[i] * piece_hist[i];
+        norm_b += slot_hist[i] * slot_hist[i];
+    }
+    let grad_score = if norm_a > 0.0 && norm_b > 0.0 {
+        (dot / (norm_a.sqrt() * norm_b.sqrt())).clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+
+    // Weighted fusion: 55% color/chromaticity + 45% structural edge orientation
+    0.55 * color_score + 0.45 * grad_score
+}
+
+/// WASM entry point: Real-time candidate poster localization.
+/// Scans the piece against all slots across 4 cardinal rotations (0°, 90°, 180°, 270°)
+/// and returns the best matching slots with confidence scores.
+#[wasm_bindgen]
+pub fn locate_piece_on_poster(
+    piece_rgba: &[u8],
+    piece_w: u32,
+    piece_h: u32,
+    poster_rgba: &[u8],
+    poster_w: u32,
+    poster_h: u32,
+    cols: u32,
+    rows: u32,
+    is_border_hint: bool,
+    is_corner_hint: bool,
+) -> Result<JsValue, JsValue> {
+    if cols == 0 || rows == 0 || poster_w == 0 || poster_h == 0 || piece_w == 0 || piece_h == 0 {
+        return Err(JsValue::from_str("Invalid dimensions for poster localization"));
+    }
+
+    // Extract piece fingerprint
+    let (piece_lab, piece_hist) = extract_visual_fingerprint(piece_rgba, piece_w, piece_h);
+
+    let cell_w = (poster_w as f32 / cols as f32).round() as usize;
+    let cell_h = (poster_h as f32 / rows as f32).round() as usize;
+
+    let mut scored_slots: Vec<CandidatePosterSlot> = Vec::new();
+
+    // Rotations: 0 = 0°, 1 = 90°, 2 = 180°, 3 = 270°
+    let rotations_deg = [0.0f32, 90.0f32, 180.0f32, 270.0f32];
+
+    for r in 0..rows {
+        for c in 0..cols {
+            let is_slot_corner = (r == 0 && c == 0) || (r == 0 && c == cols - 1)
+                || (r == rows - 1 && c == 0) || (r == rows - 1 && c == cols - 1);
+            let is_slot_border = r == 0 || r == rows - 1 || c == 0 || c == cols - 1;
+
+            // Geometry filter: if piece is known corner/border, only check appropriate slots
+            if is_corner_hint && !is_slot_corner {
+                continue;
+            }
+            if is_border_hint && !is_corner_hint && (!is_slot_border || is_slot_corner) {
+                continue;
+            }
+            if !is_border_hint && is_slot_border {
+                // If piece is pure interior, penalize or skip borders
+                continue;
+            }
+
+            // Extract slot crop sample (downsampled central region for speed)
+            let x0 = (c as f32 * (poster_w as f32 / cols as f32)) as usize;
+            let y0 = (r as f32 * (poster_h as f32 / rows as f32)) as usize;
+            let sub_w = cell_w.min(poster_w as usize - x0);
+            let sub_h = cell_h.min(poster_h as usize - y0);
+
+            if sub_w < 4 || sub_h < 4 {
+                continue;
+            }
+
+            let mut slot_rgba = vec![0u8; sub_w * sub_h * 4];
+            for sy in 0..sub_h {
+                let src_idx = ((y0 + sy) * (poster_w as usize) + x0) * 4;
+                let dst_idx = (sy * sub_w) * 4;
+                let len = sub_w * 4;
+                if src_idx + len <= poster_rgba.len() {
+                    slot_rgba[dst_idx..dst_idx + len].copy_from_slice(&poster_rgba[src_idx..src_idx + len]);
+                }
+            }
+
+            let (slot_lab, slot_hist) = extract_visual_fingerprint(&slot_rgba, sub_w as u32, sub_h as u32);
+
+            // Test across 4 rotations
+            let mut best_rot = 0.0f32;
+            let mut max_sim = 0.0f32;
+
+            for (k, &rot_deg) in rotations_deg.iter().enumerate() {
+                let rot_hist = rotate_gradient_histogram(&piece_hist, k);
+                let sim = compute_slot_similarity(&piece_lab, &rot_hist, &slot_lab, &slot_hist);
+                if sim > max_sim {
+                    max_sim = sim;
+                    best_rot = rot_deg;
+                }
+            }
+
+            scored_slots.push(CandidatePosterSlot {
+                col: c,
+                row: r,
+                rotation_deg: best_rot,
+                confidence: max_sim,
+            });
+        }
+    }
+
+    // Sort descending by confidence
+    scored_slots.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+
+    let top_candidates: Vec<CandidatePosterSlot> = scored_slots.iter().take(5).cloned().collect();
+
+    let (best_col, best_row, best_rotation_deg, confidence) = if let Some(best) = top_candidates.first() {
+        (best.col, best.row, best.rotation_deg, best.confidence)
+    } else {
+        (0, 0, 0.0, 0.0)
+    };
+
+    let result = PiecePosterMatch {
+        best_col,
+        best_row,
+        best_rotation_deg,
+        confidence,
+        top_candidates,
+    };
+
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}

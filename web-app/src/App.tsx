@@ -5,12 +5,13 @@ import init, {
   measure_stage_focus,
   analyze_staged_piece,
   map_dewarped_points_to_camera,
+  locate_piece_on_poster,
 } from './pkg/cv_engine'
 import { PosterCanvas } from './components/PosterCanvas'
 import { PieceTray } from './components/PieceTray'
 import type { SlotRequirementFilter } from './components/PieceTray'
 import { BoardView } from './components/BoardView'
-import type { StoredPiece, PlacedBoardSlot } from './storage/db'
+import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from './storage/db'
 import {
   getAllPieces,
   savePiece,
@@ -22,6 +23,9 @@ import {
   exportAssemblyDataset,
   importAssemblyDataset,
   savePairedFixture,
+  getAllPairedFixtures,
+  syncBoardMatingPairs,
+  updatePairedFixtureStatus,
 } from './storage/db'
 import './App.css'
 
@@ -103,15 +107,28 @@ export default function App() {
     rows: 28,
   })
 
+  // Phase 8: Unified Cockpit & Real-Time Poster Localization State
+  const [pairedFixtures, setPairedFixtures] = useState<GroundTruthPairFixture[]>([])
+  const [activePosterMatch, setActivePosterMatch] = useState<{
+    best_col: number
+    best_row: number
+    best_rotation_deg: number
+    confidence: number
+    top_candidates: { col: number; row: number; rotation_deg: number; confidence: number }[]
+  } | null>(null)
+  const lastLocalizationTimeRef = useRef<number>(0)
+
   // Load persistent pieces and board state from IndexedDB on startup
   const refreshStorage = useCallback(async () => {
     try {
-      const [allPieces, allSlots] = await Promise.all([
+      const [allPieces, allSlots, allFixtures] = await Promise.all([
         getAllPieces(),
         getAllPlacedSlots(),
+        getAllPairedFixtures(),
       ])
       setTrayPieces(allPieces)
       setPlacedSlots(allSlots)
+      setPairedFixtures(allFixtures)
     } catch (err) {
       console.error('Failed to load from IndexedDB:', err)
     }
@@ -585,6 +602,41 @@ export default function App() {
           ctx.fillStyle = '#ffffff'
           ctx.fill()
         }
+
+        // Phase 8: Real-Time Poster Proposal Badge in Camera Space
+        if (activePosterMatch) {
+          const pCenter = map_dewarped_points_to_camera(
+            new Float32Array([activePiece.center.x, activePiece.center.y]),
+            w, h,
+            pts[0].x, pts[0].y,
+            pts[1].x, pts[1].y,
+            pts[2].x, pts[2].y,
+            pts[3].x, pts[3].y,
+            dstW, dstH,
+            lensK1
+          )
+          const pCX = pCenter[0]
+          const pCY = pCenter[1] - 42
+
+          const hudText = `🎯 POSTER: [R${activePosterMatch.best_row}, C${activePosterMatch.best_col}] (${activePosterMatch.best_rotation_deg.toFixed(0)}°) — ${((activePosterMatch.confidence) * 100).toFixed(0)}%`
+          ctx.font = 'bold 14px monospace'
+          const htw = ctx.measureText(hudText).width
+          const hbw = htw + 16
+          const hbh = 26
+
+          ctx.fillStyle = 'rgba(22, 27, 34, 0.95)'
+          ctx.beginPath()
+          ctx.roundRect(pCX - hbw / 2, pCY - hbh / 2, hbw, hbh, 4)
+          ctx.fill()
+          ctx.strokeStyle = '#ffd33d'
+          ctx.lineWidth = 2.0
+          ctx.stroke()
+
+          ctx.fillStyle = '#ffd33d'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(hudText, pCX, pCY)
+        }
       }
     }
   }
@@ -909,6 +961,35 @@ export default function App() {
 
                 setDetectedPiece(livePiece)
                 detectedPieceRef.current = livePiece
+
+                // Real-Time Poster Localization (Literature Principle 2: Vision Proposal Tier)
+                if (livePiece && posterRgba && posterDims.w > 0 && posterDims.h > 0) {
+                  const nowLoc = performance.now()
+                  if (nowLoc - lastLocalizationTimeRef.current >= 150) {
+                    lastLocalizationTimeRef.current = nowLoc
+                    try {
+                      const match = locate_piece_on_poster(
+                        dewarped,
+                        dstW,
+                        dstH,
+                        posterRgba,
+                        posterDims.w,
+                        posterDims.h,
+                        posterDims.cols,
+                        posterDims.rows,
+                        livePiece.is_border,
+                        livePiece.is_corner
+                      )
+                      if (match && match.confidence > 0.4) {
+                        setActivePosterMatch(match)
+                      }
+                    } catch (locErr) {
+                      console.warn('Poster localization error:', locErr)
+                    }
+                  }
+                } else if (!livePiece) {
+                  setActivePosterMatch(null)
+                }
               }
 
               // Render rectified piece view
@@ -1146,7 +1227,87 @@ export default function App() {
   // Board placement callbacks
   const handlePlacePiece = async (row: number, col: number, pieceId: string, rotation: number) => {
     await placePieceOnBoard(row, col, pieceId, rotation)
+    // Synchronize adjacent mating pairs automatically
+    const updatedPlacedSlots = {
+      ...placedSlots,
+      [`${row},${col}`]: { row, col, piece_id: pieceId, rotation, placed_at: Date.now() },
+    }
+    await syncBoardMatingPairs(posterDims.rows, posterDims.cols, updatedPlacedSlots, trayPieces)
     await refreshStorage()
+  }
+
+  const handleUpdatePairStatus = async (pairId: string, status: 'verified' | 'rejected') => {
+    await updatePairedFixtureStatus(pairId, status)
+    await refreshStorage()
+  }
+
+  // 1-Click Fast Placement directly from live camera stage candidate
+  const handlePlaceDetectedCandidate = async () => {
+    if (!detectedPiece || !activePosterMatch) return
+
+    // 1. Generate thumbnail & store piece
+    let thumbUrl = ''
+    if (pieceCanvasRef.current) {
+      thumbUrl = pieceCanvasRef.current.toDataURL('image/jpeg', 0.88)
+    }
+
+    const flatCount = detectedPiece.edges.filter((e) => e.edge_type === 'Flat').length
+    const tabCount = detectedPiece.edges.filter((e) => e.edge_type === 'Tab').length
+    const holeCount = detectedPiece.edges.filter((e) => e.edge_type === 'Hole').length
+    const classification: 'Corner' | 'Border' | 'Interior' =
+      detectedPiece.is_corner || flatCount >= 2
+        ? 'Corner'
+        : detectedPiece.is_border || flatCount === 1
+        ? 'Border'
+        : 'Interior'
+
+    const mmPerPx = 96.0 / 384.0
+    const metricW = detectedPiece.bounding_width * mmPerPx
+    const metricH = detectedPiece.bounding_height * mmPerPx
+
+    const now = Date.now()
+    const nextPieceNum = trayPieces.length + 1
+    const pieceId = `piece_${now}_${nextPieceNum}`
+
+    // Map rotation_deg (0, 90, 180, 270) to board rotation index (0, 1, 2, 3)
+    const rotIdx = Math.round(activePosterMatch.best_rotation_deg / 90) % 4
+
+    const stored: StoredPiece = {
+      id: pieceId,
+      piece_number: nextPieceNum,
+      timestamp: now,
+      thumbnailDataUrl: thumbUrl,
+      corners: [
+        { ...detectedPiece.corners[0] },
+        { ...detectedPiece.corners[1] },
+        { ...detectedPiece.corners[2] },
+        { ...detectedPiece.corners[3] },
+      ],
+      edges: detectedPiece.edges.map((e) => ({
+        edge_type: e.edge_type,
+        start_corner: { ...e.start_corner },
+        end_corner: { ...e.end_corner },
+        curvature_depth: e.curvature_depth,
+        curve_samples: e.curve_samples ? e.curve_samples.map((p) => ({ ...p })) : [],
+      })) as any,
+      bounding_width_px: detectedPiece.bounding_width,
+      bounding_height_px: detectedPiece.bounding_height,
+      metric_width_mm: metricW,
+      metric_height_mm: metricH,
+      classification,
+      flat_count: flatCount,
+      tab_count: tabCount,
+      hole_count: holeCount,
+      status: 'Placed',
+      placed_slot: { row: activePosterMatch.best_row, col: activePosterMatch.best_col, rotation: rotIdx },
+      is_favorite: false,
+      tags: [],
+      paired_piece_id: null,
+    }
+
+    await savePiece(stored)
+    await handlePlacePiece(activePosterMatch.best_row, activePosterMatch.best_col, pieceId, rotIdx)
+    setSelectedBoardSlot({ row: activePosterMatch.best_row, col: activePosterMatch.best_col })
   }
 
   const handleUnplacePiece = async (row: number, col: number) => {
@@ -1160,12 +1321,14 @@ export default function App() {
       setPairingSourcePieceId(pieceId)
     } else if (pairingSourcePieceId !== pieceId) {
       // Complete pair fixture
-      const fixture = {
+      const fixture: GroundTruthPairFixture = {
         id: `pair_${Date.now()}`,
         piece_a_id: pairingSourcePieceId,
         piece_a_edge_idx: 0,
         piece_b_id: pieceId,
         piece_b_edge_idx: 2,
+        status: 'verified',
+        source: 'manual',
         created_at: Date.now(),
       }
       savePairedFixture(fixture).then(() => {
@@ -1176,19 +1339,30 @@ export default function App() {
     }
   }
 
-  // Export / Import fixtures
+  // Export / Import fixtures (with Phase 8 ground-truth mating pair filtering)
   const handleExportFixtures = async () => {
+    const onlyVerified = window.confirm(
+      'Export verified ground-truth mating pairs only?\n\n' +
+      '[OK] = Export only human-verified pairs (recommended for Phase 9 test suite)\n' +
+      '[Cancel] = Include provisional auto-detected pairs'
+    )
+
     const bundle = await exportAssemblyDataset({
       rows: posterDims.rows,
       cols: posterDims.cols,
       physical_width_mm: 700,
       physical_height_mm: 500,
     })
+
+    if (onlyVerified) {
+      bundle.paired_fixtures = bundle.paired_fixtures.filter(f => f.status === 'verified')
+    }
+
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `jigsaw_assembly_dataset_${Date.now()}.json`
+    a.download = `mating_pairs_dataset_${Date.now()}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -1310,11 +1484,16 @@ export default function App() {
       } else if (e.code === 'Escape' && isGtMode) {
         e.preventDefault()
         handleExitGtMode()
+      } else if (e.code === 'Enter') {
+        if (activePosterMatch && detectedPiece) {
+          e.preventDefault()
+          handlePlaceDetectedCandidate()
+        }
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges])
+  }, [detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges, activePosterMatch, handlePlaceDetectedCandidate])
 
 
   return (
@@ -1391,11 +1570,13 @@ export default function App() {
             cols={posterDims.cols}
             pieces={trayPieces}
             placedSlots={placedSlots}
+            pairedFixtures={pairedFixtures}
             onPlacePiece={handlePlacePiece}
             onUnplacePiece={handleUnplacePiece}
             selectedSlot={selectedBoardSlot}
             onSelectSlot={setSelectedBoardSlot}
             onSetSlotFilter={setSlotRequirementFilter}
+            onUpdatePairStatus={handleUpdatePairStatus}
             posterRgba={posterRgba}
             posterWidth={posterDims.w}
             posterHeight={posterDims.h}
@@ -1530,14 +1711,56 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Phase 8: Real-Time Poster Localization Proposal & 1-Click Fast Placement */}
+                {activePosterMatch && (
+                  <div style={{
+                    background: '#161b22',
+                    border: '1px solid #d29922',
+                    borderRadius: 4,
+                    padding: '10px 12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 11, fontWeight: 'bold', color: '#ffd33d' }}>
+                        🎯 POSTER CANDIDATE
+                      </span>
+                      <span className="badge" style={{ background: '#d2992222', color: '#d29922', border: '1px solid #d29922' }}>
+                        {((activePosterMatch.confidence) * 100).toFixed(0)}% MATCH
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                      <span>SLOT: <b>[R{activePosterMatch.best_row}, C{activePosterMatch.best_col}]</b></span>
+                      <span>ORIENTATION: <b>{activePosterMatch.best_rotation_deg.toFixed(0)}°</b></span>
+                    </div>
+
+                    <button
+                      className="btn primary"
+                      style={{
+                        background: '#238636',
+                        borderColor: '#2ea043',
+                        color: '#fff',
+                        fontWeight: 'bold',
+                        padding: '8px',
+                        fontSize: 12,
+                      }}
+                      onClick={handlePlaceDetectedCandidate}
+                    >
+                      ⚡ PLACE AT [R{activePosterMatch.best_row}, C{activePosterMatch.best_col}] [ENTER]
+                    </button>
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <button
-                    className="btn primary"
+                    className="btn"
                     disabled={!detectedPiece}
                     onClick={handleRecordPiece}
                     title="Add detected piece to session collection"
                   >
-                    RECORD PIECE
+                    RECORD TO TRAY ONLY
                   </button>
 
                   <div style={{ background: '#161b22', padding: 10, borderRadius: 4, border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>
