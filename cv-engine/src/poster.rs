@@ -1114,13 +1114,10 @@ pub fn compute_spatial_similarity(
         let pc = &piece_cells[i];
         let sc = &slot_cells[i];
 
-        let weight = if pc.sample_count > 0 && sc.sample_count > 0 {
-            1.0f32
-        } else if pc.sample_count > 0 || sc.sample_count > 0 {
-            0.5f32
-        } else {
+        if pc.sample_count == 0 {
             continue;
-        };
+        }
+        let weight = 1.0f32;
 
         // 1. CIELAB distance: chromaticity (a*, b*) has higher weight than L*
         let dl = (pc.mean_lab[0] - sc.mean_lab[0]) * 0.4;
@@ -1233,32 +1230,78 @@ pub fn locate_piece_spatial_core(
     piece_w: u32,
     piece_h: u32,
     descriptors: &[SpatialSlotDescriptor],
+    grid_cols: u32,
     is_border_hint: bool,
     is_corner_hint: bool,
+    occupied_slots: &[u8],
 ) -> PiecePosterMatch {
-    let mut min_x = piece_w;
-    let mut max_x = 0;
-    let mut min_y = piece_h;
-    let mut max_y = 0;
-    let mut fg_count = 0;
+    let mut fg_count = 0usize;
+    let mut col_hist = vec![0u32; piece_w as usize];
+    let mut row_hist = vec![0u32; piece_h as usize];
 
     if !piece_mask.is_empty() && piece_mask.len() >= (piece_w * piece_h) as usize {
         for y in 0..piece_h {
             let row_offset = (y * piece_w) as usize;
             for x in 0..piece_w {
                 if piece_mask[row_offset + x as usize] > 128 {
-                    min_x = min_x.min(x);
-                    max_x = max_x.max(x);
-                    min_y = min_y.min(y);
-                    max_y = max_y.max(y);
+                    col_hist[x as usize] += 1;
+                    row_hist[y as usize] += 1;
                     fg_count += 1;
                 }
             }
         }
     }
 
-    let (roi_x0, roi_y0, roi_w, roi_h) = if fg_count > 50 && max_x > min_x && max_y > min_y {
-        (min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+    let (roi_x0, roi_y0, roi_w, roi_h) = if fg_count > 100 {
+        // Robust 1.5% percentile bounding box: rejects stray dust specks and stage edge shadows
+        let thresh_count = (fg_count as f32 * 0.015).max(1.0) as u32;
+
+        let mut min_x = 0u32;
+        let mut cum_x = 0u32;
+        for (x, &cnt) in col_hist.iter().enumerate() {
+            cum_x += cnt;
+            if cum_x >= thresh_count {
+                min_x = x as u32;
+                break;
+            }
+        }
+
+        let mut max_x = piece_w.saturating_sub(1);
+        cum_x = 0;
+        for (x, &cnt) in col_hist.iter().enumerate().rev() {
+            cum_x += cnt;
+            if cum_x >= thresh_count {
+                max_x = x as u32;
+                break;
+            }
+        }
+
+        let mut min_y = 0u32;
+        let mut cum_y = 0u32;
+        for (y, &cnt) in row_hist.iter().enumerate() {
+            cum_y += cnt;
+            if cum_y >= thresh_count {
+                min_y = y as u32;
+                break;
+            }
+        }
+
+        let mut max_y = piece_h.saturating_sub(1);
+        cum_y = 0;
+        for (y, &cnt) in row_hist.iter().enumerate().rev() {
+            cum_y += cnt;
+            if cum_y >= thresh_count {
+                max_y = y as u32;
+                break;
+            }
+        }
+
+        let min_x = min_x.saturating_sub(2);
+        let min_y = min_y.saturating_sub(2);
+        let max_x = (max_x + 2).min(piece_w.saturating_sub(1));
+        let max_y = (max_y + 2).min(piece_h.saturating_sub(1));
+
+        (min_x, min_y, (max_x - min_x + 1).max(4), (max_y - min_y + 1).max(4))
     } else {
         (0, 0, piece_w, piece_h)
     };
@@ -1292,6 +1335,14 @@ pub fn locate_piece_spatial_core(
     let mut scored_slots: Vec<CandidatePosterSlot> = Vec::with_capacity(descriptors.len());
 
     for desc in descriptors {
+        // Exclude slots that already have a piece placed on the board
+        if !occupied_slots.is_empty() && grid_cols > 0 {
+            let slot_idx = (desc.row * grid_cols + desc.col) as usize;
+            if slot_idx < occupied_slots.len() && occupied_slots[slot_idx] > 0 {
+                continue;
+            }
+        }
+
         if is_corner_hint {
             if !desc.is_corner { continue; }
         } else if is_border_hint {
@@ -1382,6 +1433,7 @@ pub fn locate_piece_spatial(
     piece_h: u32,
     is_border_hint: bool,
     is_corner_hint: bool,
+    occupied_slots: &[u8],
 ) -> Result<JsValue, JsValue> {
     if let Ok(lock) = PERSISTENT_POSTER.lock() {
         if let Some(ref state) = *lock {
@@ -1391,8 +1443,10 @@ pub fn locate_piece_spatial(
                 piece_w,
                 piece_h,
                 &state.descriptors,
+                state.cols,
                 is_border_hint,
                 is_corner_hint,
+                occupied_slots,
             );
             return serde_wasm_bindgen::to_value(&result)
                 .map_err(|e| JsValue::from_str(&e.to_string()));

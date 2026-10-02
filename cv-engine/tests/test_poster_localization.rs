@@ -190,8 +190,10 @@ fn test_spatial_poster_localization_benchmarks() {
             rot_w,
             rot_h,
             &descriptors,
+            cols,
             fix.is_border,
             fix.is_corner,
+            &[],
         );
         let search_dur = start_search.elapsed().as_secs_f64() * 1000.0;
         total_search_time_ms += search_dur;

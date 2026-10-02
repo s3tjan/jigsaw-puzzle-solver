@@ -114,6 +114,10 @@ export default function App() {
   } | null>(null)
   const activePosterMatchRef = useRef(activePosterMatch)
   activePosterMatchRef.current = activePosterMatch
+  const placedSlotsRef = useRef(placedSlots)
+  placedSlotsRef.current = placedSlots
+  const posterDimsRef = useRef(posterDims)
+  posterDimsRef.current = posterDims
   const recentMatchesRef = useRef<{ match: any; timestamp: number }[]>([])
   const lastLocalizationTimeRef = useRef<number>(0)
   const isPosterInitializedRef = useRef<boolean>(false)
@@ -1011,13 +1015,25 @@ export default function App() {
                   if (nowLoc - lastLocalizationTimeRef.current >= 90) {
                     lastLocalizationTimeRef.current = nowLoc
                     try {
+                      const curDims = posterDimsRef.current
+                      const totalSlots = (curDims.rows || 28) * (curDims.cols || 36)
+                      const occupiedBytes = new Uint8Array(totalSlots)
+                      const curPlaced = placedSlotsRef.current
+                      Object.keys(curPlaced).forEach((key) => {
+                        const [r, c] = key.split(',').map(Number)
+                        if (r >= 0 && r < curDims.rows && c >= 0 && c < curDims.cols) {
+                          occupiedBytes[r * curDims.cols + c] = 1
+                        }
+                      })
+
                       const match = locate_piece_spatial(
                         dewarped,
                         liveMask || new Uint8Array(0),
                         dstW,
                         dstH,
                         livePiece.is_border,
-                        livePiece.is_corner
+                        livePiece.is_corner,
+                        occupiedBytes
                       )
                       if (match && match.confidence > 0.35) {
                         // Append to recent match history for temporal consensus and anti-wobble
@@ -1326,38 +1342,38 @@ export default function App() {
     await refreshStorage()
   }
 
-  // 1-Click Fast Placement directly from live camera stage candidate
-  const handlePlaceDetectedCandidate = async () => {
-    if (!detectedPiece || !activePosterMatch) return
+  // Fast Placement directly from live camera stage candidate
+  const handlePlaceCandidate = async (cand: { col: number; row: number; rotation_deg: number }) => {
+    const pieceToPlace = (isGtMode && gtFrozenPiece) ? gtFrozenPiece : detectedPiece
+    if (!pieceToPlace) return
 
-    // 1. Generate thumbnail & store piece
     let thumbUrl = ''
     if (pieceCanvasRef.current) {
       thumbUrl = pieceCanvasRef.current.toDataURL('image/jpeg', 0.88)
     }
 
-    const flatCount = detectedPiece.edges.filter((e) => e.edge_type === 'Flat').length
-    const tabCount = detectedPiece.edges.filter((e) => e.edge_type === 'Tab').length
-    const holeCount = detectedPiece.edges.filter((e) => e.edge_type === 'Hole').length
+    const flatCount = pieceToPlace.edges.filter((e) => e.edge_type === 'Flat').length
+    const tabCount = pieceToPlace.edges.filter((e) => e.edge_type === 'Tab').length
+    const holeCount = pieceToPlace.edges.filter((e) => e.edge_type === 'Hole').length
     const classification: 'Corner' | 'Border' | 'Interior' =
-      detectedPiece.is_corner || flatCount >= 2
+      pieceToPlace.is_corner || flatCount >= 2
         ? 'Corner'
-        : detectedPiece.is_border || flatCount === 1
+        : pieceToPlace.is_border || flatCount === 1
         ? 'Border'
         : 'Interior'
 
     const mmPerPx = 96.0 / 384.0
-    const metricW = detectedPiece.bounding_width * mmPerPx
-    const metricH = detectedPiece.bounding_height * mmPerPx
+    const metricW = pieceToPlace.bounding_width * mmPerPx
+    const metricH = pieceToPlace.bounding_height * mmPerPx
 
     const now = Date.now()
     const nextPieceNum = storedPieces.length + 1
     const pieceId = `piece_${now}_${nextPieceNum}`
 
     // Map rotation_deg (0, 90, 180, 270) to board rotation index (0, 1, 2, 3)
-    const rotIdx = Math.round(activePosterMatch.best_rotation_deg / 90) % 4
-    const targetRow = activePosterMatch.best_row
-    const targetCol = activePosterMatch.best_col
+    const rotIdx = Math.round(cand.rotation_deg / 90) % 4
+    const targetRow = cand.row
+    const targetCol = cand.col
 
     const stored: StoredPiece = {
       id: pieceId,
@@ -1365,20 +1381,20 @@ export default function App() {
       timestamp: now,
       thumbnailDataUrl: thumbUrl,
       corners: [
-        { ...detectedPiece.corners[0] },
-        { ...detectedPiece.corners[1] },
-        { ...detectedPiece.corners[2] },
-        { ...detectedPiece.corners[3] },
+        { ...pieceToPlace.corners[0] },
+        { ...pieceToPlace.corners[1] },
+        { ...pieceToPlace.corners[2] },
+        { ...pieceToPlace.corners[3] },
       ],
-      edges: detectedPiece.edges.map((e) => ({
+      edges: pieceToPlace.edges.map((e) => ({
         edge_type: e.edge_type,
         start_corner: { ...e.start_corner },
         end_corner: { ...e.end_corner },
         curvature_depth: e.curvature_depth,
         curve_samples: e.curve_samples ? e.curve_samples.map((p) => ({ ...p })) : [],
       })) as any,
-      bounding_width_px: detectedPiece.bounding_width,
-      bounding_height_px: detectedPiece.bounding_height,
+      bounding_width_px: pieceToPlace.bounding_width,
+      bounding_height_px: pieceToPlace.bounding_height,
       metric_width_mm: metricW,
       metric_height_mm: metricH,
       classification,
@@ -1410,6 +1426,7 @@ export default function App() {
     setPlacedSlots(updatedPlacedSlots)
     setSelectedBoardSlot({ row: targetRow, col: targetCol })
     setActivePosterMatch(null)
+    recentMatchesRef.current = []
 
     // Non-blocking background save & local neighbor sync:
     savePiece(stored).catch(e => console.error('Background savePiece error:', e))
@@ -1421,6 +1438,16 @@ export default function App() {
         }
       })
       .catch(e => console.error('Background syncLocalMatingPairs error:', e))
+  }
+
+  const handlePlaceDetectedCandidate = async () => {
+    if (activePosterMatch) {
+      handlePlaceCandidate({
+        col: activePosterMatch.best_col,
+        row: activePosterMatch.best_row,
+        rotation_deg: activePosterMatch.best_rotation_deg,
+      })
+    }
   }
 
   const handleUnplacePiece = async (row: number, col: number) => {
@@ -1717,12 +1744,12 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Real-Time Poster Localization Match & Fast Placement Button */}
+                {/* Real-Time Poster Localization Match: Top 5 Potential Placements */}
                 {activePosterMatch && (
                   <div style={{
                     background: '#161b22',
                     border: '1px solid #d29922',
-                    borderRadius: 4,
+                    borderRadius: 6,
                     padding: '8px 10px',
                     display: 'flex',
                     flexDirection: 'column',
@@ -1730,32 +1757,77 @@ export default function App() {
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: 11, fontWeight: 'bold', color: '#58a6ff' }}>
-                        CANDIDATE SLOT
+                        TOP 5 CANDIDATE PLACES
                       </span>
-                      <span className="badge" style={{ background: '#d2992222', color: '#d29922', border: '1px solid #d29922' }}>
-                        {((activePosterMatch.confidence) * 100).toFixed(0)}% MATCH
+                      <span style={{ fontSize: 10, color: '#8b949e' }}>
+                        [ENTER] = #1
                       </span>
                     </div>
 
-                    <div style={{ fontSize: 11, display: 'flex', justifyContent: 'space-between' }}>
-                      <span>SLOT: <b>[R{activePosterMatch.best_row}, C{activePosterMatch.best_col}]</b></span>
-                      <span>ORIENTATION: <b>{activePosterMatch.best_rotation_deg.toFixed(0)}°</b></span>
-                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {(activePosterMatch.top_candidates || [
+                        { col: activePosterMatch.best_col, row: activePosterMatch.best_row, rotation_deg: activePosterMatch.best_rotation_deg, confidence: activePosterMatch.confidence }
+                      ]).slice(0, 5).map((cand, cIdx) => {
+                        const isTop1 = cIdx === 0
+                        return (
+                          <div
+                            key={cIdx}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              background: isTop1 ? '#23863622' : '#21262d',
+                              border: isTop1 ? '1px solid #2ea043' : '1px solid #30363d',
+                              borderRadius: 4,
+                              padding: '5px 8px',
+                              fontSize: 11,
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{
+                                fontWeight: 'bold',
+                                color: isTop1 ? '#3fb950' : '#8b949e',
+                                width: 18,
+                              }}>
+                                #{cIdx + 1}
+                              </span>
+                              <span>
+                                <b>[R{cand.row}, C{cand.col}]</b>
+                              </span>
+                              <span style={{ color: '#8b949e', fontSize: 10 }}>
+                                {cand.rotation_deg.toFixed(0)}°
+                              </span>
+                            </div>
 
-                    <button
-                      className="btn primary"
-                      style={{
-                        background: '#238636',
-                        borderColor: '#2ea043',
-                        color: '#fff',
-                        fontWeight: 'bold',
-                        padding: '6px',
-                        fontSize: 11,
-                      }}
-                      onClick={handlePlaceDetectedCandidate}
-                    >
-                      PLACE AT [R{activePosterMatch.best_row}, C{activePosterMatch.best_col}]
-                    </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{
+                                fontWeight: 'bold',
+                                color: cand.confidence > 0.85 ? '#3fb950' : cand.confidence > 0.70 ? '#d29922' : '#8b949e',
+                                fontSize: 11,
+                              }}>
+                                {(cand.confidence * 100).toFixed(0)}%
+                              </span>
+                              <button
+                                className="btn"
+                                style={{
+                                  background: isTop1 ? '#238636' : '#30363d',
+                                  borderColor: isTop1 ? '#2ea043' : '#484f58',
+                                  color: '#fff',
+                                  padding: '2px 8px',
+                                  fontSize: 10,
+                                  fontWeight: 'bold',
+                                  cursor: 'pointer',
+                                }}
+                                onClick={() => handlePlaceCandidate(cand)}
+                                title={`Place piece at [R${cand.row}, C${cand.col}]`}
+                              >
+                                PLACE
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )}
 
