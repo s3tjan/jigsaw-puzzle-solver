@@ -48,29 +48,29 @@ The solver divides the assembly into two distinct phases:
 
 ### 3.1 The Constraint Hierarchy
 
-Instead of open-ended greedy chaining, the border solver filters candidate pairs through four cascading constraints:
+Instead of open-ended greedy chaining, the border solver filters candidate pairs through a cascading 7-step constraint hierarchy:
 
-1. **Tier 0: Topological Invariants**:
-   - Border pieces have exactly 1 flat edge.
-   - Corners have exactly 2 perpendicular flat edges.
-   - Flat edges are locked to the outer perimeter (facing North, East, South, or West). Outer edges never search for mating pairs.
-2. **Tier 1: Metric Physical Dimensions & Polarity**:
-   - Discrete edge polarity: a `Tab` must enter a `Hole`.
-   - Calibrated metric lengths: using the 100mm calibration mat scale ($96\text{ px} = 25.0\text{ mm}$), seam lengths and tab widths must match within $\pm 0.3\text{ mm}$. Pairs with dimensional mismatches are rejected in $O(1)$ time.
-3. **Tier 2: Seam Ink Continuity (Modified Gradient Compatibility - MGC)**:
+1. **Step 1: Edge Topology Filtering**:
+   - Enforce discrete edge polarity (Tab requires a Hole; Flat outer edges never search for mating pairs).
+   - Fast, cheap $O(1)$ binary check (either has it or doesn't).
+   - Border pieces have exactly 1 flat edge; corners have exactly 2 perpendicular flat edges locked to the outer perimeter.
+2. **Step 2: Metric Dimension Tolerances**:
+   - Using the 100mm calibration mat scale ($96\text{ px} = 25.0\text{ mm}$), seam lengths, tab widths, and tab depths must match within calibrated physical tolerances ($\pm 0.3\text{ mm}$). Pairs with dimensional mismatches are rejected in $O(1)$ time.
+3. **Step 3: Seam Ink Continuity (Modified Gradient Compatibility - MGC)**:
    - For candidate pieces $u$ and $v$, sample RGB pixel values 2–3 pixels inward from the cut line.
    - Extrapolate the color and gradient vector across the seam:
      $$\text{Cost}_{\text{MGC}}(u, v) = \sum_{k} \| \nabla I_u(k) - \nabla I_v(k) \|^2$$
    - Eliminates die-cut twins from other quadrants: a blue tab will never mate with a green hole, even if cut from the identical die.
-4. **Tier 3: Identical Seam Contour Matching**:
-   - In physical die-cutting, two mating pieces share the exact same physical cut line.
-   - For two pieces to mate, their cut contour curves along the seam must be mathematically identical (traversed in reverse: $val_A(t) \equiv -val_B(1-t)$ along the normalized curve profile).
-   - In physical assembly, pieces frequently match in tab/hole polarity, baseline dimensions, and local ink colors, but physically collide because their contour curves along the cut are not the same.
-   - Sub-pixel contour curve comparison (verifying neck taper, head roundness, ear asymmetry, and insertion angles) serves as the definitive mechanical verification before confirming any candidate pair or falling back to the poster.
-5. **Tier 4: Mutual Best-Buddies Filtering**:
-   - Piece $A$'s edge and Piece $B$'s edge are locked into a micro-cluster if and only if:
+4. **Step 4: Sub-pixel Interlocking Contour Analysis**:
+   - Compare complementary tongue-and-groove contour curves within tolerance (normalized profile, neck width, ear roundness, and entry angle) as the decisive physical check before clustering.
+   - Discard false pairings where ink and baseline match but physical contours collide or fail mechanical fit.
+5. **Step 5: Mutual Best-Buddies Filtering**:
+   - Piece $A$'s edge and Piece $B$'s edge are locked into a micro-cluster if and only if both rank each other as #1 across combined metric, ink, and contour criteria:
      $$\text{Rank}(A \to B) = 1 \quad \text{AND} \quad \text{Rank}(B \to A) = 1$$
-   - Evaluated across the combined metric, ink, and identical contour criteria to form rigid 2-piece and 3-piece border segments before global loop optimization runs.
+6. **Step 6: Micro-Clusters & Global $34 \times 26$ Loop Optimization**:
+   - Assembles rigid 2-piece and 3-piece micro-clusters into a closed ring satisfying exact side counts (Top: 34, Right: 26, Bottom: 34, Left: 26 non-corner pieces).
+7. **Step 7: Frame-to-Poster Rigid Alignment**:
+   - Anchors the assembled 124-piece rectangular frame to the master reference poster with zero coordinate ambiguity.
 
 ### 3.2 Global Constrained Loop Optimization
 

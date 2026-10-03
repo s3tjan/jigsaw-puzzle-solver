@@ -96,12 +96,14 @@ Physical tabletop validation revealed critical limitations in the previous assem
 ### 3. Decisions & Implementation
 
 #### 3.1 Multimodal Perimeter Solver (Closed Set of 124 Border Pieces)
-- **Metric Dimension Filter**: Enforce calibrated millimeter tolerances ($\pm 0.3\text{ mm}$) on seam baseline length, tab width, and tab depth.
-- **Discrete Tab/Hole Polarity**: Reject any pair that does not satisfy complementary `Tab` $\leftrightarrow$ `Hole` orientation.
-- **Seam Ink Continuity (MGC)**: Measure color gradient continuity across the cut boundary ($\text{Cost}_{\text{MGC}}$) to eliminate die-cut twins from different quadrants.
-- **Identical Seam Contour Matching**: For two pieces to mate, they must share the exact same cut contour curve along their seam ($val_A(t) \equiv -val_B(1-t)$ along the normalized curve profile). Sub-pixel curve matching (neck taper, head roundness, ear asymmetry, and insertion angles) serves as the definitive mechanical verification before clustering, strictly rejecting pairs where ink and dimensions match but the physical seam contours are not identical.
-- **Mutual Best-Buddies Filtering**: Lock micro-clusters if and only if piece $A$'s #1 match is piece $B$ and piece $B$'s #1 match is piece $A$ across combined metric, ink, and identical contour criteria.
-- **Global $34 \times 26$ Ring Optimization**: Solve the closed loop enforcing exact piece counts (Top: 34, Right: 26, Bottom: 34, Left: 26 non-corner pieces) before performing a rigid affine alignment of the complete 124-piece rectangular frame to the master poster.
+The solver filters candidate pairs through a 7-step cascading constraint hierarchy:
+1. **Edge Topology Filtering**: Enforce discrete edge polarity (Tab requires a Hole; Flat outer edges never search for mates). Cheap, fast $O(1)$ binary check.
+2. **Metric Dimension Tolerances**: Reject candidate border seams whose baseline length, tab width, or tab depth differ by more than $\pm 0.3\text{ mm}$ (fast $O(1)$ dimensional check).
+3. **Seam Ink Continuity (MGC)**: Measure color gradient continuity across candidate cut seams ($\text{Cost}_{\text{MGC}}$) to eliminate identical die-cutter twins from different quadrants.
+4. **Sub-pixel Interlocking Contour Analysis**: Compare complementary tongue-and-groove contour curves within tolerance (normalized profile, neck width, ear roundness, and entry angle) as the decisive physical check before clustering. Discard false pairings where ink and baseline match but physical contours collide or fail mechanical fit.
+5. **Mutual Best-Buddies Filtering**: Lock micro-clusters if and only if piece $A$'s #1 match is piece $B$ and piece $B$'s #1 match is piece $A$ across combined metric, ink, and contour criteria.
+6. **Micro-Clusters & Global $34 \times 26$ Loop Optimization**: Assemble micro-clusters into a closed ring satisfying exact side counts (Top: 34, Right: 26, Bottom: 34, Left: 26 non-corner pieces).
+7. **Frame-to-Poster Rigid Alignment**: Anchor the assembled 124-piece rectangular frame to the master reference poster with zero coordinate ambiguity.
 
 #### 3.2 Inward Boundary Propagation & Pocket Filling for the Interior
 - Rather than pre-scanning all 884 interior pieces, support an **online, streaming draw**:
