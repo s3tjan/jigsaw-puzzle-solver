@@ -62,10 +62,14 @@ Instead of open-ended greedy chaining, the border solver filters candidate pairs
    - Extrapolate the color and gradient vector across the seam:
      $$\text{Cost}_{\text{MGC}}(u, v) = \sum_{k} \| \nabla I_u(k) - \nabla I_v(k) \|^2$$
    - Eliminates die-cut twins from other quadrants: a blue tab will never mate with a green hole, even if cut from the identical die.
-4. **Tier 3: Mutual Best-Buddies Filtering**:
+4. **Tier 3: Sub-pixel Interlocking Contour Analysis**:
+   - Compare complementary tongue-and-groove contour curves (normalized profile, neck width, ear roundness, and entry angle).
+   - In physical assembly, pieces can match in tab/hole polarity, baseline dimensions, and local ink colors, but physically collide if their mechanical contour curves deviate.
+   - Contour analysis serves as the final physical verification check along the seam before confirming a pairwise lock or falling back to poster comparison.
+5. **Tier 4: Mutual Best-Buddies Filtering**:
    - Piece $A$'s edge and Piece $B$'s edge are locked into a micro-cluster if and only if:
      $$\text{Rank}(A \to B) = 1 \quad \text{AND} \quad \text{Rank}(B \to A) = 1$$
-   - Forms rigid 2-piece and 3-piece border segments before any global optimization runs.
+   - Evaluated across the combined metric, ink, and contour compatibility score to form rigid 2-piece and 3-piece border segments before global loop optimization runs.
 
 ### 3.2 Global Constrained Loop Optimization
 
@@ -94,8 +98,8 @@ For the remaining 884 interior pieces, scanning everything upfront is unnecessar
 - The placed border pieces expose inward-facing edges to the grid.
 - When an interior piece is placed on the camera mat:
   - Its 4 edges are compared against all currently exposed boundary seams on the board.
-  - **1-Edge Boundary Match**: Evaluates Tab/Hole polarity, metric millimeter width ($\pm 0.3\text{ mm}$), and Seam MGC color continuity. If matched, the piece locks adjacent to its placed neighbor.
-  - **2-Edge & 3-Edge Pockets**: Corner pockets (e.g. `[1, 1]`) require simultaneous compatibility with both North and West neighbors. This dual constraint provides a 100% unique mathematical lock.
+  - **1-Edge Boundary Match**: Evaluates Tab/Hole polarity, metric millimeter width ($\pm 0.3\text{ mm}$), Seam MGC color continuity, and **sub-pixel interlocking contour curve fit**. If all physical criteria pass, the piece locks adjacent to its placed neighbor.
+  - **2-Edge & 3-Edge Pockets**: Corner pockets (e.g. `[1, 1]`) require simultaneous multi-seam compatibility (metric, ink, and contour curve interlocking) with both North and West neighbors. This dual constraint provides a 100% unique mathematical lock.
 
 ### 4.2 Spatial Probability Density Heatmaps $P(R, C \mid I)$
 If a piece does not connect to the current active boundary:
