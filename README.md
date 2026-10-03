@@ -79,9 +79,8 @@ jigsaw-puzzle-solver/
 ---
 
 ## 📖 Documentation
-- [Assembly Strategy & Solver Architecture](docs/ASSEMBLY_STRATEGY.md): Core mathematical strategy, physical constraints, universal 7-step mating cascade, and two-stage 1,008-piece solving model.
+- [Technical Architecture & Roadmap](ROADMAP.md): Unified master specification covering physical constraints, two-stage solving architecture, 7-step mating cascade, milestone status, and phase specifications.
 - [Architecture Decision Records (ADRs)](docs/ADR.md):
   - **ADR-001**: Ground-truth strategy, edge-corner synchronization, and iterated Gaussian contour smoothing.
   - **ADR-002**: Universal multimodal perimeter assembly, inward boundary propagation, and spatial probability density heatmaps.
-- [Technical Roadmap](ROADMAP.md): System architecture overview, completed phases (0–6), and active Phase 7 perimeter solver specifications.
 - [CV Engine Postmortem](docs/POSTMORTEM_CV_ENGINE.md): Incident log and resolution breakdown for corner detection, optical noise deadband, and segmentation invariants.
