@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import init, {
   dewarp_quad,
   snap_fiducial_corner,
@@ -11,18 +11,22 @@ import init, {
   solve_perimeter_1d_loop_wasm,
 } from './pkg/cv_engine'
 import { BoardView } from './components/BoardView'
+import type { CandidateMatchOverlay } from './components/BoardView'
+import { PieceTray } from './components/PieceTray'
 import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from './storage/db'
 import {
   getAllPieces,
   savePiece,
+  deletePiece,
+  clearAllPieces,
   getAllPlacedSlots,
   placePieceOnBoard,
   unplacePieceFromBoard,
   exportAssemblyDataset,
   importAssemblyDataset,
   getAllPairedFixtures,
-  syncLocalMatingPairs,
   updatePairedFixtureStatus,
+  syncLocalMatingPairs,
 } from './storage/db'
 import './App.css'
 
@@ -128,7 +132,7 @@ export default function App() {
     return {
       w: 0,
       h: 0,
-      cols: savedCols ? parseInt(savedCols) || 40 : 40,
+      cols: savedCols ? parseInt(savedCols) || 36 : 36,
       rows: savedRows ? parseInt(savedRows) || 28 : 28,
     }
   })
@@ -216,7 +220,7 @@ export default function App() {
             return savePiece(updated)
           })
         )
-          .then(() => console.log(`✓ Auto-upgraded ${missingProfiles.length} pieces with normalized profiles`))
+          .then(() => console.log(`Auto-upgraded ${missingProfiles.length} pieces with normalized profiles`))
           .catch((err) => console.warn('Profile backfill non-fatal error:', err))
       }
     } catch (err) {
@@ -246,7 +250,7 @@ export default function App() {
         setPosterFileName('poster_reference.jpg')
         const savedCols = localStorage.getItem('jigsaw_grid_cols')
         const savedRows = localStorage.getItem('jigsaw_grid_rows')
-        const initCols = savedCols ? parseInt(savedCols) || 40 : 40
+        const initCols = savedCols ? parseInt(savedCols) || 36 : 36
         const initRows = savedRows ? parseInt(savedRows) || 28 : 28
         setPosterDims({
           w: img.naturalWidth,
@@ -257,7 +261,7 @@ export default function App() {
         try {
           init_master_poster_spatial(bytes, img.naturalWidth, img.naturalHeight, initCols, initRows)
           isPosterInitializedRef.current = true
-          console.log(`✓ Master poster initialized in WASM memory (${initCols}x${initRows}, ${initCols * initRows} slots)`)
+          console.log(`Master poster initialized in WASM memory (${initCols}x${initRows}, ${initCols * initRows} slots)`)
         } catch (err) {
           console.error('Failed to init master poster spatial:', err)
         }
@@ -306,9 +310,52 @@ export default function App() {
   const [gtSavedCount, setGtSavedCount] = useState<number>(0)
   const [gtSaveStatus, setGtSaveStatus] = useState<string | null>(null)
 
+  // View Switchers & Modals
+  const [isCalibratingFullScreen, setIsCalibratingFullScreen] = useState<boolean>(false)
+  const [activeTopView, setActiveTopView] = useState<'board' | 'tray'>('board')
+  const [inspectedPiece, setInspectedPiece] = useState<StoredPiece | null>(null)
+  const [activePlacementPiece, setActivePlacementPiece] = useState<StoredPiece | null>(null)
+  const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false)
+
+  // Saving debounce & frame-jitter tolerance
+  const isSavingRef = useRef<boolean>(false)
+  const lastValidPieceRef = useRef<{ piece: ScannedPiece; timestamp: number } | null>(null)
+
+  // Audio Detection & Audio Feedback
+  const wasPieceDetectedRef = useRef<boolean>(false)
+  const lastAudioDetectTimeRef = useRef<number>(0)
+
   // Scanner UI & Ergonomics
-  const [showCandidates, setShowCandidates] = useState<boolean>(false)
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null)
+
+  // Memoize top candidate matches for direct rendering on the Assembly Board grid
+  const candidateMatches = useMemo<CandidateMatchOverlay[]>(() => {
+    // If perimeter loop sequenced this piece (from camera or selected for placement), highlight its perimeter slot as #1
+    const targetPieceId = activePlacementPiece?.id || identifiedPieceMatch?.piece_id
+    if (targetPieceId && solvedPerimeterMap[targetPieceId]) {
+      const plc = solvedPerimeterMap[targetPieceId]
+      return [
+        {
+          row: plc.row,
+          col: plc.col,
+          rotation_deg: plc.rotation * 90,
+          confidence: identifiedPieceMatch?.confidence || 95,
+          rank: 1,
+        },
+      ]
+    }
+    if (!activePosterMatch) return []
+    const list = activePosterMatch.top_candidates && activePosterMatch.top_candidates.length > 0
+      ? activePosterMatch.top_candidates
+      : [{ col: activePosterMatch.best_col, row: activePosterMatch.best_row, rotation_deg: activePosterMatch.best_rotation_deg, confidence: activePosterMatch.confidence }]
+    return list.slice(0, 5).map((cand, idx) => ({
+      row: cand.row,
+      col: cand.col,
+      rotation_deg: cand.rotation_deg,
+      confidence: cand.confidence,
+      rank: idx + 1,
+    }))
+  }, [activePlacementPiece, activePosterMatch, identifiedPieceMatch, solvedPerimeterMap])
 
   const playSaveSound = () => {
     try {
@@ -326,6 +373,25 @@ export default function App() {
       gain.connect(ctx.destination)
       osc.start()
       osc.stop(ctx.currentTime + 0.12)
+    } catch { }
+  }
+
+  const playDetectSound = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+      if (!AudioCtx) return
+      const ctx = new AudioCtx()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(880, ctx.currentTime) // A5
+      osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.08) // E6
+      gain.gain.setValueAtTime(0.12, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start()
+      osc.stop(ctx.currentTime + 0.16)
     } catch { }
   }
 
@@ -777,15 +843,15 @@ export default function App() {
           let textColor = '#ffffff'
 
           if (solvedPlc && idMatch) {
-            hudText = `🎯 LOCATE: PIECE #${idMatch.piece_number} ➜ [R${solvedPlc.row}, C${solvedPlc.col}] (${solvedPlc.rotation * 90}°) — ${idMatch.confidence.toFixed(0)}%`
+            hudText = `PIECE #${idMatch.piece_number} -> [R${solvedPlc.row}, C${solvedPlc.col}] (${solvedPlc.rotation * 90}°) — ${idMatch.confidence.toFixed(0)}%`
             borderColor = '#2ea043'
             textColor = '#3fb950'
           } else if (idMatch?.is_matched) {
-            hudText = `🎯 IDENTIFIED: PIECE #${idMatch.piece_number} (${idMatch.rotation_offset * 90}°) — ${idMatch.confidence.toFixed(0)}%`
+            hudText = `PIECE #${idMatch.piece_number} (${idMatch.rotation_offset * 90}°) — ${idMatch.confidence.toFixed(0)}%`
             borderColor = '#d29922'
             textColor = '#e3b341'
           } else if (activePosterMatch) {
-            hudText = `🎯 POSTER: [R${activePosterMatch.best_row}, C${activePosterMatch.best_col}] (${activePosterMatch.best_rotation_deg.toFixed(0)}°) — ${((activePosterMatch.confidence) * 100).toFixed(0)}%`
+            hudText = `POSTER: [R${activePosterMatch.best_row}, C${activePosterMatch.best_col}] (${activePosterMatch.best_rotation_deg.toFixed(0)}°) — ${((activePosterMatch.confidence) * 100).toFixed(0)}%`
             borderColor = '#ffd33d'
             textColor = '#ffd33d'
           }
@@ -1048,6 +1114,12 @@ export default function App() {
 
                 // Multi-Frame Stability Consensus Filter:
                 if (rawPiece) {
+                  if (!wasPieceDetectedRef.current && performance.now() - lastAudioDetectTimeRef.current > 1000) {
+                    playDetectSound()
+                    lastAudioDetectTimeRef.current = performance.now()
+                  }
+                  wasPieceDetectedRef.current = true
+
                   const history = pieceHistoryRef.current
                   const isContinuous = history.length > 0 &&
                     Math.hypot(rawPiece.center.x - history[0].center.x, rawPiece.center.y - history[0].center.y) < 14.0
@@ -1138,6 +1210,9 @@ export default function App() {
                   }
                 }
 
+                if (livePiece) {
+                  lastValidPieceRef.current = { piece: livePiece, timestamp: performance.now() }
+                }
                 setDetectedPiece(livePiece)
                 detectedPieceRef.current = livePiece
 
@@ -1259,6 +1334,7 @@ export default function App() {
                     }
                   }
                 } else if (!livePiece) {
+                  wasPieceDetectedRef.current = false
                   recentMatchesRef.current = []
                   setActivePosterMatch(null)
                 }
@@ -1404,10 +1480,21 @@ export default function App() {
   }
 
   const handleRecordPiece = async () => {
-    if (!detectedPiece) return
+    if (isSavingRef.current) return
 
-    // Add to session list
-    setScannedPieces((prev) => [detectedPiece, ...prev])
+    // Pick live detected piece or recent valid piece (within 1500ms tolerance to absorb frame drops)
+    const targetPiece = detectedPiece || (
+      lastValidPieceRef.current && (performance.now() - lastValidPieceRef.current.timestamp < 1500)
+        ? lastValidPieceRef.current.piece
+        : null
+    )
+    if (!targetPiece) return
+
+    isSavingRef.current = true
+
+    // Optimistic immediate audio + visual feedback (0ms perceived lag)
+    playSaveSound()
+    const nextPieceNum = storedPieces.length + 1
 
     // Generate clean thumbnail crop from rectified pieceCanvas or latestDewarpedRef
     let thumbUrl = ''
@@ -1415,35 +1502,34 @@ export default function App() {
       thumbUrl = pieceCanvasRef.current.toDataURL('image/jpeg', 0.88)
     }
 
-    const flatCount = detectedPiece.edges.filter((e) => e.edge_type === 'Flat').length
-    const tabCount = detectedPiece.edges.filter((e) => e.edge_type === 'Tab').length
-    const holeCount = detectedPiece.edges.filter((e) => e.edge_type === 'Hole').length
+    const flatCount = targetPiece.edges.filter((e) => e.edge_type === 'Flat').length
+    const tabCount = targetPiece.edges.filter((e) => e.edge_type === 'Tab').length
+    const holeCount = targetPiece.edges.filter((e) => e.edge_type === 'Hole').length
     const classification: 'Corner' | 'Border' | 'Interior' =
-      detectedPiece.is_corner || flatCount >= 2
+      targetPiece.is_corner || flatCount >= 2
         ? 'Corner'
-        : detectedPiece.is_border || flatCount === 1
-        ? 'Border'
-        : 'Interior'
+        : targetPiece.is_border || flatCount === 1
+          ? 'Border'
+          : 'Interior'
 
     // Compute metric dimensions: stage is 96mm x 96mm across 384x384 px (0.25 mm/px)
     const mmPerPx = 96.0 / 384.0
-    const metricW = detectedPiece.bounding_width * mmPerPx
-    const metricH = detectedPiece.bounding_height * mmPerPx
+    const metricW = targetPiece.bounding_width * mmPerPx
+    const metricH = targetPiece.bounding_height * mmPerPx
 
     const now = Date.now()
-    const nextPieceNum = storedPieces.length + 1
     const stored: StoredPiece = {
       id: `piece_${now}_${nextPieceNum}`,
       piece_number: nextPieceNum,
       timestamp: now,
       thumbnailDataUrl: thumbUrl,
       corners: [
-        { ...detectedPiece.corners[0] },
-        { ...detectedPiece.corners[1] },
-        { ...detectedPiece.corners[2] },
-        { ...detectedPiece.corners[3] },
+        { ...targetPiece.corners[0] },
+        { ...targetPiece.corners[1] },
+        { ...targetPiece.corners[2] },
+        { ...targetPiece.corners[3] },
       ],
-      edges: detectedPiece.edges.map((e) => ({
+      edges: targetPiece.edges.map((e) => ({
         edge_type: e.edge_type,
         start_corner: { ...e.start_corner },
         end_corner: { ...e.end_corner },
@@ -1451,8 +1537,8 @@ export default function App() {
         curve_samples: e.curve_samples ? e.curve_samples.map((p) => ({ ...p })) : [],
         normalized_profile: Array.from(e.normalized_profile || getOrComputeNormalizedProfile(e)),
       })) as any,
-      bounding_width_px: detectedPiece.bounding_width,
-      bounding_height_px: detectedPiece.bounding_height,
+      bounding_width_px: targetPiece.bounding_width,
+      bounding_height_px: targetPiece.bounding_height,
       metric_width_mm: metricW,
       metric_height_mm: metricH,
       classification,
@@ -1466,18 +1552,90 @@ export default function App() {
       paired_piece_id: null,
     }
 
+    // Optimistically update React state immediately
+    setStoredPieces((prev) => [stored, ...prev])
+    setScannedPieces((prev) => [targetPiece, ...prev])
+    setSaveFeedback(`SAVED #${nextPieceNum} (${classification.toUpperCase()})`)
+    setTimeout(() => setSaveFeedback(null), 1200)
+
+    // Save asynchronously to IndexedDB in background without blocking UI
+    savePiece(stored)
+      .catch((err) => {
+        console.error('Failed to save piece to IndexedDB:', err)
+        setSaveFeedback('FAILED TO SAVE')
+        setTimeout(() => setSaveFeedback(null), 1500)
+      })
+      .finally(() => {
+        setTimeout(() => {
+          isSavingRef.current = false
+        }, 150)
+      })
+  }
+
+  const handleDeletePiece = useCallback(async (pieceId: string) => {
     try {
-      await savePiece(stored)
-      await refreshStorage()
-      playSaveSound()
-      setSaveFeedback(`✓ SAVED #${nextPieceNum} (${classification.toUpperCase()})`)
+      await deletePiece(pieceId)
+      setPlacedSlots((prev) => {
+        const updated = { ...prev }
+        let changed = false
+        for (const key of Object.keys(updated)) {
+          if (updated[key].piece_id === pieceId) {
+            delete updated[key]
+            changed = true
+          }
+        }
+        return changed ? updated : prev
+      })
+      setStoredPieces((prev) => prev.filter((p) => p.id !== pieceId))
+      setInspectedPiece((prev) => (prev?.id === pieceId ? null : prev))
+      setActivePlacementPiece((prev) => (prev?.id === pieceId ? null : prev))
+      setSaveFeedback('PIECE DELETED')
       setTimeout(() => setSaveFeedback(null), 1200)
     } catch (err) {
-      console.error('Failed to save piece to IndexedDB:', err)
-      setSaveFeedback('❌ FAILED TO SAVE')
-      setTimeout(() => setSaveFeedback(null), 1500)
+      console.error('Failed to delete piece:', err)
     }
-  }
+  }, [])
+
+  const handleToggleFavorite = useCallback(async (pieceId: string) => {
+    const piece = storedPieces.find((p) => p.id === pieceId)
+    if (!piece) return
+    const updated = { ...piece, is_favorite: !piece.is_favorite }
+    setStoredPieces((prev) => prev.map((p) => (p.id === pieceId ? updated : p)))
+    if (inspectedPiece?.id === pieceId) {
+      setInspectedPiece(updated)
+    }
+    if (activePlacementPiece?.id === pieceId) {
+      setActivePlacementPiece(updated)
+    }
+    await savePiece(updated)
+  }, [storedPieces, inspectedPiece, activePlacementPiece])
+
+  const handleResetApplication = useCallback(async () => {
+    try {
+      await clearAllPieces()
+      localStorage.removeItem('jigsaw_grid_cols')
+      localStorage.removeItem('jigsaw_grid_rows')
+      localStorage.removeItem('jigsaw_calibration_corners_v3')
+      localStorage.removeItem('jigsaw_phys_w')
+      localStorage.removeItem('jigsaw_phys_h')
+      setStoredPieces([])
+      setPlacedSlots({})
+      setPairedFixtures([])
+      setScannedPieces([])
+      setDetectedPiece(null)
+      setActivePosterMatch(null)
+      setSelectedBoardSlot(null)
+      setSolvedPerimeterMap({})
+      setCorners(DEFAULT_CORNERS)
+      setPosterDims((prev) => ({ ...prev, cols: 36, rows: 28 }))
+      setShowResetConfirm(false)
+      setInspectedPiece(null)
+      setActivePlacementPiece(null)
+      playSaveSound()
+    } catch (err) {
+      console.error('Failed to reset application:', err)
+    }
+  }, [playSaveSound])
 
 
   // Board placement callbacks with O(1) optimistic update
@@ -1494,7 +1652,7 @@ export default function App() {
       [`${row},${col}`]: updatedPlacedSlot,
     }
 
-    // ⚡ Optimistic UI state update
+    // Optimistic UI state update
     setPlacedSlots(updatedPlacedSlots)
 
     // Background asynchronous persistence and localized O(1) seam sync
@@ -1514,34 +1672,10 @@ export default function App() {
   }
 
   // Phase 9: 1D Closed Perimeter Loop Solver
-  const handleSolvePerimeter = useCallback(() => {
+  const handleSolvePerimeter = useCallback(async () => {
     try {
-      let curRows = posterDims.rows > 0 ? posterDims.rows : 28
-      let curCols = posterDims.cols > 0 ? posterDims.cols : 36
-
-      // Count scanned perimeter pieces (corners + borders)
-      const scannedPerimeterCount = storedPieces.filter(
-        (p) =>
-          p.classification === 'Corner' ||
-          p.classification === 'Border' ||
-          p.edges.filter((e) => e.edge_type === 'Flat').length >= 1
-      ).length
-
-      // If we have a known perimeter count, ensure (curRows + curCols) matches
-      if (scannedPerimeterCount >= 8) {
-        const expectedSum = Math.round((scannedPerimeterCount + 4) / 2)
-        if (curRows + curCols !== expectedSum) {
-          if (curRows < expectedSum) {
-            curCols = expectedSum - curRows
-          } else {
-            curCols = Math.round(expectedSum / 2)
-            curRows = expectedSum - curCols
-          }
-          console.log(
-            `Auto-adjusted grid to ${curRows} rows x ${curCols} cols to match ${scannedPerimeterCount} scanned perimeter pieces.`
-          )
-        }
-      }
+      const curRows = posterDims.rows > 0 ? posterDims.rows : 28
+      const curCols = posterDims.cols > 0 ? posterDims.cols : 36
 
       const indexed = storedPieces.map((p) => ({
         id: p.id,
@@ -1559,17 +1693,42 @@ export default function App() {
       if (res) {
         if (res.placements && res.placements.length > 0) {
           const map: Record<string, any> = {}
+          const updatedPlaced: Record<string, PlacedBoardSlot> = { ...placedSlots }
           for (const plc of res.placements) {
             map[plc.piece_id] = plc
+            const key = `${plc.row},${plc.col}`
+            updatedPlaced[key] = {
+              row: plc.row,
+              col: plc.col,
+              piece_id: plc.piece_id,
+              rotation: plc.rotation,
+              placed_at: Date.now(),
+            }
+            await placePieceOnBoard(plc.row, plc.col, plc.piece_id, plc.rotation)
           }
           setSolvedPerimeterMap(map)
-          console.log(`✓ Perimeter Solved: ${res.total_pieces_placed} pieces sequenced.`)
+          setPlacedSlots(updatedPlaced)
+          setStoredPieces((prev) =>
+            prev.map((p) => {
+              const plc = map[p.id]
+              if (plc) {
+                return {
+                  ...p,
+                  status: 'Placed',
+                  placed_slot: { row: plc.row, col: plc.col, rotation: plc.rotation },
+                }
+              }
+              return p
+            })
+          )
+          playSaveSound()
+          console.log(`Perimeter Solved & Applied: ${res.total_pieces_placed} pieces placed on board.`)
         }
         if (res.error_message) {
-          alert(`Perimeter Status: ${res.error_message}`)
+          alert(`Perimeter Status: ${res.error_message} (${res.total_pieces_placed} pieces placed on board)`)
         } else {
           alert(
-            `✓ Perimeter 100% Solved! All ${res.total_pieces_placed} border pieces sequenced into a closed loop! Drop any border piece on the mat to locate its exact placement.`
+            `Perimeter 100% Solved! All ${res.total_pieces_placed} border pieces placed onto the assembly board.`
           )
         }
       }
@@ -1577,7 +1736,227 @@ export default function App() {
       console.error('Failed to solve perimeter:', err)
       alert('Error solving perimeter loop: ' + String(err))
     }
-  }, [storedPieces, posterDims])
+  }, [storedPieces, posterDims, placedSlots, playSaveSound])
+
+  // Explicitly apply or re-apply solved perimeter to board
+  const handleApplyPerimeterToBoard = useCallback(async () => {
+    if (Object.keys(solvedPerimeterMap).length === 0) return
+    const updatedPlaced: Record<string, PlacedBoardSlot> = { ...placedSlots }
+    for (const plc of Object.values(solvedPerimeterMap)) {
+      const key = `${plc.row},${plc.col}`
+      updatedPlaced[key] = {
+        row: plc.row,
+        col: plc.col,
+        piece_id: plc.piece_id,
+        rotation: plc.rotation,
+        placed_at: Date.now(),
+      }
+      await placePieceOnBoard(plc.row, plc.col, plc.piece_id, plc.rotation)
+    }
+    setPlacedSlots(updatedPlaced)
+    setStoredPieces((prev) =>
+      prev.map((p) => {
+        const plc = solvedPerimeterMap[p.id]
+        if (plc) {
+          return {
+            ...p,
+            status: 'Placed',
+            placed_slot: { row: plc.row, col: plc.col, rotation: plc.rotation },
+          }
+        }
+        return p
+      })
+    )
+    playSaveSound()
+    console.log(`Applied ${Object.keys(solvedPerimeterMap).length} perimeter pieces to board.`)
+  }, [solvedPerimeterMap, placedSlots, playSaveSound])
+
+  // Rotate solved perimeter solution by 180 degrees
+  const handleRotatePerimeter = useCallback(async () => {
+    const curRows = posterDims.rows > 0 ? posterDims.rows : 28
+    const curCols = posterDims.cols > 0 ? posterDims.cols : 36
+    const maxR = curRows - 1
+    const maxC = curCols - 1
+    const newMap: Record<string, typeof solvedPerimeterMap[string]> = {}
+    for (const [id, plc] of Object.entries(solvedPerimeterMap)) {
+      const r = plc.row
+      const c = plc.col
+      const newR = maxR - r
+      const newC = maxC - c
+      const prevRot = plc.rotation
+      const newRot = (prevRot + 2) % 4
+      newMap[id] = {
+        ...plc,
+        row: newR,
+        col: newC,
+        rotation: newRot,
+      }
+    }
+    setSolvedPerimeterMap(newMap)
+
+    // Also rotate the placed perimeter slots on the board in real time
+    const updatedPlaced: Record<string, PlacedBoardSlot> = {}
+    for (const [key, slot] of Object.entries(placedSlots)) {
+      if (newMap[slot.piece_id]) {
+        const plc = newMap[slot.piece_id]
+        const newKey = `${plc.row},${plc.col}`
+        updatedPlaced[newKey] = {
+          ...slot,
+          row: plc.row,
+          col: plc.col,
+          rotation: plc.rotation,
+        }
+        await placePieceOnBoard(plc.row, plc.col, plc.piece_id, plc.rotation)
+      } else {
+        updatedPlaced[key] = slot
+      }
+    }
+    setPlacedSlots(updatedPlaced)
+    playSaveSound()
+    console.log('Perimeter solution and board placements rotated 180 degrees.')
+  }, [posterDims, solvedPerimeterMap, placedSlots, playSaveSound])
+
+  // Rotate master reference poster by 90 or 180 degrees
+  const handleRotatePoster = useCallback((deg: 90 | 180) => {
+    if (!posterRgba || posterDims.w <= 0 || posterDims.h <= 0) return
+    const srcW = posterDims.w
+    const srcH = posterDims.h
+    const dstW = deg === 90 ? srcH : srcW
+    const dstH = deg === 90 ? srcW : srcH
+
+    const srcCanvas = document.createElement('canvas')
+    srcCanvas.width = srcW
+    srcCanvas.height = srcH
+    const srcCtx = srcCanvas.getContext('2d')
+    if (!srcCtx) return
+    const srcImgData = srcCtx.createImageData(srcW, srcH)
+    srcImgData.data.set(posterRgba)
+    srcCtx.putImageData(srcImgData, 0, 0)
+
+    const off = document.createElement('canvas')
+    off.width = dstW
+    off.height = dstH
+    const ctx = off.getContext('2d')
+    if (!ctx) return
+
+    ctx.save()
+    ctx.translate(dstW / 2, dstH / 2)
+    ctx.rotate((deg * Math.PI) / 180)
+    ctx.drawImage(srcCanvas, -srcW / 2, -srcH / 2)
+    ctx.restore()
+
+    const newImgData = ctx.getImageData(0, 0, dstW, dstH)
+    const newBytes = new Uint8Array(newImgData.data.buffer)
+    setPosterRgba(newBytes)
+    const newCols = deg === 90 ? posterDims.rows : posterDims.cols
+    const newRows = deg === 90 ? posterDims.cols : posterDims.rows
+    setPosterDims((prev) => ({
+      ...prev,
+      w: dstW,
+      h: dstH,
+      cols: newCols,
+      rows: newRows,
+    }))
+    try {
+      init_master_poster_spatial(newBytes, dstW, dstH, newCols, newRows)
+      console.log(`Poster rotated ${deg} deg. Re-initialized master (${newCols}x${newRows}).`)
+    } catch (err) {
+      console.error('Failed to reinitialize rotated poster in WASM:', err)
+    }
+  }, [posterRgba, posterDims])
+
+  // Fast Placement directly by clicking on board slot
+  const handleSlotClick = useCallback(async (row: number, col: number) => {
+    let pieceIdToPlace: string | null = null
+    let rotationQuarter = 0
+
+    if (activePlacementPiece) {
+      pieceIdToPlace = activePlacementPiece.id
+    } else if (identifiedPieceMatch?.is_matched) {
+      pieceIdToPlace = identifiedPieceMatch.piece_id
+    } else if (detectedPiece || (lastValidPieceRef.current && (performance.now() - lastValidPieceRef.current.timestamp < 1500))) {
+      const targetPiece = detectedPiece || lastValidPieceRef.current?.piece
+      if (targetPiece) {
+        let thumbUrl = ''
+        if (pieceCanvasRef.current) {
+          thumbUrl = pieceCanvasRef.current.toDataURL('image/jpeg', 0.88)
+        }
+        const flatCount = targetPiece.edges.filter((e) => e.edge_type === 'Flat').length
+        const tabCount = targetPiece.edges.filter((e) => e.edge_type === 'Tab').length
+        const holeCount = targetPiece.edges.filter((e) => e.edge_type === 'Hole').length
+        const classification: 'Corner' | 'Border' | 'Interior' =
+          flatCount === 2 ? 'Corner' : flatCount === 1 ? 'Border' : 'Interior'
+        const nextNum = storedPieces.length + 1
+        const newPiece: StoredPiece = {
+          id: `piece_${Date.now()}_${nextNum}`,
+          piece_number: nextNum,
+          timestamp: Date.now(),
+          thumbnailDataUrl: thumbUrl,
+          corners: [
+            { ...targetPiece.corners[0] },
+            { ...targetPiece.corners[1] },
+            { ...targetPiece.corners[2] },
+            { ...targetPiece.corners[3] },
+          ],
+          edges: targetPiece.edges.map((e) => ({
+            edge_type: e.edge_type,
+            start_corner: { ...e.start_corner },
+            end_corner: { ...e.end_corner },
+            curvature_depth: e.curvature_depth,
+            curve_samples: e.curve_samples ? e.curve_samples.map((p) => ({ ...p })) : [],
+            normalized_profile: Array.from(e.normalized_profile || getOrComputeNormalizedProfile(e)),
+          })) as any,
+          bounding_width_px: targetPiece.bounding_width,
+          bounding_height_px: targetPiece.bounding_height,
+          metric_width_mm: targetPiece.bounding_width * (96.0 / 384.0),
+          metric_height_mm: targetPiece.bounding_height * (96.0 / 384.0),
+          classification,
+          flat_count: flatCount,
+          tab_count: tabCount,
+          hole_count: holeCount,
+          status: 'InTray',
+          placed_slot: null,
+          is_favorite: false,
+          tags: [],
+          paired_piece_id: null,
+        }
+        await savePiece(newPiece)
+        setStoredPieces((prev) => [newPiece, ...prev])
+        pieceIdToPlace = newPiece.id
+      }
+    }
+
+    if (pieceIdToPlace) {
+      const cand = candidateMatches.find((c) => c.row === row && c.col === col)
+      if (cand) {
+        rotationQuarter = Math.round(cand.rotation_deg / 90) % 4
+      } else if (solvedPerimeterMap[pieceIdToPlace]) {
+        const plc = solvedPerimeterMap[pieceIdToPlace]
+        if (plc.row === row && plc.col === col) {
+          rotationQuarter = plc.rotation
+        }
+      }
+
+      await handlePlacePiece(row, col, pieceIdToPlace, rotationQuarter)
+      setSaveFeedback(`PLACED AT [R${row}, C${col}]`)
+      setTimeout(() => setSaveFeedback(null), 2000)
+      setActivePlacementPiece(null)
+      setIdentifiedPieceMatch(null)
+      setSelectedBoardSlot({ row, col })
+    } else {
+      setSelectedBoardSlot((prev) =>
+        prev?.row === row && prev?.col === col ? null : { row, col }
+      )
+    }
+  }, [
+    activePlacementPiece,
+    identifiedPieceMatch,
+    detectedPiece,
+    storedPieces,
+    candidateMatches,
+    solvedPerimeterMap,
+    handlePlacePiece,
+  ])
 
   // Fast Placement directly from live camera stage candidate
   const handlePlaceCandidate = async (cand: { col: number; row: number; rotation_deg: number }) => {
@@ -1596,8 +1975,8 @@ export default function App() {
       pieceToPlace.is_corner || flatCount >= 2
         ? 'Corner'
         : pieceToPlace.is_border || flatCount === 1
-        ? 'Border'
-        : 'Interior'
+          ? 'Border'
+          : 'Interior'
 
     const mmPerPx = 96.0 / 384.0
     const metricW = pieceToPlace.bounding_width * mmPerPx
@@ -1658,7 +2037,7 @@ export default function App() {
       [`${targetRow},${targetCol}`]: newPlacedSlot,
     }
 
-    // ⚡ INSTANT OPTIMISTIC UI SNAP (0ms perceptual lag):
+    // Instant optimistic UI snap (0ms perceptual lag):
     setStoredPieces(prev => [stored, ...prev])
     setPlacedSlots(updatedPlacedSlots)
     setSelectedBoardSlot({ row: targetRow, col: targetCol })
@@ -1688,8 +2067,13 @@ export default function App() {
   }
 
   const handleUnplacePiece = async (row: number, col: number) => {
-    await unplacePieceFromBoard(row, col)
-    await refreshStorage()
+    // Optimistic UI unplacement (0ms lag)
+    setPlacedSlots((prev) => {
+      const copy = { ...prev }
+      delete copy[`${row},${col}`]
+      return copy
+    })
+    await unplacePieceFromBoard(row, col).catch((err) => console.error('Failed to unplace piece:', err))
   }
 
 
@@ -1812,7 +2196,7 @@ export default function App() {
       const result = await res.json()
       if (result.success) {
         setGtSavedCount(prev => prev + 1)
-        setGtSaveStatus(`✓ Saved as ${result.file}`)
+        setGtSaveStatus(`Saved as ${result.file}`)
         setTimeout(() => {
           handleExitGtMode()
         }, 800)
@@ -1840,9 +2224,7 @@ export default function App() {
 
       if (isS || (isSpace && !isGtMode)) {
         e.preventDefault()
-        if (detectedPiece) {
-          handleRecordPiece()
-        }
+        handleRecordPiece()
       } else if (isSpace && isGtMode) {
         e.preventDefault()
         handleSaveGroundTruth()
@@ -1851,9 +2233,32 @@ export default function App() {
         if (detectedPiece) {
           handleFreezeGroundTruth()
         }
-      } else if (e.code === 'Escape' && isGtMode) {
-        e.preventDefault()
-        handleExitGtMode()
+      } else if (e.code === 'Escape') {
+        if (isCalibratingFullScreen) {
+          e.preventDefault()
+          setIsCalibratingFullScreen(false)
+          return
+        }
+        if (inspectedPiece) {
+          e.preventDefault()
+          setInspectedPiece(null)
+          return
+        }
+        if (activePlacementPiece) {
+          e.preventDefault()
+          setActivePlacementPiece(null)
+          return
+        }
+        if (showResetConfirm) {
+          e.preventDefault()
+          setShowResetConfirm(false)
+          return
+        }
+        if (isGtMode) {
+          e.preventDefault()
+          handleExitGtMode()
+          return
+        }
       } else if (e.code === 'Enter') {
         const idMatch = identifiedPieceMatchRef.current
         const solvedPlc = (idMatch && idMatch.is_matched) ? solvedPerimeterMapRef.current[idMatch.piece_id] : null
@@ -1869,52 +2274,109 @@ export default function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges, activePosterMatch, handlePlaceDetectedCandidate, handlePlacePiece, handleRecordPiece, handleFreezeGroundTruth, handleSaveGroundTruth, handleExitGtMode])
+  }, [isCalibratingFullScreen, detectedPiece, isGtMode, gtFrozenPiece, gtCorners, gtEdges, activePosterMatch, handlePlaceDetectedCandidate, handlePlacePiece, handleRecordPiece, handleFreezeGroundTruth, handleSaveGroundTruth, handleExitGtMode])
 
 
   return (
     <div className="app-container">
-      {/* 1. Header Bar */}
-      <header className="app-header">
-        <div className="header-brand">
-          <strong>JIGSAW SOLVER</strong>
-          <span className="badge">100mm MAT</span>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
-            CAMERA | BOARD | POSTER ({storedPieces.length} saved)
-          </span>
+      {/* Top Navigation Bar: Board, Piece Tray, Grid Info, Start Fresh */}
+      <div
+        className="app-top-nav"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '6px 14px',
+          background: '#161b22',
+          borderBottom: '1px solid #30363d',
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            className={`tab-pill-btn ${activeTopView === 'board' ? 'active' : ''}`}
+            onClick={() => setActiveTopView('board')}
+          >
+            BOARD
+          </button>
+          <button
+            type="button"
+            className={`tab-pill-btn ${activeTopView === 'tray' ? 'active' : ''}`}
+            onClick={() => setActiveTopView('tray')}
+          >
+            PIECE TRAY ({storedPieces.length})
+          </button>
         </div>
 
-        <div className="header-status">
-          <span className="status-item">
-            CAMERA: <b className={isCameraActive ? 'green' : 'red'}>{isCameraActive ? 'ACTIVE' : 'OFFLINE'}</b>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 11, color: '#8b949e' }}>
+            GRID: <b>{posterDims.cols} × {posterDims.rows} ({posterDims.cols * posterDims.rows})</b>
           </span>
-          <span className="status-item">
-            FOCUS: <b className={focusScore >= 40 ? 'green' : focusScore >= 20 ? 'yellow' : 'red'}>{focusScore.toFixed(0)}%</b>
-          </span>
-          <span className="status-item">
-            PIECES: <b>{scannedPieces.length}</b>
-          </span>
+          <button
+            className="btn small danger"
+            style={{ padding: '3px 8px', fontSize: 10, background: '#21262d', borderColor: '#da3633', color: '#f85149' }}
+            onClick={() => setShowResetConfirm(true)}
+            title="Reset application and start completely fresh"
+          >
+            START FRESH
+          </button>
         </div>
-      </header>
+      </div>
 
-      {/* Main Workbench: Camera Scanner (Left), Assembly Board & Reference Poster (Right) */}
-      <main className="main-workbench">
-        {/* Left Column: Camera View & Piece Diagnostics */}
-        <section className="workbench-panel" style={{ borderRight: '1px solid var(--border)' }}>
-          <div className="panel-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span>CAMERA &amp; SCANNER</span>
-              {gtSavedCount > 0 && (
-                <span className="badge" style={{ background: '#2b6cb0', color: '#fff', fontSize: 9 }}>
-                  GT #{gtSavedCount}
-                </span>
-              )}
+      {/* Camera Calibration Full-Screen Modal or Background Container */}
+      <div
+        style={
+          isCalibratingFullScreen
+            ? {
+                position: 'fixed',
+                inset: 0,
+                zIndex: 99999,
+                background: '#090d13',
+                display: 'flex',
+                flexDirection: 'column',
+              }
+            : {
+                position: 'fixed',
+                width: 1,
+                height: 1,
+                opacity: 0.001,
+                pointerEvents: 'none',
+                top: 0,
+                left: 0,
+                zIndex: -1,
+                overflow: 'hidden',
+              }
+        }
+      >
+        {isCalibratingFullScreen && (
+          <div
+            style={{
+              padding: '10px 16px',
+              background: '#161b22',
+              borderBottom: '1px solid #30363d',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#f0f6fc' }}>
+                CAMERA CALIBRATION
+              </span>
+              <span style={{ fontSize: 12, color: '#8b949e' }}>
+                FOCUS: <b style={{ color: focusScore >= 40 ? '#3fb950' : focusScore >= 20 ? '#d29922' : '#f85149' }}>{focusScore.toFixed(0)}%</b>
+              </span>
+              <span style={{ fontSize: 11, color: isCameraActive ? '#3fb950' : '#f85149', fontWeight: 600 }}>
+                {isCameraActive ? 'LIVE' : 'OFFLINE'}
+              </span>
             </div>
-            <div className="panel-actions">
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {isCameraActive ? (
-                <button className="btn small" onClick={stopCamera}>STOP</button>
+                <button className="btn small" onClick={stopCamera}>STOP CAMERA</button>
               ) : (
-                <button className="btn small primary" onClick={startCamera}>START</button>
+                <button className="btn small primary" onClick={startCamera}>START CAMERA</button>
               )}
               <button
                 className={`btn small ${isMirror ? 'primary' : ''}`}
@@ -1924,386 +2386,412 @@ export default function App() {
                 {isMirror ? 'MIRRORED' : 'MIRROR'}
               </button>
               <button className="btn small" onClick={handleSnapAll} title="Snap fiducial corners to nearest target">
-                SNAP
+                SNAP CORNERS
+              </button>
+              <button
+                className="btn small primary"
+                style={{ background: '#238636', borderColor: '#2ea043', fontWeight: 700, padding: '6px 14px' }}
+                onClick={() => setIsCalibratingFullScreen(false)}
+              >
+                DONE
               </button>
             </div>
           </div>
+        )}
 
-          <div className="panel-view" style={{ minHeight: 260, maxHeight: '50vh', flex: 1, background: '#000' }}>
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className={`camera-video ${isMirror ? 'mirrored' : ''}`}
-              style={{ display: isCameraActive ? 'block' : 'none' }}
-            />
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
-            {isCameraActive && (
-              <canvas
-                ref={overlayCanvasRef}
-                className={`camera-overlay ${isMirror ? 'mirrored' : ''}`}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerUp}
-              />
-            )}
-            {!isCameraActive && (
-              <div className="camera-empty">
-                {cameraError ? <span className="red">{cameraError}</span> : <span>Camera is inactive.</span>}
-                <button className="btn primary" onClick={startCamera}>ACTIVATE CAMERA</button>
+        <div
+          style={
+            isCalibratingFullScreen
+              ? {
+                  flex: 1,
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: '#04070a',
+                  overflow: 'hidden',
+                  padding: 12,
+                }
+              : { display: 'block' }
+          }
+        >
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            className={`camera-video ${isMirror ? 'mirrored' : ''}`}
+            style={
+              isCalibratingFullScreen
+                ? {
+                    maxWidth: '96vw',
+                    maxHeight: '84vh',
+                    objectFit: 'contain',
+                    display: isCameraActive ? 'block' : 'none',
+                  }
+                : undefined
+            }
+          />
+          <canvas ref={canvasRef} style={{ display: 'none' }} />
+          <canvas
+            ref={overlayCanvasRef}
+            className={`camera-overlay ${isMirror ? 'mirrored' : ''}`}
+            style={
+              isCalibratingFullScreen
+                ? {
+                    maxWidth: '96vw',
+                    maxHeight: '84vh',
+                    objectFit: 'contain',
+                    display: isCameraActive ? 'block' : 'none',
+                  }
+                : undefined
+            }
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+          />
+
+          {isCalibratingFullScreen && !isCameraActive && (
+            <div className="camera-empty">
+              {cameraError ? <span className="red">{cameraError}</span> : <span>Camera is inactive.</span>}
+              <button className="btn primary" onClick={startCamera}>START CAMERA</button>
+            </div>
+          )}
+
+          {isCalibratingFullScreen && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 16,
+                background: 'rgba(22, 27, 34, 0.9)',
+                border: '1px solid #30363d',
+                borderRadius: 6,
+                padding: '6px 14px',
+                fontSize: 12,
+                color: '#8b949e',
+                pointerEvents: 'none',
+              }}
+            >
+              Drag corners C1–C4 to match the 4 fiducials on the mat. Click DONE or press ESC when finished.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Main View: Board View (Workbench) or Full-Width Piece Tray */}
+      {activeTopView === 'board' ? (
+        <main className="main-workbench">
+          {/* Left Column: Dewarp Stage */}
+          <section className="workbench-panel" style={{ borderRight: '1px solid var(--border)' }}>
+            <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontWeight: 700, fontSize: 12, color: '#f0f6fc', letterSpacing: 0.5 }}>
+                  DEWARP STAGE
+                </span>
+                {gtSavedCount > 0 && (
+                  <span className="badge" style={{ background: '#2b6cb0', color: '#fff', fontSize: 9 }}>
+                    GT #{gtSavedCount}
+                  </span>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* Offscreen 384x384 canvas for Ground Truth JPEG export */}
-          <canvas ref={pieceCanvasRef} width={384} height={384} style={{ display: 'none' }} />
-
-          {/* Staged Piece Diagnostics & Fast Placement */}
-          <div className="panel-body" style={{ padding: 10, gap: 8, alignItems: 'stretch' }}>
-            {!isGtMode ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%', justifyContent: 'space-between' }}>
-                <div className="piece-data-card" style={{ width: '100%', maxWidth: 'none', padding: 8 }}>
-                  <div className="data-row">
-                    <span className="data-label">AUTO TYPE:</span>
-                    <span className={`data-val ${detectedPiece ? (detectedPiece.is_corner ? 'red' : detectedPiece.is_border ? 'yellow' : 'green') : ''}`}>
-                      {detectedPiece ? (detectedPiece.is_corner ? 'CORNER' : detectedPiece.is_border ? 'BORDER' : 'INTERIOR') : '--'}
-                    </span>
-                  </div>
-
-                  <div className="data-row">
-                    <span className="data-label">SIZE:</span>
-                    <span className="data-val">
-                      {detectedPiece
-                        ? `${(detectedPiece.bounding_width * 0.25).toFixed(1)} × ${(detectedPiece.bounding_height * 0.25).toFixed(1)} mm`
-                        : '--'}
-                    </span>
-                  </div>
-
-                  <div className="data-row">
-                    <span className="data-label">ROTATION:</span>
-                    <span className="data-val">
-                      {detectedPiece ? `${((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(0)}°` : '--'}
-                    </span>
-                  </div>
-
-                  <div className="data-row">
-                    <span className="data-label">EDGES:</span>
-                    <div className="edge-pills">
-                      {detectedPiece ? (
-                        detectedPiece.edges.map((e, idx) => (
-                          <span key={idx} className={`pill ${e.edge_type.toLowerCase()}`}>
-                            E{idx + 1}: {e.edge_type}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="muted">--</span>
-                      )}
-                    </div>
-                  </div>
+              <div className="panel-actions" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  className="btn small"
+                  style={{ background: '#21262d', borderColor: '#388bfd', color: '#58a6ff', fontWeight: 600 }}
+                  onClick={() => setIsCalibratingFullScreen(true)}
+                  title="Open full-screen camera view and fiducial calibration"
+                >
+                  CALIBRATE CAMERA
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                  <span style={{ color: isCameraActive ? '#3fb950' : '#f85149', fontWeight: 600 }}>
+                    {isCameraActive ? 'LIVE' : 'OFFLINE'}
+                  </span>
+                  <span style={{ color: '#8b949e' }}>
+                    FOCUS: <b style={{ color: focusScore >= 40 ? '#3fb950' : focusScore >= 20 ? '#d29922' : '#f85149' }}>{focusScore.toFixed(0)}%</b>
+                  </span>
                 </div>
+              </div>
+            </div>
 
-                {/* Phase 9: Drop-to-Locate Identification Card */}
-                {identifiedPieceMatch?.is_matched && solvedPerimeterMap[identifiedPieceMatch.piece_id] ? (
+            <div className="panel-view" style={{ minHeight: 280, maxHeight: '48vh', flex: 1, background: '#090d13', position: 'relative', overflow: 'hidden' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  width: '100%',
+                  height: '100%',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'column',
+                  position: 'relative',
+                  padding: 8,
+                }}
+              >
+                <canvas
+                  ref={pieceCanvasRef}
+                  width={384}
+                  height={384}
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    aspectRatio: '1 / 1',
+                    objectFit: 'contain',
+                    borderRadius: 8,
+                    border: detectedPiece ? '2px solid #2ea043' : '2px solid #30363d',
+                    boxShadow: detectedPiece ? '0 0 20px rgba(46, 160, 67, 0.25)' : '0 4px 16px rgba(0, 0, 0, 0.6)',
+                    background: '#0d1117',
+                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+                  }}
+                />
+
+                {!isCameraActive && (
                   <div style={{
-                    background: '#161b22',
-                    border: '2px solid #2ea043',
-                    borderRadius: 6,
-                    padding: '10px 12px',
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(13, 17, 23, 0.85)',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 8,
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, fontWeight: 'bold', color: '#3fb950' }}>
-                        🎯 DROP-TO-LOCATE: PIECE #{identifiedPieceMatch.piece_number}
-                      </span>
-                      <span style={{ fontSize: 10, background: '#238636', color: '#fff', padding: '2px 6px', borderRadius: 3, fontWeight: 'bold' }}>
-                        {identifiedPieceMatch.confidence.toFixed(0)}% MATCH
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#21262d', padding: '6px 10px', borderRadius: 4 }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 'bold', color: '#f0f6fc' }}>
-                          Target: Slot [Row {solvedPerimeterMap[identifiedPieceMatch.piece_id].row}, Col {solvedPerimeterMap[identifiedPieceMatch.piece_id].col}]
-                        </div>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>
-                          Rotation: {solvedPerimeterMap[identifiedPieceMatch.piece_id].rotation * 90}° CW
-                        </div>
-                      </div>
-                      <button
-                        className="btn primary"
-                        style={{ background: '#238636', borderColor: '#2ea043', fontWeight: 'bold' }}
-                        onClick={() => {
-                          const plc = solvedPerimeterMap[identifiedPieceMatch.piece_id]
-                          handlePlacePiece(plc.row, plc.col, identifiedPieceMatch.piece_id, plc.rotation)
-                          setIdentifiedPieceMatch(null)
-                        }}
-                      >
-                        ⚡ PLACE [ENTER]
-                      </button>
-                    </div>
-                  </div>
-                ) : identifiedPieceMatch?.is_matched ? (
-                  <div style={{
-                    background: '#161b22',
-                    border: '1px solid #d29922',
-                    borderRadius: 6,
-                    padding: '8px 10px',
-                    fontSize: 11,
-                    color: '#e3b341',
-                    display: 'flex',
-                    justifyContent: 'space-between',
                     alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 10,
+                    borderRadius: 8,
                   }}>
-                    <span>🎯 IDENTIFIED IN INVENTORY: PIECE #{identifiedPieceMatch.piece_number} ({identifiedPieceMatch.confidence.toFixed(0)}%)</span>
-                    <span style={{ color: '#8b949e', fontSize: 10 }}>Click "Solve Perimeter" to sequence</span>
-                  </div>
-                ) : null}
-
-                {/* Optional Expanded Candidates (Hidden by default to prevent vertical scrollbar) */}
-                {showCandidates && activePosterMatch && (
-                  <div style={{
-                    background: '#161b22',
-                    border: '1px solid #30363d',
-                    borderRadius: 6,
-                    padding: '8px 10px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 11, fontWeight: 'bold', color: '#58a6ff' }}>
-                        TOP 5 CANDIDATES
-                      </span>
-                      <span style={{ fontSize: 10, color: '#8b949e' }}>
-                        [ENTER] = #1
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {(activePosterMatch.top_candidates || [
-                        { col: activePosterMatch.best_col, row: activePosterMatch.best_row, rotation_deg: activePosterMatch.best_rotation_deg, confidence: activePosterMatch.confidence }
-                      ]).slice(0, 5).map((cand, cIdx) => {
-                        const isTop1 = cIdx === 0
-                        return (
-                          <div
-                            key={cIdx}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              background: isTop1 ? '#23863622' : '#21262d',
-                              border: isTop1 ? '1px solid #2ea043' : '1px solid #30363d',
-                              borderRadius: 4,
-                              padding: '4px 6px',
-                              fontSize: 11,
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{
-                                fontWeight: 'bold',
-                                color: isTop1 ? '#3fb950' : '#8b949e',
-                                width: 18,
-                              }}>
-                                #{cIdx + 1}
-                              </span>
-                              <span>
-                                <b>[R{cand.row}, C{cand.col}]</b>
-                              </span>
-                              <span style={{ color: '#8b949e', fontSize: 10 }}>
-                                {cand.rotation_deg.toFixed(0)}°
-                              </span>
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{
-                                fontWeight: 'bold',
-                                color: cand.confidence > 0.85 ? '#3fb950' : cand.confidence > 0.70 ? '#d29922' : '#8b949e',
-                                fontSize: 11,
-                              }}>
-                                {(cand.confidence * 100).toFixed(0)}%
-                              </span>
-                              <button
-                                className="btn"
-                                style={{
-                                  background: isTop1 ? '#238636' : '#30363d',
-                                  borderColor: isTop1 ? '#2ea043' : '#484f58',
-                                  color: '#fff',
-                                  padding: '2px 8px',
-                                  fontSize: 10,
-                                  fontWeight: 'bold',
-                                  cursor: 'pointer',
-                                }}
-                                onClick={() => handlePlaceCandidate(cand)}
-                                title={`Place piece at [R${cand.row}, C${cand.col}]`}
-                              >
-                                PLACE
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
+                    <span style={{ color: '#8b949e', fontSize: 13 }}>Camera is offline</span>
+                    <button className="btn primary" onClick={startCamera}>START CAMERA</button>
                   </div>
                 )}
 
-                {/* Primary Action Controls: Prominent, zero-scroll Save Piece + GT/Candidates */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
-                  <button
-                    className="btn primary"
-                    style={{
-                      background: detectedPiece ? '#238636' : '#21262d',
-                      borderColor: detectedPiece ? '#2ea043' : '#30363d',
-                      color: detectedPiece ? '#ffffff' : '#8b949e',
-                      padding: '10px 14px',
-                      fontSize: 13,
-                      fontWeight: 700,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      cursor: detectedPiece ? 'pointer' : 'not-allowed',
-                      boxShadow: detectedPiece ? '0 2px 8px rgba(35, 134, 54, 0.4)' : 'none',
-                      transition: 'all 0.15s ease',
-                    }}
-                    disabled={!detectedPiece}
-                    onClick={handleRecordPiece}
-                    title="Save detected piece to inventory (Shortcut: S or SPACE)"
-                  >
-                    {saveFeedback ? (
-                      <span style={{ color: '#56d364', fontWeight: 'bold' }}>{saveFeedback}</span>
-                    ) : detectedPiece ? (
-                      <>
-                        <span>⚡ SAVE PIECE #{storedPieces.length + 1}</span>
-                        <span style={{
-                          fontSize: 10,
-                          background: '#196c2e',
-                          color: '#fff',
-                          padding: '2px 6px',
-                          borderRadius: 3,
-                          letterSpacing: 0.5,
-                        }}>
-                          [S] or [SPACE]
-                        </span>
-                      </>
-                    ) : (
-                      <span style={{ fontSize: 12 }}>PLACE PIECE ON MAT TO SCAN</span>
-                    )}
-                  </button>
+                {isCameraActive && !detectedPiece && !lastValidPieceRef.current && (
+                  <div style={{
+                    position: 'absolute',
+                    bottom: 14,
+                    background: 'rgba(22, 27, 34, 0.88)',
+                    backdropFilter: 'blur(4px)',
+                    border: '1px solid #30363d',
+                    borderRadius: 20,
+                    padding: '4px 12px',
+                    fontSize: 11,
+                    color: '#8b949e',
+                    pointerEvents: 'none',
+                  }}>
+                    Place piece on 100mm mat stage
+                  </div>
+                )}
+              </div>
+            </div>
 
-                  <div style={{ display: 'flex', gap: 6 }}>
+            {/* Staged Piece Diagnostics & Fast Placement */}
+            <div className="panel-body" style={{ padding: 10, gap: 8, alignItems: 'stretch' }}>
+              {!isGtMode ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%', justifyContent: 'space-between' }}>
+                  <div className="piece-data-card" style={{ width: '100%', maxWidth: 'none', padding: 8 }}>
+                    <div className="data-row">
+                      <span className="data-label">AUTO TYPE:</span>
+                      <span className={`data-val ${detectedPiece ? (detectedPiece.is_corner ? 'red' : detectedPiece.is_border ? 'yellow' : 'green') : ''}`}>
+                        {detectedPiece ? (detectedPiece.is_corner ? 'CORNER' : detectedPiece.is_border ? 'BORDER' : 'INTERIOR') : '--'}
+                      </span>
+                    </div>
+
+                    <div className="data-row">
+                      <span className="data-label">SIZE:</span>
+                      <span className="data-val">
+                        {detectedPiece
+                          ? `${(detectedPiece.bounding_width * 0.25).toFixed(1)} × ${(detectedPiece.bounding_height * 0.25).toFixed(1)} mm`
+                          : '--'}
+                      </span>
+                    </div>
+
+                    <div className="data-row">
+                      <span className="data-label">ROTATION:</span>
+                      <span className="data-val">
+                        {detectedPiece ? `${((detectedPiece.rotation_angle_rad * 180) / Math.PI).toFixed(0)}°` : '--'}
+                      </span>
+                    </div>
+
+                    <div className="data-row">
+                      <span className="data-label">EDGES:</span>
+                      <div className="edge-pills">
+                        {detectedPiece ? (
+                          detectedPiece.edges.map((e, idx) => (
+                            <span key={idx} className={`pill ${e.edge_type.toLowerCase()}`}>
+                              E{idx + 1}: {e.edge_type}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="muted">--</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Primary Action Controls: Prominent, zero-scroll Save Piece + GT */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
                     <button
-                      className="btn"
+                      className="btn primary"
                       style={{
-                        flex: 1,
-                        background: '#1a365d',
-                        borderColor: '#3182ce',
-                        color: '#63b3ed',
-                        fontSize: 10,
-                        padding: '6px 8px',
-                        fontWeight: 600,
+                        background: detectedPiece || lastValidPieceRef.current ? '#238636' : '#21262d',
+                        borderColor: detectedPiece || lastValidPieceRef.current ? '#2ea043' : '#30363d',
+                        color: detectedPiece || lastValidPieceRef.current ? '#ffffff' : '#8b949e',
+                        padding: '10px 14px',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        cursor: detectedPiece || lastValidPieceRef.current ? 'pointer' : 'not-allowed',
+                        boxShadow: detectedPiece || lastValidPieceRef.current ? '0 2px 8px rgba(35, 134, 54, 0.4)' : 'none',
+                        transition: 'all 0.15s ease',
                       }}
-                      disabled={!detectedPiece}
-                      onClick={handleFreezeGroundTruth}
-                      title="Freeze corners to label ground truth [G]"
+                      disabled={!detectedPiece && !lastValidPieceRef.current}
+                      onClick={handleRecordPiece}
+                      title="Save detected piece to inventory (Shortcut: S or SPACE)"
                     >
-                      LABEL GT [G]
+                      {saveFeedback ? (
+                        <span style={{ color: '#56d364', fontWeight: 'bold' }}>{saveFeedback}</span>
+                      ) : detectedPiece || lastValidPieceRef.current ? (
+                        <>
+                          <span>SAVE PIECE #{storedPieces.length + 1}</span>
+                          <span style={{
+                            fontSize: 10,
+                            background: '#196c2e',
+                            color: '#fff',
+                            padding: '2px 6px',
+                            borderRadius: 3,
+                            letterSpacing: 0.5,
+                          }}>
+                            [S] or [SPACE]
+                          </span>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 12 }}>PLACE PIECE ON MAT TO SCAN</span>
+                      )}
                     </button>
 
-                    {activePosterMatch && (
+                    <div style={{ display: 'flex', gap: 6 }}>
                       <button
                         className="btn"
                         style={{
-                          background: showCandidates ? '#30363d' : '#21262d',
-                          borderColor: '#30363d',
-                          color: showCandidates ? '#58a6ff' : '#8b949e',
+                          flex: 1,
+                          background: '#1a365d',
+                          borderColor: '#3182ce',
+                          color: '#63b3ed',
                           fontSize: 10,
                           padding: '6px 8px',
+                          fontWeight: 600,
                         }}
-                        onClick={() => setShowCandidates(!showCandidates)}
-                        title="Toggle Top 5 Candidate Match Proposals"
+                        disabled={!detectedPiece}
+                        onClick={handleFreezeGroundTruth}
+                        title="Freeze corners to label ground truth [G]"
                       >
-                        {showCandidates ? 'HIDE CANDIDATES ▴' : 'CANDIDATES (5) ▾'}
+                        LABEL GT [G]
                       </button>
-                    )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                  Drag <b>cyan pins (C1..C4)</b> on preview:
-                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    Drag <b>cyan pins (C1..C4)</b> on preview:
+                  </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, background: '#161b22', padding: 4, borderRadius: 4, border: '1px solid var(--border)' }}>
-                  {gtCorners && gtCorners.map((pt, i) => (
-                    <div
-                      key={i}
-                      onClick={() => setDraggingGtCorner(draggingGtCorner === i ? null : i)}
-                      style={{
-                        padding: '3px 5px',
-                        background: draggingGtCorner === i ? '#00e5ff22' : '#21262d',
-                        border: `1px solid ${draggingGtCorner === i ? '#00e5ff' : 'var(--border)'}`,
-                        borderRadius: 3,
-                        cursor: 'pointer',
-                        fontSize: 9,
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <b style={{ color: draggingGtCorner === i ? '#00e5ff' : 'var(--text)' }}>C{i + 1}</b>
-                      <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="gt-edge-list">
-                  {gtEdges.map((type, idx) => (
-                    <div key={idx} className={`gt-edge-item ${type.toLowerCase()}`} style={{ padding: '3px 6px' }}>
-                      <span className="gt-edge-label" style={{ fontSize: 10 }}>E{idx + 1}:</span>
-                      <div className="gt-edge-toggle">
-                        {(['Tab', 'Hole', 'Flat'] as const).map((t) => (
-                          <button
-                            key={t}
-                            className={`gt-edge-btn ${type === t ? `active ${t.toLowerCase()}` : ''}`}
-                            onClick={() => handleToggleEdgeType(idx, t)}
-                            style={{ padding: '2px 5px', fontSize: 9 }}
-                          >
-                            {t}
-                          </button>
-                        ))}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, background: '#161b22', padding: 4, borderRadius: 4, border: '1px solid var(--border)' }}>
+                    {gtCorners && gtCorners.map((pt, i) => (
+                      <div
+                        key={i}
+                        onClick={() => setDraggingGtCorner(draggingGtCorner === i ? null : i)}
+                        style={{
+                          padding: '3px 5px',
+                          background: draggingGtCorner === i ? '#00e5ff22' : '#21262d',
+                          border: `1px solid ${draggingGtCorner === i ? '#00e5ff' : 'var(--border)'}`,
+                          borderRadius: 3,
+                          cursor: 'pointer',
+                          fontSize: 9,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <b style={{ color: draggingGtCorner === i ? '#00e5ff' : 'var(--text)' }}>C{i + 1}</b>
+                        <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
                       </div>
-                    </div>
-                  ))}
-                </div>
-
-                {gtSaveStatus && (
-                  <div style={{ fontSize: 10, textAlign: 'center', color: gtSaveStatus.startsWith('✓') ? '#38a169' : '#e53e3e' }}>
-                    {gtSaveStatus}
+                    ))}
                   </div>
-                )}
 
-                <div className="gt-actions" style={{ marginTop: 4 }}>
-                  <button className="btn small" onClick={handleExitGtMode}>
-                    CANCEL [ESC]
-                  </button>
-                  <button className="btn small primary" onClick={handleSaveGroundTruth}>
-                    SAVE [SPACE]
-                  </button>
+                  <div className="gt-edge-list">
+                    {gtEdges.map((type, idx) => (
+                      <div key={idx} className={`gt-edge-item ${type.toLowerCase()}`} style={{ padding: '3px 6px' }}>
+                        <span className="gt-edge-label" style={{ fontSize: 10 }}>E{idx + 1}:</span>
+                        <div className="gt-edge-toggle">
+                          {(['Tab', 'Hole', 'Flat'] as const).map((t) => (
+                            <button
+                              key={t}
+                              className={`gt-edge-btn ${type === t ? `active ${t.toLowerCase()}` : ''}`}
+                              onClick={() => handleToggleEdgeType(idx, t)}
+                              style={{ padding: '2px 5px', fontSize: 9 }}
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {gtSaveStatus && (
+                    <div style={{ fontSize: 10, textAlign: 'center', color: gtSaveStatus.startsWith('Saved') ? '#38a169' : '#e53e3e' }}>
+                      {gtSaveStatus}
+                    </div>
+                  )}
+
+                  <div className="gt-actions" style={{ marginTop: 4 }}>
+                    <button className="btn small" onClick={handleExitGtMode}>
+                      CANCEL [ESC]
+                    </button>
+                    <button className="btn small primary" onClick={handleSaveGroundTruth}>
+                      SAVE [SPACE]
+                    </button>
+                  </div>
                 </div>
+              )}
+            </div>
+          </section>
+
+          {/* Right Column: Assembly Board */}
+          <section className="workbench-panel center-panel" style={{ flex: 1, minHeight: 0 }}>
+            {activePlacementPiece && (
+              <div
+                style={{
+                  background: '#1f6feb',
+                  color: '#fff',
+                  padding: '7px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.4)',
+                  zIndex: 10,
+                }}
+              >
+                <span>
+                  PLACING PIECE #{activePlacementPiece.piece_number} ({activePlacementPiece.classification.toUpperCase()}) — CLICK ANY SLOT ON BOARD TO PLACE
+                </span>
+                <button
+                  className="btn small"
+                  style={{ background: '#0d1117', color: '#f0f6fc', border: '1px solid #30363d', padding: '2px 8px', fontWeight: 600 }}
+                  onClick={() => setActivePlacementPiece(null)}
+                >
+                  CANCEL
+                </button>
               </div>
             )}
-          </div>
-        </section>
-
-        {/* Right Column: Unified Assembly Board & Reference Poster */}
-        <section className="workbench-panel center-panel">
-          <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
             <BoardView
               rows={posterDims.rows > 0 ? posterDims.rows : 28}
-              cols={posterDims.cols > 0 ? posterDims.cols : 40}
+              cols={posterDims.cols > 0 ? posterDims.cols : 36}
               pieces={storedPieces}
               placedSlots={placedSlots}
               pairedFixtures={pairedFixtures}
@@ -2311,6 +2799,9 @@ export default function App() {
               onUnplacePiece={handleUnplacePiece}
               selectedSlot={selectedBoardSlot}
               onSelectSlot={setSelectedBoardSlot}
+              onSlotClick={handleSlotClick}
+              onRotatePerimeter={handleRotatePerimeter}
+              onRotatePoster={handleRotatePoster}
               onUpdatePairStatus={handleUpdatePairStatus}
               posterRgba={posterRgba}
               posterWidth={posterDims.w}
@@ -2320,6 +2811,10 @@ export default function App() {
               physHeightMm={physDims.hMm}
               onExportFixtures={handleExportFixtures}
               onImportFixtures={handleImportFixtures}
+              candidateMatches={candidateMatches}
+              onDeletePiece={handleDeletePiece}
+              onResetApplication={() => setShowResetConfirm(true)}
+              onSelectPiecePreview={(piece) => setInspectedPiece(piece)}
               highlightedSlot={
                 identifiedPieceMatch && solvedPerimeterMap[identifiedPieceMatch.piece_id]
                   ? {
@@ -2329,10 +2824,11 @@ export default function App() {
                   : null
               }
               onSolvePerimeter={handleSolvePerimeter}
+              onApplyPerimeter={handleApplyPerimeterToBoard}
               solvedPerimeterCount={Object.keys(solvedPerimeterMap).length}
               totalPerimeterCount={
                 2 * ((posterDims.rows > 0 ? posterDims.rows : 28) - 2) +
-                2 * ((posterDims.cols > 0 ? posterDims.cols : 40) - 2) + 4
+                2 * ((posterDims.cols > 0 ? posterDims.cols : 36) - 2) + 4
               }
               onUpdateDimensions={(newCols, newRows, newWidthMm, newHeightMm) => {
                 localStorage.setItem('jigsaw_grid_cols', newCols.toString())
@@ -2351,7 +2847,7 @@ export default function App() {
                 }
               }}
               onPosterIngested={(img, file) => {
-                const detectedCols = posterDims.cols > 0 ? posterDims.cols : 40
+                const detectedCols = posterDims.cols > 0 ? posterDims.cols : 36
                 const detectedRows = posterDims.rows > 0 ? posterDims.rows : 28
                 setPosterFileName(file.name)
                 setPosterDims({
@@ -2378,16 +2874,34 @@ export default function App() {
                       detectedRows
                     )
                     isPosterInitializedRef.current = true
-                    console.log('✓ Ingested new master poster into spatial WASM memory')
+                    console.log('Ingested new master poster into spatial WASM memory')
                   } catch (err) {
                     console.error('Failed to initialize spatial master poster:', err)
                   }
                 }
               }}
             />
-          </div>
-        </section>
-      </main>
+          </section>
+        </main>
+      ) : (
+        <main style={{ flex: 1, width: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#0d1117' }}>
+          <PieceTray
+            pieces={storedPieces}
+            selectedPieceId={activePlacementPiece?.id || inspectedPiece?.id || null}
+            onSelectPiece={(piece) => setInspectedPiece(piece)}
+            onToggleFavorite={handleToggleFavorite}
+            onDeletePiece={handleDeletePiece}
+            onClearAllPieces={() => setShowResetConfirm(true)}
+            slotFilter={null}
+            onClearSlotFilter={() => { }}
+            onPlaceOnBoard={(piece) => {
+              setActivePlacementPiece(piece)
+              setInspectedPiece(null)
+              setActiveTopView('board')
+            }}
+          />
+        </main>
+      )}
 
       {/* 3. Bottom Controls & Scanned Piece History */}
       <footer className="app-footer">
@@ -2439,6 +2953,173 @@ export default function App() {
           </div>
         )}
       </footer>
+
+      {/* Piece Detailed Inspection Modal */}
+      {inspectedPiece && (
+        <div className="modal-backdrop" onClick={() => setInspectedPiece(null)}>
+          <div className="piece-preview-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="piece-preview-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 16, fontWeight: 700, color: '#f0f6fc' }}>
+                  PIECE #{inspectedPiece.piece_number}
+                </span>
+                <span className={`pill ${inspectedPiece.classification.toLowerCase()}`}>
+                  {inspectedPiece.classification.toUpperCase()}
+                </span>
+                {inspectedPiece.is_favorite && <span style={{ color: '#e3b341', fontSize: 12 }}>FAVORITE</span>}
+              </div>
+              <button
+                className="btn small"
+                onClick={() => setInspectedPiece(null)}
+                style={{ background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}
+              >
+                CLOSE
+              </button>
+            </div>
+
+            <div className="piece-preview-body">
+              <div className="piece-preview-image-wrap">
+                {inspectedPiece.thumbnailDataUrl ? (
+                  <img
+                    src={inspectedPiece.thumbnailDataUrl}
+                    alt={`Piece #${inspectedPiece.piece_number}`}
+                    className="piece-preview-image"
+                  />
+                ) : (
+                  <div style={{ color: '#8b949e', fontSize: 12 }}>No image available</div>
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
+                  <div style={{ fontSize: 10, color: '#8b949e' }}>DIMENSIONS</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#f0f6fc', marginTop: 2 }}>
+                    {inspectedPiece.metric_width_mm?.toFixed(1) || '--'} × {inspectedPiece.metric_height_mm?.toFixed(1) || '--'} mm
+                  </div>
+                  <div style={{ fontSize: 10, color: '#8b949e' }}>
+                    ({inspectedPiece.bounding_width_px} × {inspectedPiece.bounding_height_px} px)
+                  </div>
+                </div>
+
+                <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
+                  <div style={{ fontSize: 10, color: '#8b949e' }}>BOARD STATUS</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: inspectedPiece.status === 'Placed' ? '#3fb950' : '#8b949e', marginTop: 2 }}>
+                    {inspectedPiece.status === 'Placed' && inspectedPiece.placed_slot
+                      ? `[R${inspectedPiece.placed_slot.row}, C${inspectedPiece.placed_slot.col}]`
+                      : 'IN TRAY'}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#8b949e' }}>
+                    {inspectedPiece.status === 'Placed' ? 'Placed on Assembly Grid' : 'Unplaced Inventory'}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#8b949e', marginBottom: 6 }}>EDGES (N, E, S, W)</div>
+                <div className="piece-preview-edges">
+                  {inspectedPiece.edges.map((edge, idx) => (
+                    <div key={idx} className={`piece-preview-edge-pill ${edge.edge_type.toLowerCase()}`}>
+                      <span style={{ fontWeight: 600, color: '#c9d1d9' }}>
+                        E{idx + 1} ({['North', 'East', 'South', 'West'][idx]}):
+                      </span>
+                      <span style={{ fontWeight: 700 }}>{edge.edge_type}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="piece-preview-footer">
+              <button
+                className="btn"
+                style={{ background: '#21262d', color: '#c9d1d9', borderColor: '#30363d' }}
+                onClick={() => handleToggleFavorite(inspectedPiece.id)}
+              >
+                {inspectedPiece.is_favorite ? 'UNFAVORITE' : 'FAVORITE'}
+              </button>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                {inspectedPiece.status !== 'Placed' && (
+                  <button
+                    className="btn primary"
+                    style={{ background: '#238636', borderColor: '#2ea043', color: '#fff', fontWeight: 700 }}
+                    onClick={() => {
+                      setActivePlacementPiece(inspectedPiece)
+                      setInspectedPiece(null)
+                      setActiveTopView('board')
+                    }}
+                  >
+                    PLACE ON BOARD
+                  </button>
+                )}
+
+                {inspectedPiece.status === 'Placed' && inspectedPiece.placed_slot && (
+                  <button
+                    className="btn"
+                    style={{ background: '#30363d', color: '#ff7b72', borderColor: '#484f58' }}
+                    onClick={() => {
+                      if (inspectedPiece.placed_slot) {
+                        handleUnplacePiece(inspectedPiece.placed_slot.row, inspectedPiece.placed_slot.col)
+                        setInspectedPiece(null)
+                      }
+                    }}
+                  >
+                    UNPLACE
+                  </button>
+                )}
+
+                <button
+                  className="btn danger"
+                  style={{ background: '#da3633', borderColor: '#f85149', color: '#fff' }}
+                  onClick={() => {
+                    if (window.confirm(`Permanently delete Piece #${inspectedPiece.piece_number}?`)) {
+                      handleDeletePiece(inspectedPiece.id)
+                    }
+                  }}
+                >
+                  DELETE PIECE
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Start Fresh / Full Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="modal-backdrop" onClick={() => setShowResetConfirm(false)}>
+          <div className="reset-confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#f85149', display: 'flex', alignItems: 'center', gap: 8 }}>
+              START FRESH &amp; RESET ALL
+            </div>
+            <p style={{ fontSize: 13, color: '#c9d1d9', lineHeight: 1.5, margin: '8px 0' }}>
+              Are you sure you want to completely reset the application?
+            </p>
+            <ul style={{ fontSize: 12, color: '#8b949e', margin: '0 0 12px 18px', lineHeight: 1.6 }}>
+              <li>Delete all <strong>{storedPieces.length} stored pieces</strong> from IndexedDB</li>
+              <li>Clear all board slots &amp; placed pieces</li>
+              <li>Reset puzzle grid to <strong>1008 pieces (36 cols × 28 rows)</strong></li>
+              <li>Reset calibration and stored local storage keys</li>
+            </ul>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+              <button
+                className="btn"
+                style={{ background: '#21262d', color: '#c9d1d9', borderColor: '#30363d' }}
+                onClick={() => setShowResetConfirm(false)}
+              >
+                CANCEL
+              </button>
+              <button
+                className="btn danger"
+                style={{ background: '#da3633', borderColor: '#f85149', color: '#fff', fontWeight: 700 }}
+                onClick={handleResetApplication}
+              >
+                DELETE ALL &amp; RESET
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

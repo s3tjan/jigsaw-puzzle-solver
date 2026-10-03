@@ -589,7 +589,6 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
       >
         {!posterImage ? (
           <div className="poster-empty-placeholder">
-            <div className="placeholder-icon">🖼️</div>
             <div className="placeholder-text">DROP MASTER POSTER / BOX IMAGE HERE</div>
             <div className="placeholder-subtext">
               Upload the reference puzzle artwork or box scan to generate the visual coordinate space and ground-truth slot grid.

@@ -71,8 +71,24 @@ interface BoardViewProps {
   onUpdateDimensions?: (cols: number, rows: number, physWidthMm: number, physHeightMm: number) => void
   highlightedSlot?: { row: number; col: number } | null
   onSolvePerimeter?: () => void
+  onApplyPerimeter?: () => void
   solvedPerimeterCount?: number
   totalPerimeterCount?: number
+  candidateMatches?: CandidateMatchOverlay[]
+  onDeletePiece?: (pieceId: string) => void
+  onResetApplication?: () => void
+  onSelectPiecePreview?: (piece: StoredPiece) => void
+  onSlotClick?: (row: number, col: number) => void
+  onRotatePerimeter?: () => void
+  onRotatePoster?: (deg: 90 | 180) => void
+}
+
+export interface CandidateMatchOverlay {
+  row: number
+  col: number
+  rotation_deg: number
+  confidence: number
+  rank: number
 }
 
 export const BoardView: React.FC<BoardViewProps> = ({
@@ -98,8 +114,16 @@ export const BoardView: React.FC<BoardViewProps> = ({
   onUpdateDimensions,
   highlightedSlot = null,
   onSolvePerimeter,
+  onApplyPerimeter,
   solvedPerimeterCount = 0,
   totalPerimeterCount = 0,
+  candidateMatches = [],
+  onDeletePiece,
+  onResetApplication,
+  onSelectPiecePreview,
+  onSlotClick,
+  onRotatePerimeter,
+  onRotatePoster,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -433,26 +457,63 @@ export const BoardView: React.FC<BoardViewProps> = ({
           ctx.fill()
         }
 
-        const isHighlighted = highlightedSlot && highlightedSlot.row === r && highlightedSlot.col === c
+        const cand = candidateMatches?.find((cnd) => cnd.row === r && cnd.col === c)
+        const isHighlighted = (highlightedSlot && highlightedSlot.row === r && highlightedSlot.col === c) || (cand && cand.rank === 1)
 
-        // Cell border outline
-        ctx.strokeStyle = isHighlighted
-          ? '#00ff88'
-          : isSelected
-          ? '#ffd33d'
-          : isHovered
-          ? '#58a6ff'
-          : is_corner
-          ? 'rgba(248, 81, 73, 0.35)'
-          : is_border
-          ? 'rgba(210, 153, 34, 0.25)'
-          : 'rgba(255, 255, 255, 0.07)'
-        ctx.lineWidth = isHighlighted ? 3 / zoom : isSelected ? 2 / zoom : isHovered ? 1.5 / zoom : 0.75 / zoom
-        ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
+        // Candidate cell fill & outline
+        if (cand && !placed) {
+          if (cand.rank === 1) {
+            ctx.fillStyle = 'rgba(0, 255, 180, 0.35)'
+            ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2)
+            ctx.strokeStyle = '#00ffb4'
+            ctx.lineWidth = 3 / zoom
+            ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
+          } else {
+            ctx.fillStyle = 'rgba(230, 180, 30, 0.20)'
+            ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2)
+            ctx.strokeStyle = '#e3b341'
+            ctx.lineWidth = 2 / zoom
+            ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
+          }
+        } else {
+          // Cell border outline
+          ctx.strokeStyle = isHighlighted
+            ? '#00ff88'
+            : isSelected
+              ? '#ffd33d'
+              : isHovered
+                ? '#58a6ff'
+                : is_corner
+                  ? 'rgba(248, 81, 73, 0.35)'
+                  : is_border
+                    ? 'rgba(210, 153, 34, 0.25)'
+                    : 'rgba(255, 255, 255, 0.07)'
+          ctx.lineWidth = isHighlighted ? 3 / zoom : isSelected ? 2 / zoom : isHovered ? 1.5 / zoom : 0.75 / zoom
+          ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
 
-        if (isHighlighted) {
-          ctx.fillStyle = 'rgba(0, 255, 136, 0.25)'
-          ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2)
+          if (isHighlighted) {
+            ctx.fillStyle = 'rgba(0, 255, 136, 0.25)'
+            ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2)
+          }
+        }
+
+        // Candidate Badge Overlay on cell
+        if (cand && !placed && cellW * zoom > 22) {
+          ctx.save()
+          ctx.font = `bold ${Math.max(8, Math.min(11, 8.5 * zoom))}px sans-serif`
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          const label = cand.rank === 1 ? `#1 ${Math.round(cand.confidence)}%` : `#${cand.rank} ${Math.round(cand.confidence)}%`
+          const tw = ctx.measureText(label).width + 6
+          const th = 14
+          ctx.fillStyle = cand.rank === 1 ? 'rgba(0, 40, 25, 0.90)' : 'rgba(40, 30, 10, 0.90)'
+          ctx.fillRect(x + cellW / 2 - tw / 2, y + cellH / 2 - th / 2, tw, th)
+          ctx.strokeStyle = cand.rank === 1 ? '#00ffb4' : '#e3b341'
+          ctx.lineWidth = 1
+          ctx.strokeRect(x + cellW / 2 - tw / 2, y + cellH / 2 - th / 2, tw, th)
+          ctx.fillStyle = cand.rank === 1 ? '#00ffb4' : '#ffd33d'
+          ctx.fillText(label, x + cellW / 2, y + cellH / 2)
+          ctx.restore()
         }
 
         // Piece number label or slot coordinates on cell
@@ -618,7 +679,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
     const r = Math.floor(mouseY / cellH)
 
     if (r >= 0 && r < rows && c >= 0 && c < cols) {
-      if (selectedSlot && selectedSlot.row === r && selectedSlot.col === c) {
+      if (onSlotClick) {
+        onSlotClick(r, c)
+      } else if (selectedSlot && selectedSlot.row === r && selectedSlot.col === c) {
         onSelectSlot(null)
       } else {
         onSelectSlot({ row: r, col: c })
@@ -715,18 +778,15 @@ export const BoardView: React.FC<BoardViewProps> = ({
     <div className="board-view-container">
       {/* Top Header Bar */}
       <div className="board-header">
-        <div className="board-title">
-          <span>Grid: {cols} × {rows}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="stat-badge placed">PLACED: {placedCount} / {totalSlots} ({progressPct}%)</span>
+          <span className="stat-badge unplaced">REMAINING: {totalSlots - placedCount}</span>
           {posterFileName && <span className="stat-badge unplaced">{posterFileName}</span>}
           {posterWidth > 0 && (
             <span className="stat-badge unplaced">
               {posterWidth} × {posterHeight} px
             </span>
           )}
-          <div className="board-stats">
-            <span className="stat-badge placed">PLACED: {placedCount} / {totalSlots} ({progressPct}%)</span>
-            <span className="stat-badge unplaced">REMAINING: {totalSlots - placedCount}</span>
-          </div>
         </div>
 
         <div className="board-header-actions">
@@ -735,10 +795,47 @@ export const BoardView: React.FC<BoardViewProps> = ({
               className="board-btn primary highlight"
               style={{ background: '#238636', borderColor: '#2ea043', color: '#fff', fontWeight: 'bold' }}
               onClick={onSolvePerimeter}
-              title="Solve 1D closed border loop using Phase 9 die-cut curve matching"
+              title="Solve 1D closed border loop"
             >
-              ⚡ SOLVE PERIMETER {solvedPerimeterCount > 0 ? `(${solvedPerimeterCount} / ${totalPerimeterCount})` : ''}
+              SOLVE PERIMETER {solvedPerimeterCount > 0 ? `(${solvedPerimeterCount} / ${totalPerimeterCount})` : ''}
             </button>
+          )}
+          {onApplyPerimeter && solvedPerimeterCount > 0 && (
+            <button
+              className="board-btn"
+              style={{ background: '#1f6feb', borderColor: '#388bfd', color: '#fff', fontWeight: 'bold' }}
+              onClick={onApplyPerimeter}
+              title="Apply all solved perimeter pieces to the board"
+            >
+              APPLY PERIMETER ({solvedPerimeterCount})
+            </button>
+          )}
+          {onRotatePerimeter && (
+            <button
+              className="board-btn"
+              onClick={onRotatePerimeter}
+              title="Rotate solved perimeter placements by 180 degrees"
+            >
+              ROTATE PERIMETER 180°
+            </button>
+          )}
+          {onRotatePoster && posterWidth > 0 && (
+            <>
+              <button
+                className="board-btn"
+                onClick={() => onRotatePoster(90)}
+                title="Rotate master poster 90 degrees clockwise"
+              >
+                ROTATE POSTER 90°
+              </button>
+              <button
+                className="board-btn"
+                onClick={() => onRotatePoster(180)}
+                title="Rotate master poster 180 degrees"
+              >
+                ROTATE POSTER 180°
+              </button>
+            </>
           )}
           <button className="board-btn" onClick={onImportFixtures} title="Import saved assembly JSON dataset">
             IMPORT JSON
@@ -839,7 +936,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
               onClick={handleApplyDimensions}
               title="Apply grid and physical dimensions [Enter]"
             >
-              {appliedFeedback ? '✓ APPLIED' : isDirty ? 'APPLY SPECS ⏎' : 'APPLY SPECS'}
+              {appliedFeedback ? 'APPLIED' : isDirty ? 'APPLY SPECS [ENTER]' : 'APPLY SPECS'}
             </button>
           )
         })()}
@@ -850,6 +947,26 @@ export const BoardView: React.FC<BoardViewProps> = ({
             (Perimeter: 4 corners + {2 * Math.max(0, cols - 2) + 2 * Math.max(0, rows - 2)} borders = {2 * Math.max(0, cols - 2) + 2 * Math.max(0, rows - 2) + 4} total)
           </span>
         </div>
+
+        {onResetApplication && (
+          <button
+            className="board-btn"
+            style={{
+              padding: '3px 10px',
+              fontSize: 10,
+              background: '#3a1d1d',
+              borderColor: '#f85149',
+              color: '#ff7b72',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              marginLeft: 'auto',
+            }}
+            onClick={onResetApplication}
+            title="Delete all scanned pieces and reset application to fresh state"
+          >
+            START FRESH
+          </button>
+        )}
       </div>
 
       {/* Main Board View: Interactive Canvas + Slot Inspector */}
@@ -945,30 +1062,29 @@ export const BoardView: React.FC<BoardViewProps> = ({
           />
 
           {/* Hover HUD Overlay showing physical and pixel coordinates */}
-          {hoverSlot && (
+          {/* {hoverSlot && (
             <div className="board-hud-overlay">
               <div className="board-hud-row">
                 <span className="board-hud-label">SLOT:</span>
                 <span className="board-hud-val highlight">[{hoverSlot.c}, {hoverSlot.r}]</span>
                 <span className="board-hud-label">TYPE:</span>
-                <span className={`board-hud-val ${
-                  (hoverSlot.r === 0 && hoverSlot.c === 0) ||
+                <span className={`board-hud-val ${(hoverSlot.r === 0 && hoverSlot.c === 0) ||
                   (hoverSlot.r === 0 && hoverSlot.c === cols - 1) ||
                   (hoverSlot.r === rows - 1 && hoverSlot.c === 0) ||
                   (hoverSlot.r === rows - 1 && hoverSlot.c === cols - 1)
-                    ? 'red'
-                    : hoverSlot.r === 0 || hoverSlot.r === rows - 1 || hoverSlot.c === 0 || hoverSlot.c === cols - 1
+                  ? 'red'
+                  : hoverSlot.r === 0 || hoverSlot.r === rows - 1 || hoverSlot.c === 0 || hoverSlot.c === cols - 1
                     ? 'yellow'
                     : 'green'
-                }`}>
+                  }`}>
                   {(hoverSlot.r === 0 && hoverSlot.c === 0) ||
-                  (hoverSlot.r === 0 && hoverSlot.c === cols - 1) ||
-                  (hoverSlot.r === rows - 1 && hoverSlot.c === 0) ||
-                  (hoverSlot.r === rows - 1 && hoverSlot.c === cols - 1)
+                    (hoverSlot.r === 0 && hoverSlot.c === cols - 1) ||
+                    (hoverSlot.r === rows - 1 && hoverSlot.c === 0) ||
+                    (hoverSlot.r === rows - 1 && hoverSlot.c === cols - 1)
                     ? 'CORNER'
                     : hoverSlot.r === 0 || hoverSlot.r === rows - 1 || hoverSlot.c === 0 || hoverSlot.c === cols - 1
-                    ? 'BORDER'
-                    : 'INTERIOR'}
+                      ? 'BORDER'
+                      : 'INTERIOR'}
                 </span>
                 {placedSlots[`${hoverSlot.r},${hoverSlot.c}`] && (
                   <span className="board-hud-val highlight-green">
@@ -993,7 +1109,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 </div>
               )}
             </div>
-          )}
+          )} */}
         </div>
 
         {/* Slot Inspector Sidebar */}
@@ -1025,7 +1141,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   <img
                     src={selectedSlotPiece.thumbnailDataUrl}
                     alt={`Piece #${selectedSlotPiece.piece_number}`}
-                    style={{ width: '100%', borderRadius: 4, border: '1px solid #30363d' }}
+                    style={{ width: '100%', borderRadius: 4, border: '1px solid #30363d', cursor: onSelectPiecePreview ? 'pointer' : 'default' }}
+                    onClick={() => onSelectPiecePreview?.(selectedSlotPiece)}
+                    title="Click for full piece preview"
                   />
                   <div style={{ fontSize: 11, color: '#8b949e', display: 'flex', justifyContent: 'space-between' }}>
                     <span>Rotation: {selectedSlotPlaced.rotation * 90}° CW</span>
@@ -1037,12 +1155,28 @@ export const BoardView: React.FC<BoardViewProps> = ({
                       ROTATE 90°
                     </button>
                   </div>
-                  <button
-                    className="unplace-btn"
-                    onClick={() => onUnplacePiece(selectedSlot.row, selectedSlot.col)}
-                  >
-                    UNPLACE PIECE
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                    <button
+                      className="unplace-btn"
+                      style={{ flex: 1 }}
+                      onClick={() => onUnplacePiece(selectedSlot.row, selectedSlot.col)}
+                    >
+                      UNPLACE
+                    </button>
+                    {onDeletePiece && (
+                      <button
+                        className="unplace-btn"
+                        style={{ flex: 1, background: '#3a1d1d', borderColor: '#f85149', color: '#ff7b72' }}
+                        onClick={() => {
+                          if (confirm(`Permanently delete Piece #${selectedSlotPiece.piece_number} from database?`)) {
+                            onDeletePiece(selectedSlotPiece.id)
+                          }
+                        }}
+                      >
+                        DELETE
+                      </button>
+                    )}
+                  </div>
 
                   {/* Manual Mating Pair Overrides */}
                   <div className="inspector-artwork-section" style={{ marginTop: 12 }}>

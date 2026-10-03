@@ -29,6 +29,7 @@ interface PieceTrayProps {
   onStartPairingWith?: (pieceId: string) => void
   pairingSourcePieceId?: string | null
   onCancelPairing?: () => void
+  onPlaceOnBoard?: (piece: StoredPiece) => void
 }
 
 export const PieceTray: React.FC<PieceTrayProps> = ({
@@ -43,6 +44,7 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
   onStartPairingWith,
   pairingSourcePieceId,
   onCancelPairing,
+  onPlaceOnBoard,
 }) => {
   const [filterType, setFilterType] = useState<'All' | 'Corners' | 'Borders' | 'Interior' | 'Favorites'>('All')
   const [searchQuery, setSearchQuery] = useState<string>('')
@@ -175,7 +177,7 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
           />
           {searchQuery && (
             <button className="tray-btn-tiny" onClick={() => setSearchQuery('')}>
-              ✕
+              CLEAR
             </button>
           )}
         </div>
@@ -184,10 +186,10 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
         {slotFilter && (
           <div className="slot-filter-banner">
             <span>
-              🎯 FILTERED FOR SLOT [{slotFilter.row}, {slotFilter.col}]
+              FILTERED FOR SLOT [{slotFilter.row}, {slotFilter.col}]
             </span>
             <button className="clear-slot-filter" onClick={onClearSlotFilter} title="Clear slot filter">
-              ✕
+              CLEAR
             </button>
           </div>
         )}
@@ -206,7 +208,7 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
         {filteredPieces.length === 0 ? (
           <div className="piece-tray-empty">
             {pieces.length === 0
-              ? 'No pieces scanned yet. Scan pieces via Camera [Mode A] to populate the tray.'
+              ? 'No pieces scanned yet. Scan pieces to populate the tray.'
               : 'No pieces match current filter/slot criteria.'}
           </div>
         ) : (
@@ -236,8 +238,9 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
                         onToggleFavorite(piece.id)
                       }}
                       title="Toggle Favorite"
+                      style={{ fontSize: 9, fontWeight: 700 }}
                     >
-                      ★
+                      {piece.is_favorite ? 'FAV' : 'FAV'}
                     </button>
                   </div>
                 </div>
@@ -252,7 +255,7 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
                   />
                   {isPlaced && piece.placed_slot && (
                     <div className="placed-watermark">
-                      LOCKED [{piece.placed_slot.row},{piece.placed_slot.col}]
+                      PLACED [{piece.placed_slot.row},{piece.placed_slot.col}]
                     </div>
                   )}
                 </div>
@@ -271,20 +274,35 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
                     {piece.metric_width_mm.toFixed(1)}×{piece.metric_height_mm.toFixed(1)}mm
                   </span>
                   <div className="piece-card-actions">
+                    {onPlaceOnBoard && !isPlaced && (
+                      <button
+                        className="card-action-btn"
+                        style={{ background: '#238636', borderColor: '#2ea043', color: '#fff', fontSize: 9, padding: '2px 5px', fontWeight: 600 }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onPlaceOnBoard(piece)
+                        }}
+                        title="Select and switch to board to place"
+                      >
+                        PLACE
+                      </button>
+                    )}
                     {onStartPairingWith && !pairingSourcePieceId && (
                       <button
                         className="card-action-btn"
+                        style={{ fontSize: 9, padding: '2px 5px' }}
                         onClick={(e) => {
                           e.stopPropagation()
                           onStartPairingWith(piece.id)
                         }}
                         title="Designate manual mating pair fixture"
                       >
-                        🔗
+                        PAIR
                       </button>
                     )}
                     <button
                       className="card-action-btn delete"
+                      style={{ fontSize: 9, padding: '2px 5px' }}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (confirm(`Delete Piece #${piece.piece_number} from tray?`)) {
@@ -293,7 +311,7 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
                       }}
                       title="Delete piece"
                     >
-                      🗑
+                      DEL
                     </button>
                   </div>
                 </div>

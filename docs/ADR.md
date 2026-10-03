@@ -63,3 +63,73 @@ During validation of scanned puzzle pieces in the WebAssembly computer vision en
 
 #### Negative / Trade-offs
 - Iterated smoothing runs 3 passes instead of 1, adding ~0.05ms of WASM compute per piece frame, which is negligible against the 160ms analysis cadence.
+
+---
+
+## ADR-002: Multimodal Perimeter Assembly, Inward Boundary Propagation & Spatial Probability Density Heatmaps
+
+- **Status:** Accepted
+- **Date:** 2026-10-03
+- **Context:** Failure of pure geometric curve matching on physical cardboard, greedy error accumulation, and the unreliability of single-piece poster matching on low-entropy interior pieces.
+
+---
+
+### 1. Context & Problem Statement
+
+Physical tabletop validation revealed critical limitations in the previous assembly pipeline:
+1. **Physical Die Repetition & Kerf Noise**: Commercial 1,000-piece puzzles repeat die patterns (e.g. 250-piece dies stamped 4 times). Pure contour $L_2$ curve matching cannot distinguish between identical die twins on opposite sides of the board. Cardboard bevel and directional shadows introduce 1–3 pixel variations that derail greedy curve chaining.
+2. **Greedy Error Accumulation**: A single mismatched piece early in a 34-piece side chain invalidates all subsequent placements, resulting in an impossible perimeter loop that cannot physically snap together.
+3. **The Single-Piece Poster Trap**: Matching isolated interior pieces directly against the reference poster produces noisy, false-positive peaks in low-entropy regions (sky, water, solid colors).
+4. **Physical Labeling & Mismatch in Mental Model**: The user draws arbitrary pieces from an unlabeled box. Requiring users to find specific piece numbers in the box, or manually verify pairwise mating seams ("Piece #8 with #9"), is impractical for 1,000 physical pieces.
+
+---
+
+### 2. Decision Drivers
+
+- **Physical Ground Truth**: Cardboard edges fray and cast shadows, but printed ink and metric millimeters do not. Mating pieces must have continuous color across the seam and matching millimeter dimensions ($\pm 0.3\text{ mm}$).
+- **Zero Physical Labeling**: The user must be able to pull any random piece from the box and receive clear tabletop placement guidance.
+- **Robustness Over False Precision**: The system must never present a single high-confidence coordinate for a piece when the underlying computer vision only supports a regional probability distribution.
+- **Clean, Focused UI**: Eliminate clutter, debug controls, and accidental drag-placements.
+
+---
+
+### 3. Decisions & Implementation
+
+#### 3.1 Multimodal Perimeter Solver (Closed Set of 124 Border Pieces)
+- **Metric Dimension Filter**: Enforce calibrated millimeter tolerances ($\pm 0.3\text{ mm}$) on seam baseline length, tab width, and tab depth.
+- **Discrete Tab/Hole Polarity**: Reject any pair that does not satisfy complementary `Tab` $\leftrightarrow$ `Hole` orientation.
+- **Seam Ink Continuity (MGC)**: Measure color gradient continuity across the cut boundary ($\text{Cost}_{\text{MGC}}$) to eliminate die-cut twins from different quadrants.
+- **Mutual Best-Buddies Filtering**: Lock micro-clusters if and only if piece $A$'s #1 match is piece $B$ and piece $B$'s #1 match is piece $A$.
+- **Global $34 \times 26$ Ring Optimization**: Solve the closed loop enforcing exact piece counts (Top: 34, Right: 26, Bottom: 34, Left: 26 non-corner pieces) before performing a rigid affine alignment of the complete 124-piece rectangular frame to the master poster.
+
+#### 3.2 Inward Boundary Propagation & Pocket Filling for the Interior
+- Rather than pre-scanning all 884 interior pieces, support an **online, streaming draw**:
+  - Test dropped pieces against all currently exposed boundary seams on the board.
+  - Exploit 2-edge and 3-edge pockets (e.g., corner slots like `[1, 1]`) which provide 100% deterministic dual-seam mathematical locks.
+
+#### 3.3 Spatial Probability Density Heatmaps ($P(R, C \mid I)$)
+- For interior pieces that do not connect to the active boundary:
+  - Do not force a single coordinate. Compute a 2D probability distribution across the $28 \times 36$ grid.
+  - Render high-entropy pieces (text, faces, sharp edges) as distinct landmark island anchors.
+  - Render low-entropy pieces (sky, water) as soft regional heat glows on the board.
+  - When 2–3 pieces in an island zone snap together on the physical table, evaluate the connected cluster as a single multi-piece entity, multiplying spatial entropy and collapsing the diffuse heatmap into an exact coordinate.
+
+#### 3.4 UI & Canvas Ergonomics
+- **Pan vs. Click Isolation**: Apply a $>3\text{ px}$ mouse drag threshold on the board canvas to completely eliminate accidental piece placements during panning.
+- **Contour-Masked Piece Rendering**: Render only piece artwork with transparent backgrounds outside the contour, oriented upright to the grid without distortion, replacing raw camera thumbnails with CV markers.
+- **Calibration Consolidation**: Move Lens K1 distortion tuning into the full-screen camera calibration view, removing all lens sliders from the main workbench footer.
+- **Remove Mating Pair Verification**: Completely purge manual pair approval panels and provisional seam indicators from the user workflow.
+
+---
+
+### 4. Consequences
+
+#### Positive
+- **Physically Reliable Perimeter**: Eliminates false die twins and greedy loop failures by combining metric tolerances, seam color continuity, and global loop closure.
+- **Realistic Interior Workflow**: Eliminates the requirement to pre-scan 884 pieces while avoiding false-precision template matching.
+- **Natural Tabletop Interaction**: The user pulls random pieces from the box, and the system either snaps them to the boundary, places an island anchor, or highlights the approximate regional zone.
+- **Clean User Experience**: Removes UI clutter and prevents accidental board placements during navigation.
+
+#### Negative / Trade-offs
+- Computing MGC across candidate border seams requires color sampling along edge cuts in WASM, adding a lightweight pixel extraction step during border solving (~150ms for 124 pieces, acceptable for an offline solve).
+

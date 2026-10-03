@@ -1,148 +1,93 @@
-# Jigsaw Puzzle Solver: Complete Technical Roadmap
+# Jigsaw Puzzle Solver: Technical Roadmap
 
-This roadmap documents the end-to-end architecture, current completion status, and the sequential engineering milestones ahead for building a production-grade, zero-cloud-cost physical jigsaw puzzle solver using **Rust**, **WebAssembly (WASM)**, and **React/TypeScript**.
+This roadmap documents the system architecture, milestone status, and implementation phases for the physical jigsaw puzzle solver using **Rust**, **WebAssembly (WASM)**, and **React/TypeScript**.
 
-> 📖 **Architectural Whitepaper & Literature Analysis**: For deep mathematical formulations, the 4 literature principles (Goldberg, Pomeranz, Gallagher, Paikin, Harel), physical UX models (Mode A & Mode C), and color invariance theory, see **[ASSEMBLY_STRATEGY.md](file:///home/stbn/projects/jigsaw-puzzle-solver/docs/ASSEMBLY_STRATEGY.md)**.
-
----
-
-## 🏛️ System Architecture Overview
-
-```
-                      [ PHYSICAL WORLD ]
-            Phone / Webcam on Stand pointing at desk
-                               |
-                               v
-               [ PILLAR 1: CALIBRATION & OPTICS ]
-       • Industrial 100mm Target (Fiducial Bullseyes)
-       • 3x3 Projective Homography (DLT Matrix Inversion)
-       • Real-time Orthographic Dewarping & Metric Scale (px/mm)
-                               |
-                               v
-            [ PILLAR 3: GEOMETRIC CONTOUR EXTRACTION ]
-       • Adaptive Otsu Binarization + 3x3 Gaussian Blur
-       • Moore-Neighbor Radial Boundary Contour Tracing
-       • PCA Rotation Invariance & Curvature Extrema Corner Detection
-       • 4-Edge Classification (Tab, Hole, Flat) & Dimensions
-                               |
-                               v
-               [ DUAL-MODE PIECE MATCHER ENGINE ]
-                 /                           \
-                /                             \
-     [ Geometric Curve Mating ]      [ Visual Feature Matcher ]
-     • Dense Resampled Contours      • ORB / SIFT Keypoint Hashes
-     • Turn-Angle Cross-Correlation  • Master Poster Homography
-     • Male/Female Tab Tolerance     • Exact Continuous (x,y,θ)
-                \                             /
-                 \                           /
-                               v
-           [ PILLAR 4: PERSISTENT ASSEMBLY BOARD GRAPH ]
-       • 2D Grid Constraint Propagation (e.g. 42 x 24 Ravensburger)
-       • Solved Slot Elimination: O(N) -> O(1) Candidate Search
-       • Interactive Virtual Board & AR Placement Guidance
-                               |
-                               v
-              [ EXPORT, PERSISTENCE & COMMUNITY ]
-       • Local IndexedDB Session State
-       • Step-by-Step Assembly Walkthrough UI
-```
+For the foundational theory, physical constraints, and multimodal mathematics, see **[ASSEMBLY_STRATEGY.md](file:///home/stbn/projects/jigsaw-puzzle-solver/docs/ASSEMBLY_STRATEGY.md)**.
 
 ---
 
-## 🚦 Roadmap Milestones & Status
+## System Architecture
+
+```
+                       [ PHYSICAL WORLD ]
+             Overhead Camera pointing at staging mat
+                                |
+                                v
+                [ STAGE 0: CALIBRATION & OPTICS ]
+        • 100mm Target (Fiducial Corners C1–C4)
+        • Full-Screen Calibration Modal with Lens K1 Tuning
+        • Real-time Orthographic Dewarping & Metric Scale (96px = 25mm)
+                                |
+                                v
+             [ STAGE 1: GEOMETRIC CONTOUR & ARTWORK EXTRACTION ]
+        • Adaptive Otsu Binarization + Gaussian Smoothing
+        • Sub-pixel Corner Detection & 4-Edge Classification
+        • Contour Masking (Transparent Background) & Normalized Profiles
+        • Metric Edge Baseline & Tab/Hole Millimeter Sizing
+                                |
+                                v
+          [ STAGE 2: MULTIMODAL PERIMETER SOLVER (124 PIECES) ]
+        • Metric Dimension Pruning (±0.3mm baseline, tab width/depth)
+        • Discrete Tab/Hole Polarity Validation
+        • Seam Ink Continuity (Modified Gradient Compatibility - MGC)
+        • Mutual Best-Buddies Micro-Clustering
+        • Global Constrained Loop Optimization (34 × 26 × 34 × 26 pieces)
+        • Frame-to-Poster Rigid Alignment
+                                |
+                                v
+          [ STAGE 3: INWARD BOUNDARY STREAMING & HEATMAPS ]
+        • 1-Edge Boundary Extension across Exposed Border Seams
+        • 2-Edge & 3-Edge Pocket Filling (Deterministic Dual-Seam Locks)
+        • 28×36 Spatial Probability Density Heatmaps P(R, C | I)
+        • Island Cluster Assembly (Entropy Multiplication & Heatmap Collapse)
+                                |
+                                v
+                [ STAGE 4: CLEAN ASSEMBLY WORKBENCH ]
+        • Isolated Board Pan/Zoom (No Accidental Drag-Placements)
+        • Upright Cell Art Rendering without Mat Artifacts
+        • Zero-Tagging Human Tabletop Guidance
+```
+
+---
+
+## Milestone Status
 
 | Phase | Milestone | Tech Stack | Status |
 | :--- | :--- | :--- | :--- |
-| **Phase 0** | Clean Slate & Rust + React WASM Scaffolding | Cargo, Vite, wasm-pack | ✅ **DONE** |
-| **Phase 1** | Real-time Camera Feed & Sub-ms Frame Ingestion | WebRTC, Canvas, WASM Memory | ✅ **DONE** |
-| **Phase 2** | Pillar 1: Industrial Calibration Mat & 3x3 DLT Homography | Rust (`homography.rs`), Headless Chrome | ✅ **DONE** |
-| **Phase 3** | Calibration Mat v5.0: Zero-Bleed L-Crosshairs & Camera Pose HUD | Python (`generate_mat.py`), Canvas HUD | ✅ **DONE** |
-| **Phase 4** | Pillar 3: Scale-Invariant Contour & 4-Edge Corner Detection | Rust (`contour.rs`), 90/90 Ground Truth Fixtures | ✅ **DONE** |
-| **Phase 5** | Vision Polish: Zero-Lag Sampling & Instant Contour Trigger | Quadrant 85th Percentiles, Deadband Lock, 60ms Tick | ✅ **DONE** |
-| **Phase 6** | **Step 1: Master Poster Reference & Coordinate Grid Stage** | React Canvas Pan/Zoom, WASM Multi-Scale Pyramids, CLAHE | ✅ **DONE** |
-| **Phase 7** | **Step 2: Piece Inventory Management & Interactive Board UI** | IndexedDB / LocalStorage, Tray UI, Mode C Hole Targeting | 🟡 **CURRENT TASK** |
-| **Phase 8** | **Step 3: Edge Curve Signatures & Pairwise Mating Engine** | Rust (`matcher.rs`), Arc-length Turn-angles, $L_2$ Error | ⏳ Planned |
-| **Phase 9** | **Step 4: Hybrid Visual + Geometric Solver & AR Guidance** | Keypoint Hashes, Graph Search, PWA | ⏳ Planned |
+| **Phase 0** | Rust + React WASM Scaffolding | Cargo, Vite, wasm-pack | **DONE** |
+| **Phase 1** | Real-time Camera Feed & Frame Ingestion | WebRTC, Canvas, WASM Memory | **DONE** |
+| **Phase 2** | 100mm Calibration Mat & 3x3 Homography | Rust (`homography.rs`), Canvas | **DONE** |
+| **Phase 3** | Sub-pixel Contour Extraction & 4-Edge Classification | Rust (`contour.rs`), 90 Fixtures | **DONE** |
+| **Phase 4** | Zero-Lag Sampling & Audio Detection Chime | Web Audio API, Stability Consensus | **DONE** |
+| **Phase 5** | Reference Poster Ingestion & Metric Grid Setup | WASM Pyramids, CLAHE, CIELAB | **DONE** |
+| **Phase 6** | UI Ergonomics, Lens K1 & Canvas Interaction Polish | React Canvas, Full-Screen Modal | **CURRENT** |
+| **Phase 7** | Multimodal Perimeter Frame Solver | Rust (`matcher.rs`), MGC, Best-Buddies | **CURRENT** |
+| **Phase 8** | Inward Boundary Propagation & Pocket Filling | Rust WASM, Adjacency Graph | ⏳ Planned |
+| **Phase 9** | Spatial Probability Density Heatmaps & Island Clustering | WASM Heatmap Grid, Canvas Shading | ⏳ Planned |
 
 ---
 
-## 🔍 Detailed Breakdown of Phases & Current Milestones
+## Phase Details
 
-### Phase 5: Vision Polish & Zero-Lag Detection (Completed)
-* **Accomplishments**:
-  - **Quadrant Background Isolation**: Decomposed outer boundary sampling into 4 independent edge strips (Top, Bottom, Left, Right), taking the median clean 85th percentile so shadows from entering/exiting fingers never distort the arena background reference.
-  - **Perimeter Margin Intrusion Refinement**: Tuned connected outer intrusion check (>10% sample cutoff) eliminating false obstruction locks from minor corner vignetting or paper warping.
-  - **Instant Cadence**: Elevated WASM CV tick rate from 100ms to 60ms (~16.6 FPS) with a 2-frame (120ms) dropout tolerance, making contour overlay appearance instantaneous upon placing a piece.
-  - **Deterministic Regressions**: 100% passing across all ground-truth fixtures and wobble-budget tests.
+### Phase 6: UI Ergonomics, Lens K1 & Canvas Interaction Polish (Current)
+* **Lens K1 Consolidation**: Move the Lens K1 slider into the full-screen camera calibration modal alongside fiducial corner adjustments; eliminate the main screen footer controls.
+* **Canvas Pan vs. Click Isolation**: Enforce a drag-distance threshold ($>3\text{ px}$) on the board canvas to prevent accidental piece placement during viewport panning.
+* **Clean Piece Artwork Rendering**: Replace raw mat thumbnails with contour-masked piece artwork (transparent background, upright cardinal orientation, zero CV markers or green contour lines).
+* **Interface Decluttering**: Remove obsolete manual mating pair verification controls, candidate badge clutter, and redundant action buttons.
 
----
+### Phase 7: Multimodal Perimeter Frame Solver (Current)
+* **Metric Dimension Tolerances**: Reject candidate border seams whose baseline length, tab width, or tab depth differ by more than $\pm 0.3\text{ mm}$.
+* **Seam Ink Continuity (MGC)**: Measure color gradient continuity across candidate cut seams to eliminate identical die-cutter twins from different quadrants.
+* **Mutual Best-Buddies Graph**: Lock pairs into rigid micro-clusters if and only if both pieces rank each other as #1.
+* **Global $34 \times 26$ Loop Optimization**: Assemble micro-clusters into a closed ring satisfying exact side counts (Top: 34, Right: 26, Bottom: 34, Left: 26 non-corner pieces).
+* **Frame-to-Poster Rigid Alignment**: Anchor the assembled 124-piece rectangular frame to the master reference poster with zero coordinate ambiguity.
 
-### Phase 6: Step 1 — Master Poster Reference & Coordinate Grid Stage (Completed)
-* **Rationale**: Requires zero scanned pieces upfront. Establishes the ground-truth visual coordinate space, aspect ratio, and grid division ($C \times R$) against which pieces will be assembled.
-* **Accomplishments**:
-  - **WASM Poster Engine (`cv-engine/src/poster.rs`)**: RGBA buffer ingestion into Rust memory, multi-scale grayscale image pyramid generation via 2x2 anti-aliased box downsampling, tile-based CLAHE contrast equalization (glare/reflection elimination), and quantized 8-bin Sobel gradient orientation fields.
-  - **Color Invariance & Slot Crop (`get_slot_preview`)**: CIELAB D65 conversion separating luminance ($L^*$) from chrominance ($a^*, b^*$), and slot thumbnail extraction with color cue estimation for Mode C hole targeting.
-  - **Interactive Poster Canvas (`components/PosterCanvas.tsx`)**: Drag-and-drop / file upload, smooth panning & cursor-centered zoom canvas, HUD inspector for slot details, toggleable nominal grid and coordinates overlay, and tap-to-inspect slot preview cards.
-  - **Puzzle Metadata Pre-sets**: Pre-configured for user's 1008-piece puzzle (700x500 mm, 36x28 grid) with customizable piece counts, physical dimensions, and column/row controls.
-  - **Dedicated Unit Tests (`tests/test_poster.rs`)**: 8 passing unit tests verifying luminance conversion, pyramid downsampling stages, CLAHE equalization, Sobel orientation bins, CIELAB mapping, slot preview extraction, 1008-slot grid boundaries, and error handling.
+### Phase 8: Inward Boundary Propagation & Pocket Filling (Planned)
+* **Active Boundary Indexing**: Expose the 120 inward-facing seams of the locked border frame.
+* **1-Edge Boundary Snapping**: Test randomly drawn interior pieces against exposed boundary seams using metric tolerances + MGC seam ink continuity.
+* **Multi-Edge Pocket Locking**: Automatically detect 2-edge and 3-edge pockets (e.g. `[1, 1]`) and enforce simultaneous multi-seam constraints for 100% deterministic placement.
 
----
-
-### Phase 7: Step 2 — Piece Inventory Management & Interactive Board UI (Completed)
-* **Rationale**: Creates the critical **human-in-the-loop reactive harness** (Literature Principle 4). As pieces are scanned, they are indexed in an offline persistent tray. Tapping any board slot triggers Mode C targeted hole-filling previews using the poster's visual cues and filters the inventory.
-* **Accomplishments**:
-  - **Zero-Dependency IndexedDB Engine (`src/storage/db.ts`)**: Stores piece records (`StoredPiece`), thumbnail crops, sub-pixel corners, metric dimensions ($W \times H\text{ mm}$), cardinal edge classifications, placed board slot coordinates, and ground-truth pairing fixtures with full persistence across page refreshes.
-  - **Piece Tray Component (`src/components/PieceTray.tsx`)**: Responsive, interactive tray supporting search, category pills (All, Corners, Borders, Interior, Favorites), edge signature indicators (N/E/S/W tabs/holes/flats), favorite toggling, manual pair designation, and HTML5 drag-and-drop.
-  - **Mode C Slot Hole Targeting (`src/components/BoardView.tsx`)**: Zoomable/pannable 2D assembly grid canvas with real-time neighbor constraint resolution (N/E/S/W complementary requirements), dynamic slot inspection, artwork preview extraction via WASM `get_slot_preview`, mean RGB & color cues, and auto-filtering of the piece tray for compatible matching candidates.
-  - **Drag-and-Drop Placement & Board Control**: Drag pieces from tray directly into board slots, click placed pieces to rotate in 90° increments, or unplace pieces back into the tray.
-  - **Assembly Fixtures Export / Import**: One-click JSON export/import of verified assembly datasets and mating pairs (`assembly_pairs.json`) to serve as ground-truth test vectors for Phase 8.
-
----
-
-### Phase 8: Unified Tabletop Cockpit & Real-Time Poster Localization (Completed)
-* **Rationale**: Grounded in computer vision literature (*Bridger et al. CVPR 2020*, *Pomeranz et al. CVPR 2011*). Matching raw edge curves in isolation across 1,008 pieces produces combinatorial explosion ($>10^6$ combinations) and is impossible for a human to curate manually without placement cues. The solver first provides coarse visual spatial priors $(col, row, \theta)$ directly against the reference poster in real-time, within a single uninterrupted cockpit view.
-* **Accomplishments**:
-  - **WASM Real-Time Poster Localization Engine (`cv-engine/src/poster.rs`)**:
-    - Illumination-invariant visual fingerprinting combining CIELAB chromaticity $(a^*, b^*)$ + tile-based CLAHE + 8-bin Sobel gradient orientation fields.
-    - Multi-scale search across 4 cardinal rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) with rotation-invariant histogram shifting.
-    - WASM entry point `locate_piece_on_poster` running sub-50ms candidate ranking and confidence scoring.
-  - **In-Situ Camera HUD & 1-Click Fast Placement (`web-app/src/App.tsx`)**:
-    - Real-time augmented reality badge on live camera overlay: `🎯 POSTER: [Row r, Col c] (θ°) — Conf %`.
-    - Primary 1-click placement button `⚡ PLACE AT [Rr, Cc] [ENTER]` and hotkey listener (`[ENTER]`) saving pieces and placing directly without drag-and-drop.
-  - **Three-Tier Mating Pair Engine with Human-in-the-Loop Override (`src/storage/db.ts` & `src/components/BoardView.tsx`)**:
-    - Automated adjacency detection between adjacent board pieces with relative rotation seam mapping $(\text{side} - \text{rot} + 4) \pmod 4$.
-    - Provisional candidate state preventing corrupted ground-truth training vectors.
-    - Color-coded seam indicators on board canvas (🟡 provisional, 🟢 verified, 🔴 rejected).
-    - Inspector override panel with `[✓ CONFIRM]` and `[✕ REJECT]` controls.
-    - Clean filtered JSON exporter (`mating_pairs_dataset.json`) ready for Phase 9 curve validation.
-  - **Architecture Documentation Updated (`docs/ASSEMBLY_STRATEGY.md`)**:
-    - Added Section 6 covering the Physical Mating Pair Detection & Manual Verification Protocol.
-    - Added Section 7 documenting the Unified Tabletop Cockpit Operational Model.
-
----
-
-### Phase 9: Edge Curve Signatures & Pairwise Mating Engine
-* **Rationale**: Validated directly against physical paired pieces curated and exported during Phase 8 assembly.
-* **Key Tasks**:
-  1. **Arc-Length Normalized Edge Profiles (`cv-engine/src/matcher.rs`)**:
-     - Resample piece edge contours into fixed equidistant points ($N = 100$).
-     - Compute invariant intrinsic representations: turn-angle $\theta(s)$ or chord-relative curvature $\kappa(s)$ (*Wolfson et al. 1988*, *Harel & Ben-Shahar ECCV 2016*).
-  2. **Pairwise Compatibility Scoring**:
-     - Fast rejection filter: opposite edge types (Tab $\leftrightarrow$ Hole, Flat $\leftrightarrow$ Flat for outer frame), tab width/height bounding box consistency.
-     - Detailed curve match: Euclidean $L_2$ difference between male tab profile and inverted female hole profile across a sliding alignment window.
-  3. **Pairwise Test Suite**:
-     - Rust unit tests verifying curve mating against the exported Phase 8 ground-truth mating pairs.
-
----
-
-### Phase 10: Global Hybrid Solver, AR Guidance & PWA
-* **Objective**: Combine edge curves and artwork features into a single global solver, with AR table guidance and offline PWA support.
-* **Key Tasks**:
-  1. **Hybrid Constraint Propagation**:
-     - Combine **Visual Landmark Score** (from poster) + **Geometric Boundary Score** (from neighbor pieces) to solve slots with $O(1)$ candidate elimination.
-  2. **HUD Placement Assistant & AR Table Guidance**:
-     - "Next Best Piece to Find" recommendation mode (prioritizing high-contrast borders or unique colors).
-     - Augmented visual overlay showing where on the physical table to snap the scanned piece.
-  3. **Offline PWA & Session Persistence**:
-     - Service worker caching for 100% offline WASM execution.
-     - IndexedDB persistence to resume 1,000-piece puzzle progress across days/weeks.
+### Phase 9: Spatial Probability Density Heatmaps & Island Clustering (Planned)
+* **Spatial Probability Heatmap**: For pieces not connecting to the active boundary, compute the $28 \times 36$ probability distribution $P(R, C \mid I)$ across the grid and render a soft regional heat glow.
+* **High-Entropy Landmark Pinpointing**: Pieces with distinct high-contrast artwork anchor directly as island markers.
+* **Cluster Entropy Multiplication**: Snapping 2–3 pieces together in an island zone multiplies spatial entropy, collapsing diffuse regional heatmaps into exact, unique grid coordinates.

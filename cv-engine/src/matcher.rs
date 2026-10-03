@@ -819,11 +819,7 @@ pub fn solve_perimeter_1d_loop(
         [3,0,1,2], [3,0,2,1], [3,1,0,2], [3,1,2,0], [3,2,0,1], [3,2,1,0],
     ];
 
-    let dim_candidates = if rows != cols {
-        vec![(rows, cols), (cols, rows)]
-    } else {
-        vec![(rows, cols)]
-    };
+    let dim_candidates = vec![(rows, cols)];
 
     let corner_subsets: Vec<[&IndexedPieceData; 4]> = if corners.len() == 4 {
         vec![[corners[0], corners[1], corners[2], corners[3]]]
