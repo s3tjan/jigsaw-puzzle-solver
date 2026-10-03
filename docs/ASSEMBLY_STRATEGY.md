@@ -62,14 +62,15 @@ Instead of open-ended greedy chaining, the border solver filters candidate pairs
    - Extrapolate the color and gradient vector across the seam:
      $$\text{Cost}_{\text{MGC}}(u, v) = \sum_{k} \| \nabla I_u(k) - \nabla I_v(k) \|^2$$
    - Eliminates die-cut twins from other quadrants: a blue tab will never mate with a green hole, even if cut from the identical die.
-4. **Tier 3: Sub-pixel Interlocking Contour Analysis**:
-   - Compare complementary tongue-and-groove contour curves (normalized profile, neck width, ear roundness, and entry angle).
-   - In physical assembly, pieces can match in tab/hole polarity, baseline dimensions, and local ink colors, but physically collide if their mechanical contour curves deviate.
-   - Contour analysis serves as the final physical verification check along the seam before confirming a pairwise lock or falling back to poster comparison.
+4. **Tier 3: Identical Seam Contour Matching**:
+   - In physical die-cutting, two mating pieces share the exact same physical cut line.
+   - For two pieces to mate, their cut contour curves along the seam must be mathematically identical (traversed in reverse: $val_A(t) \equiv -val_B(1-t)$ along the normalized curve profile).
+   - In physical assembly, pieces frequently match in tab/hole polarity, baseline dimensions, and local ink colors, but physically collide because their contour curves along the cut are not the same.
+   - Sub-pixel contour curve comparison (verifying neck taper, head roundness, ear asymmetry, and insertion angles) serves as the definitive mechanical verification before confirming any candidate pair or falling back to the poster.
 5. **Tier 4: Mutual Best-Buddies Filtering**:
    - Piece $A$'s edge and Piece $B$'s edge are locked into a micro-cluster if and only if:
      $$\text{Rank}(A \to B) = 1 \quad \text{AND} \quad \text{Rank}(B \to A) = 1$$
-   - Evaluated across the combined metric, ink, and contour compatibility score to form rigid 2-piece and 3-piece border segments before global loop optimization runs.
+   - Evaluated across the combined metric, ink, and identical contour criteria to form rigid 2-piece and 3-piece border segments before global loop optimization runs.
 
 ### 3.2 Global Constrained Loop Optimization
 
