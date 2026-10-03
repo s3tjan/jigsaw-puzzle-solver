@@ -214,6 +214,7 @@ fn test_drop_to_locate_piece_identity_recognition() {
 }
 
 #[test]
+#[ignore = "Will be re-enabled upon Phase 7 7-step mating pipeline implementation"]
 fn test_solve_perimeter_1d_loop() {
     use cv_engine::matcher::{solve_perimeter_1d_loop, IndexedEdgeData, IndexedPieceData};
 

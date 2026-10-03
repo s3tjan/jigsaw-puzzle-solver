@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from '../storage/db'
+import type { StoredPiece, PlacedBoardSlot } from '../storage/db'
 import { get_slot_preview } from '../pkg/cv_engine'
 import './BoardView.css'
 
@@ -53,12 +53,10 @@ interface BoardViewProps {
   cols: number
   pieces: StoredPiece[]
   placedSlots: Record<string, PlacedBoardSlot>
-  pairedFixtures?: GroundTruthPairFixture[]
   onPlacePiece: (row: number, col: number, pieceId: string, rotation: number) => void
   onUnplacePiece: (row: number, col: number) => void
   selectedSlot: { row: number; col: number } | null
   onSelectSlot: (slot: { row: number; col: number } | null) => void
-  onUpdatePairStatus?: (pairId: string, status: 'verified' | 'rejected') => void
   posterRgba: Uint8Array | null
   posterWidth: number
   posterHeight: number
@@ -205,12 +203,10 @@ export const BoardView: React.FC<BoardViewProps> = ({
   cols,
   pieces,
   placedSlots,
-  pairedFixtures: _unusedPairedFixtures = [],
   onPlacePiece,
   onUnplacePiece,
   selectedSlot,
   onSelectSlot,
-  onUpdatePairStatus: _unusedOnUpdatePairStatus,
   posterRgba,
   posterWidth,
   posterHeight,

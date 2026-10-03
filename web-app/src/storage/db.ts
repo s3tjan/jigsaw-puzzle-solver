@@ -44,19 +44,6 @@ export interface PlacedBoardSlot {
   placed_at: number
 }
 
-export interface GroundTruthPairFixture {
-  id: string
-  piece_a_id: string
-  piece_a_edge_idx: number // 0: Top, 1: Right, 2: Bottom, 3: Left
-  piece_b_id: string
-  piece_b_edge_idx: number
-  status: 'provisional' | 'verified' | 'rejected'
-  confidence_score?: number
-  source?: 'auto_adjacent' | 'manual'
-  created_at: number
-  notes?: string
-}
-
 export interface BoardConfig {
   rows: number
   cols: number
@@ -261,408 +248,18 @@ export async function unplacePieceFromBoard(row: number, col: number): Promise<s
   })
 }
 
-// ----------------- Ground Truth Pairing Fixtures API -----------------
-
-export async function getAllPairedFixtures(): Promise<GroundTruthPairFixture[]> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('paired_fixtures', 'readonly')
-    const store = tx.objectStore('paired_fixtures')
-    const request = store.getAll()
-    request.onsuccess = () => resolve(request.result || [])
-    request.onerror = () => reject(request.error)
-  })
-}
-
-export async function savePairedFixture(fixture: GroundTruthPairFixture): Promise<void> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['paired_fixtures', 'pieces'], 'readwrite')
-    const fixStore = tx.objectStore('paired_fixtures')
-    const pieceStore = tx.objectStore('pieces')
-
-    fixStore.put(fixture)
-
-    // Mark both pieces as paired
-    const reqA = pieceStore.get(fixture.piece_a_id)
-    reqA.onsuccess = () => {
-      const pieceA = reqA.result as StoredPiece | undefined
-      if (pieceA) {
-        pieceA.paired_piece_id = fixture.piece_b_id
-        pieceStore.put(pieceA)
-      }
-    }
-
-    const reqB = pieceStore.get(fixture.piece_b_id)
-    reqB.onsuccess = () => {
-      const pieceB = reqB.result as StoredPiece | undefined
-      if (pieceB) {
-        pieceB.paired_piece_id = fixture.piece_a_id
-        pieceStore.put(pieceB)
-      }
-    }
-
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
-}
-
-export async function deletePairedFixture(id: string): Promise<void> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['paired_fixtures', 'pieces'], 'readwrite')
-    const fixStore = tx.objectStore('paired_fixtures')
-    const pieceStore = tx.objectStore('pieces')
-
-    const getReq = fixStore.get(id)
-    getReq.onsuccess = () => {
-      const fix = getReq.result as GroundTruthPairFixture | undefined
-      if (fix) {
-        fixStore.delete(id)
-        // Clear paired_piece_id on pieces if still linked
-        const reqA = pieceStore.get(fix.piece_a_id)
-        reqA.onsuccess = () => {
-          const p = reqA.result
-          if (p && p.paired_piece_id === fix.piece_b_id) {
-            p.paired_piece_id = null
-            pieceStore.put(p)
-          }
-        }
-        const reqB = pieceStore.get(fix.piece_b_id)
-        reqB.onsuccess = () => {
-          const p = reqB.result
-          if (p && p.paired_piece_id === fix.piece_a_id) {
-            p.paired_piece_id = null
-            pieceStore.put(p)
-          }
-        }
-      }
-    }
-
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
-}
-
-export async function updatePairedFixtureStatus(id: string, status: 'provisional' | 'verified' | 'rejected'): Promise<void> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['paired_fixtures'], 'readwrite')
-    const store = tx.objectStore('paired_fixtures')
-    const getReq = store.get(id)
-    getReq.onsuccess = () => {
-      const fix = getReq.result as GroundTruthPairFixture | undefined
-      if (fix) {
-        fix.status = status
-        store.put(fix)
-      }
-    }
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
-}
-
-/**
- * Automatically inspects the board slots and registers provisional mating pairs for adjacent placed pieces,
- * respecting user manual overrides (doesn't overwrite 'verified' or 'rejected').
- */
-export async function syncBoardMatingPairs(
-  rows: number,
-  cols: number,
-  placedSlots: Record<string, PlacedBoardSlot>,
-  pieces: StoredPiece[]
-): Promise<GroundTruthPairFixture[]> {
-  const pieceMap = new Map<string, StoredPiece>()
-  for (const p of pieces) {
-    pieceMap.set(p.id, p)
-  }
-
-  const existingPairs = await getAllPairedFixtures()
-  const pairMap = new Map<string, GroundTruthPairFixture>()
-  for (const p of existingPairs) {
-    const sortedKey = [p.piece_a_id, p.piece_b_id].sort().join(':')
-    pairMap.set(sortedKey, p)
-  }
-
-  const newOrUpdatedPairs: GroundTruthPairFixture[] = []
-
-  // Check East-West and North-South adjacencies
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const currSlot = placedSlots[`${r},${c}`]
-      if (!currSlot) continue
-      const currPiece = pieceMap.get(currSlot.piece_id)
-      if (!currPiece) continue
-
-      // 1. East neighbor check: [r, c] meets [r, c + 1]
-      if (c + 1 < cols) {
-        const eastSlot = placedSlots[`${r},${c + 1}`]
-        if (eastSlot) {
-          const eastPiece = pieceMap.get(eastSlot.piece_id)
-          if (eastPiece) {
-            // Under currSlot rotation, which edge points East (side 1)?
-            const currEdgeIdx = (1 - currSlot.rotation + 4) % 4
-            // Under eastSlot rotation, which edge points West (side 3)?
-            const eastEdgeIdx = (3 - eastSlot.rotation + 4) % 4
-
-            const pairKey = [currPiece.id, eastPiece.id].sort().join(':')
-            const existing = pairMap.get(pairKey)
-
-            if (!existing) {
-              const edgeA = currPiece.edges[currEdgeIdx]?.edge_type
-              const edgeB = eastPiece.edges[eastEdgeIdx]?.edge_type
-              const isComplementary = (edgeA === 'Tab' && edgeB === 'Hole') || (edgeA === 'Hole' && edgeB === 'Tab')
-
-              const newPair: GroundTruthPairFixture = {
-                id: `mate_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-                piece_a_id: currPiece.id,
-                piece_a_edge_idx: currEdgeIdx,
-                piece_b_id: eastPiece.id,
-                piece_b_edge_idx: eastEdgeIdx,
-                status: isComplementary ? 'provisional' : 'rejected',
-                confidence_score: isComplementary ? 0.9 : 0.2,
-                source: 'auto_adjacent',
-                created_at: Date.now(),
-                notes: `Adjacency [${r},${c}] East ↔ [${r},${c+1}] West`,
-              }
-              await savePairedFixture(newPair)
-              newOrUpdatedPairs.push(newPair)
-              pairMap.set(pairKey, newPair)
-            }
-          }
-        }
-      }
-
-      // 2. South neighbor check: [r, c] meets [r + 1, c]
-      if (r + 1 < rows) {
-        const southSlot = placedSlots[`${r + 1},${c}`]
-        if (southSlot) {
-          const southPiece = pieceMap.get(southSlot.piece_id)
-          if (southPiece) {
-            // Under currSlot rotation, which edge points South (side 2)?
-            const currEdgeIdx = (2 - currSlot.rotation + 4) % 4
-            // Under southSlot rotation, which edge points North (side 0)?
-            const southEdgeIdx = (0 - southSlot.rotation + 4) % 4
-
-            const pairKey = [currPiece.id, southPiece.id].sort().join(':')
-            const existing = pairMap.get(pairKey)
-
-            if (!existing) {
-              const edgeA = currPiece.edges[currEdgeIdx]?.edge_type
-              const edgeB = southPiece.edges[southEdgeIdx]?.edge_type
-              const isComplementary = (edgeA === 'Tab' && edgeB === 'Hole') || (edgeA === 'Hole' && edgeB === 'Tab')
-
-              const newPair: GroundTruthPairFixture = {
-                id: `mate_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-                piece_a_id: currPiece.id,
-                piece_a_edge_idx: currEdgeIdx,
-                piece_b_id: southPiece.id,
-                piece_b_edge_idx: southEdgeIdx,
-                status: isComplementary ? 'provisional' : 'rejected',
-                confidence_score: isComplementary ? 0.9 : 0.2,
-                source: 'auto_adjacent',
-                created_at: Date.now(),
-                notes: `Adjacency [${r},${c}] South ↔ [${r+1},${c}] North`,
-              }
-              await savePairedFixture(newPair)
-              newOrUpdatedPairs.push(newPair)
-              pairMap.set(pairKey, newPair)
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return getAllPairedFixtures()
-}
-
-/**
- * O(1) Localized Seam Synchronization:
- * Only inspects the 4 immediate cardinal neighbors of the newly placed slot [row, col].
- * Avoids scanning all 1,008 cells and executes in < 1ms.
- */
-export async function syncLocalMatingPairs(
-  row: number,
-  col: number,
-  rows: number,
-  cols: number,
-  placedSlots: Record<string, PlacedBoardSlot>,
-  pieces: StoredPiece[]
-): Promise<GroundTruthPairFixture[]> {
-  const currSlot = placedSlots[`${row},${col}`]
-  if (!currSlot) return []
-
-  const pieceMap = new Map<string, StoredPiece>()
-  for (const p of pieces) {
-    pieceMap.set(p.id, p)
-  }
-  const currPiece = pieceMap.get(currSlot.piece_id)
-  if (!currPiece) return []
-
-  const existingPairs = await getAllPairedFixtures()
-  const pairMap = new Map<string, GroundTruthPairFixture>()
-  for (const p of existingPairs) {
-    const sortedKey = [p.piece_a_id, p.piece_b_id].sort().join(':')
-    pairMap.set(sortedKey, p)
-  }
-
-  const newOrUpdatedPairs: GroundTruthPairFixture[] = []
-
-  // Check 4 cardinal neighbors:
-  // 1. East: [row, col + 1] (our side 1 meets their side 3)
-  if (col + 1 < cols) {
-    const neighborSlot = placedSlots[`${row},${col + 1}`]
-    if (neighborSlot) {
-      const neighborPiece = pieceMap.get(neighborSlot.piece_id)
-      if (neighborPiece) {
-        const pairKey = [currPiece.id, neighborPiece.id].sort().join(':')
-        if (!pairMap.has(pairKey)) {
-          const currEdgeIdx = (1 - currSlot.rotation + 4) % 4
-          const neighborEdgeIdx = (3 - neighborSlot.rotation + 4) % 4
-          const edgeA = currPiece.edges[currEdgeIdx]?.edge_type
-          const edgeB = neighborPiece.edges[neighborEdgeIdx]?.edge_type
-          const isComplementary = (edgeA === 'Tab' && edgeB === 'Hole') || (edgeA === 'Hole' && edgeB === 'Tab')
-
-          const newPair: GroundTruthPairFixture = {
-            id: `mate_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-            piece_a_id: currPiece.id,
-            piece_a_edge_idx: currEdgeIdx,
-            piece_b_id: neighborPiece.id,
-            piece_b_edge_idx: neighborEdgeIdx,
-            status: isComplementary ? 'provisional' : 'rejected',
-            confidence_score: isComplementary ? 0.9 : 0.2,
-            source: 'auto_adjacent',
-            created_at: Date.now(),
-            notes: `Adjacency [${row},${col}] East ↔ [${row},${col+1}] West`,
-          }
-          await savePairedFixture(newPair)
-          newOrUpdatedPairs.push(newPair)
-          pairMap.set(pairKey, newPair)
-        }
-      }
-    }
-  }
-
-  // 2. West: [row, col - 1] (our side 3 meets their side 1)
-  if (col > 0) {
-    const neighborSlot = placedSlots[`${row},${col - 1}`]
-    if (neighborSlot) {
-      const neighborPiece = pieceMap.get(neighborSlot.piece_id)
-      if (neighborPiece) {
-        const pairKey = [currPiece.id, neighborPiece.id].sort().join(':')
-        if (!pairMap.has(pairKey)) {
-          const currEdgeIdx = (3 - currSlot.rotation + 4) % 4
-          const neighborEdgeIdx = (1 - neighborSlot.rotation + 4) % 4
-          const edgeA = currPiece.edges[currEdgeIdx]?.edge_type
-          const edgeB = neighborPiece.edges[neighborEdgeIdx]?.edge_type
-          const isComplementary = (edgeA === 'Tab' && edgeB === 'Hole') || (edgeA === 'Hole' && edgeB === 'Tab')
-
-          const newPair: GroundTruthPairFixture = {
-            id: `mate_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-            piece_a_id: currPiece.id,
-            piece_a_edge_idx: currEdgeIdx,
-            piece_b_id: neighborPiece.id,
-            piece_b_edge_idx: neighborEdgeIdx,
-            status: isComplementary ? 'provisional' : 'rejected',
-            confidence_score: isComplementary ? 0.9 : 0.2,
-            source: 'auto_adjacent',
-            created_at: Date.now(),
-            notes: `Adjacency [${row},${col}] West ↔ [${row},${col-1}] East`,
-          }
-          await savePairedFixture(newPair)
-          newOrUpdatedPairs.push(newPair)
-          pairMap.set(pairKey, newPair)
-        }
-      }
-    }
-  }
-
-  // 3. South: [row + 1, col] (our side 2 meets their side 0)
-  if (row + 1 < rows) {
-    const neighborSlot = placedSlots[`${row + 1},${col}`]
-    if (neighborSlot) {
-      const neighborPiece = pieceMap.get(neighborSlot.piece_id)
-      if (neighborPiece) {
-        const pairKey = [currPiece.id, neighborPiece.id].sort().join(':')
-        if (!pairMap.has(pairKey)) {
-          const currEdgeIdx = (2 - currSlot.rotation + 4) % 4
-          const neighborEdgeIdx = (0 - neighborSlot.rotation + 4) % 4
-          const edgeA = currPiece.edges[currEdgeIdx]?.edge_type
-          const edgeB = neighborPiece.edges[neighborEdgeIdx]?.edge_type
-          const isComplementary = (edgeA === 'Tab' && edgeB === 'Hole') || (edgeA === 'Hole' && edgeB === 'Tab')
-
-          const newPair: GroundTruthPairFixture = {
-            id: `mate_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-            piece_a_id: currPiece.id,
-            piece_a_edge_idx: currEdgeIdx,
-            piece_b_id: neighborPiece.id,
-            piece_b_edge_idx: neighborEdgeIdx,
-            status: isComplementary ? 'provisional' : 'rejected',
-            confidence_score: isComplementary ? 0.9 : 0.2,
-            source: 'auto_adjacent',
-            created_at: Date.now(),
-            notes: `Adjacency [${row},${col}] South ↔ [${row+1},${col}] North`,
-          }
-          await savePairedFixture(newPair)
-          newOrUpdatedPairs.push(newPair)
-          pairMap.set(pairKey, newPair)
-        }
-      }
-    }
-  }
-
-  // 4. North: [row - 1, col] (our side 0 meets their side 2)
-  if (row > 0) {
-    const neighborSlot = placedSlots[`${row - 1},${col}`]
-    if (neighborSlot) {
-      const neighborPiece = pieceMap.get(neighborSlot.piece_id)
-      if (neighborPiece) {
-        const pairKey = [currPiece.id, neighborPiece.id].sort().join(':')
-        if (!pairMap.has(pairKey)) {
-          const currEdgeIdx = (0 - currSlot.rotation + 4) % 4
-          const neighborEdgeIdx = (2 - neighborSlot.rotation + 4) % 4
-          const edgeA = currPiece.edges[currEdgeIdx]?.edge_type
-          const edgeB = neighborPiece.edges[neighborEdgeIdx]?.edge_type
-          const isComplementary = (edgeA === 'Tab' && edgeB === 'Hole') || (edgeA === 'Hole' && edgeB === 'Tab')
-
-          const newPair: GroundTruthPairFixture = {
-            id: `mate_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-            piece_a_id: currPiece.id,
-            piece_a_edge_idx: currEdgeIdx,
-            piece_b_id: neighborPiece.id,
-            piece_b_edge_idx: neighborEdgeIdx,
-            status: isComplementary ? 'provisional' : 'rejected',
-            confidence_score: isComplementary ? 0.9 : 0.2,
-            source: 'auto_adjacent',
-            created_at: Date.now(),
-            notes: `Adjacency [${row},${col}] North ↔ [${row-1},${col}] South`,
-          }
-          await savePairedFixture(newPair)
-          newOrUpdatedPairs.push(newPair)
-          pairMap.set(pairKey, newPair)
-        }
-      }
-    }
-  }
-
-  return newOrUpdatedPairs
-}
-
 export interface AssemblyExportBundle {
   version: string
   exported_at: string
   board_config?: BoardConfig
   pieces: StoredPiece[]
   placed_slots: Record<string, PlacedBoardSlot>
-  paired_fixtures: GroundTruthPairFixture[]
 }
 
 export async function exportAssemblyDataset(boardConfig?: BoardConfig): Promise<AssemblyExportBundle> {
-  const [pieces, placed_slots, paired_fixtures] = await Promise.all([
+  const [pieces, placed_slots] = await Promise.all([
     getAllPieces(),
     getAllPlacedSlots(),
-    getAllPairedFixtures(),
   ])
 
   return {
@@ -671,21 +268,18 @@ export async function exportAssemblyDataset(boardConfig?: BoardConfig): Promise<
     board_config: boardConfig,
     pieces,
     placed_slots,
-    paired_fixtures,
   }
 }
 
 export async function importAssemblyDataset(bundle: AssemblyExportBundle): Promise<void> {
   const db = await openDB()
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(['pieces', 'board_slots', 'paired_fixtures'], 'readwrite')
+    const tx = db.transaction(['pieces', 'board_slots'], 'readwrite')
     const pieceStore = tx.objectStore('pieces')
     const slotStore = tx.objectStore('board_slots')
-    const pairStore = tx.objectStore('paired_fixtures')
 
     pieceStore.clear()
     slotStore.clear()
-    pairStore.clear()
 
     for (const p of bundle.pieces || []) {
       pieceStore.put(p)
@@ -693,10 +287,6 @@ export async function importAssemblyDataset(bundle: AssemblyExportBundle): Promi
 
     for (const [key, slot] of Object.entries(bundle.placed_slots || {})) {
       slotStore.put({ ...slot, slot_key: key })
-    }
-
-    for (const fix of bundle.paired_fixtures || []) {
-      pairStore.put(fix)
     }
 
     tx.oncomplete = () => resolve()
