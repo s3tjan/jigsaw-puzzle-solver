@@ -13,7 +13,7 @@ import init, {
 import { BoardView } from './components/BoardView'
 import type { CandidateMatchOverlay } from './components/BoardView'
 import { PieceTray } from './components/PieceTray'
-import type { StoredPiece, PlacedBoardSlot, GroundTruthPairFixture } from './storage/db'
+import type { StoredPiece, PlacedBoardSlot } from './storage/db'
 import {
   getAllPieces,
   savePiece,
@@ -24,9 +24,6 @@ import {
   unplacePieceFromBoard,
   exportAssemblyDataset,
   importAssemblyDataset,
-  getAllPairedFixtures,
-  updatePairedFixtureStatus,
-  syncLocalMatingPairs,
 } from './storage/db'
 import './App.css'
 
@@ -110,13 +107,67 @@ export function getOrComputeNormalizedProfile(edge: any): number[] {
   return normProfile
 }
 
+export function createCleanPieceThumbnail(
+  dewarpedBytes: Uint8Array | null,
+  piece: ScannedPiece
+): string {
+  if (!dewarpedBytes || dewarpedBytes.length < 384 * 384 * 4) {
+    return ''
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = 384
+  canvas.height = 384
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+
+  const imgData = ctx.createImageData(384, 384)
+  imgData.data.set(dewarpedBytes)
+  ctx.putImageData(imgData, 0, 0)
+
+  const maskedCanvas = document.createElement('canvas')
+  maskedCanvas.width = 384
+  maskedCanvas.height = 384
+  const mCtx = maskedCanvas.getContext('2d')
+  if (!mCtx) return canvas.toDataURL('image/png')
+
+  let contour: Point2D[] = []
+  if (piece.contour_points && piece.contour_points.length >= 3) {
+    contour = piece.contour_points
+  } else if (piece.edges && piece.edges.length === 4) {
+    for (const edge of piece.edges) {
+      if (edge.curve_samples && edge.curve_samples.length > 0) {
+        for (const s of edge.curve_samples) {
+          contour.push(s)
+        }
+      } else {
+        contour.push(edge.start_corner)
+        contour.push(edge.end_corner)
+      }
+    }
+  } else if (piece.corners && piece.corners.length === 4) {
+    contour = [...piece.corners]
+  }
+
+  if (contour.length >= 3) {
+    mCtx.beginPath()
+    mCtx.moveTo(contour[0].x, contour[0].y)
+    for (let i = 1; i < contour.length; i++) {
+      mCtx.lineTo(contour[i].x, contour[i].y)
+    }
+    mCtx.closePath()
+    mCtx.clip()
+  }
+
+  mCtx.drawImage(canvas, 0, 0)
+  return maskedCanvas.toDataURL('image/png')
+}
+
 export default function App() {
   const [wasmReady, setWasmReady] = useState(false)
   const [isCameraActive, setIsCameraActive] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [focusScore, setFocusScore] = useState<number>(0)
   const [detectedPiece, setDetectedPiece] = useState<ScannedPiece | null>(null)
-  const [scannedPieces, setScannedPieces] = useState<ScannedPiece[]>([])
 
   // Phase 7: Persistent Inventory & Board State
   const [storedPieces, setStoredPieces] = useState<StoredPiece[]>([])
@@ -146,7 +197,6 @@ export default function App() {
   })
 
   // Phase 8: Unified Cockpit & Real-Time Poster Localization State
-  const [pairedFixtures, setPairedFixtures] = useState<GroundTruthPairFixture[]>([])
   const [activePosterMatch, setActivePosterMatch] = useState<{
     best_col: number
     best_row: number
@@ -194,14 +244,12 @@ export default function App() {
   // Load persistent pieces and board state from IndexedDB on startup
   const refreshStorage = useCallback(async () => {
     try {
-      const [allPieces, allSlots, allFixtures] = await Promise.all([
+      const [allPieces, allSlots] = await Promise.all([
         getAllPieces(),
         getAllPlacedSlots(),
-        getAllPairedFixtures(),
       ])
       setStoredPieces(allPieces)
       setPlacedSlots(allSlots)
-      setPairedFixtures(allFixtures)
 
       // Auto-backfill normalized_profile for existing pieces that were recorded without it
       const missingProfiles = allPieces.filter(
@@ -1496,10 +1544,13 @@ export default function App() {
     playSaveSound()
     const nextPieceNum = storedPieces.length + 1
 
-    // Generate clean thumbnail crop from rectified pieceCanvas or latestDewarpedRef
+    // Generate clean transparent contour-masked artwork thumbnail from rectified arena
     let thumbUrl = ''
-    if (pieceCanvasRef.current) {
-      thumbUrl = pieceCanvasRef.current.toDataURL('image/jpeg', 0.88)
+    if (latestDewarpedRef.current && targetPiece) {
+      thumbUrl = createCleanPieceThumbnail(latestDewarpedRef.current, targetPiece)
+    }
+    if (!thumbUrl && pieceCanvasRef.current) {
+      thumbUrl = pieceCanvasRef.current.toDataURL('image/png')
     }
 
     const flatCount = targetPiece.edges.filter((e) => e.edge_type === 'Flat').length
@@ -1554,7 +1605,6 @@ export default function App() {
 
     // Optimistically update React state immediately
     setStoredPieces((prev) => [stored, ...prev])
-    setScannedPieces((prev) => [targetPiece, ...prev])
     setSaveFeedback(`SAVED #${nextPieceNum} (${classification.toUpperCase()})`)
     setTimeout(() => setSaveFeedback(null), 1200)
 
@@ -1620,8 +1670,6 @@ export default function App() {
       localStorage.removeItem('jigsaw_phys_h')
       setStoredPieces([])
       setPlacedSlots({})
-      setPairedFixtures([])
-      setScannedPieces([])
       setDetectedPiece(null)
       setActivePosterMatch(null)
       setSelectedBoardSlot(null)
@@ -1655,20 +1703,8 @@ export default function App() {
     // Optimistic UI state update
     setPlacedSlots(updatedPlacedSlots)
 
-    // Background asynchronous persistence and localized O(1) seam sync
+    // Background asynchronous persistence
     placePieceOnBoard(row, col, pieceId, rotation).catch(err => console.error('Failed to place piece:', err))
-    syncLocalMatingPairs(row, col, posterDims.rows, posterDims.cols, updatedPlacedSlots, storedPieces)
-      .then(newPairs => {
-        if (newPairs.length > 0) {
-          setPairedFixtures(prev => [...prev, ...newPairs])
-        }
-      })
-      .catch(err => console.error('Failed to sync local mating pairs:', err))
-  }
-
-  const handleUpdatePairStatus = async (pairId: string, status: 'verified' | 'rejected') => {
-    await updatePairedFixtureStatus(pairId, status)
-    await refreshStorage()
   }
 
   // Phase 9: 1D Closed Perimeter Loop Solver
@@ -1878,8 +1914,11 @@ export default function App() {
       const targetPiece = detectedPiece || lastValidPieceRef.current?.piece
       if (targetPiece) {
         let thumbUrl = ''
-        if (pieceCanvasRef.current) {
-          thumbUrl = pieceCanvasRef.current.toDataURL('image/jpeg', 0.88)
+        if (latestDewarpedRef.current && targetPiece) {
+          thumbUrl = createCleanPieceThumbnail(latestDewarpedRef.current, targetPiece)
+        }
+        if (!thumbUrl && pieceCanvasRef.current) {
+          thumbUrl = pieceCanvasRef.current.toDataURL('image/png')
         }
         const flatCount = targetPiece.edges.filter((e) => e.edge_type === 'Flat').length
         const tabCount = targetPiece.edges.filter((e) => e.edge_type === 'Tab').length
@@ -1964,8 +2003,11 @@ export default function App() {
     if (!pieceToPlace) return
 
     let thumbUrl = ''
-    if (pieceCanvasRef.current) {
-      thumbUrl = pieceCanvasRef.current.toDataURL('image/jpeg', 0.88)
+    if (latestDewarpedRef.current && pieceToPlace) {
+      thumbUrl = createCleanPieceThumbnail(latestDewarpedRef.current, pieceToPlace)
+    }
+    if (!thumbUrl && pieceCanvasRef.current) {
+      thumbUrl = pieceCanvasRef.current.toDataURL('image/png')
     }
 
     const flatCount = pieceToPlace.edges.filter((e) => e.edge_type === 'Flat').length
@@ -2044,16 +2086,9 @@ export default function App() {
     setActivePosterMatch(null)
     recentMatchesRef.current = []
 
-    // Non-blocking background save & local neighbor sync:
+    // Non-blocking background save:
     savePiece(stored).catch(e => console.error('Background savePiece error:', e))
     placePieceOnBoard(targetRow, targetCol, pieceId, rotIdx).catch(e => console.error('Background placePiece error:', e))
-    syncLocalMatingPairs(targetRow, targetCol, posterDims.rows, posterDims.cols, updatedPlacedSlots, [stored, ...storedPieces])
-      .then(newPairs => {
-        if (newPairs.length > 0) {
-          setPairedFixtures(prev => [...prev, ...newPairs])
-        }
-      })
-      .catch(e => console.error('Background syncLocalMatingPairs error:', e))
   }
 
   const handlePlaceDetectedCandidate = async () => {
@@ -2077,30 +2112,20 @@ export default function App() {
   }
 
 
-  // Export / Import fixtures (with Phase 8 ground-truth mating pair filtering)
+  // Export / Import fixtures and board dataset
   const handleExportFixtures = async () => {
-    const onlyVerified = window.confirm(
-      'Export verified ground-truth mating pairs only?\n\n' +
-      '[OK] = Export only human-verified pairs (recommended for Phase 9 test suite)\n' +
-      '[Cancel] = Include provisional auto-detected pairs'
-    )
-
     const bundle = await exportAssemblyDataset({
       rows: posterDims.rows,
       cols: posterDims.cols,
-      physical_width_mm: 700,
-      physical_height_mm: 500,
+      physical_width_mm: physDims.wMm || 700,
+      physical_height_mm: physDims.hMm || 500,
     })
-
-    if (onlyVerified) {
-      bundle.paired_fixtures = bundle.paired_fixtures.filter(f => f.status === 'verified')
-    }
 
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `mating_pairs_dataset_${Date.now()}.json`
+    a.download = `assembly_dataset_${Date.now()}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -2352,17 +2377,19 @@ export default function App() {
         {isCalibratingFullScreen && (
           <div
             style={{
-              padding: '10px 16px',
+              padding: '8px 16px',
               background: '#161b22',
               borderBottom: '1px solid #30363d',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 12,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: '#f0f6fc' }}>
-                CAMERA CALIBRATION
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#f0f6fc', letterSpacing: 0.5 }}>
+                CAMERA CALIBRATION & OPTICS
               </span>
               <span style={{ fontSize: 12, color: '#8b949e' }}>
                 FOCUS: <b style={{ color: focusScore >= 40 ? '#3fb950' : focusScore >= 20 ? '#d29922' : '#f85149' }}>{focusScore.toFixed(0)}%</b>
@@ -2372,7 +2399,7 @@ export default function App() {
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               {isCameraActive ? (
                 <button className="btn small" onClick={stopCamera}>STOP CAMERA</button>
               ) : (
@@ -2388,9 +2415,51 @@ export default function App() {
               <button className="btn small" onClick={handleSnapAll} title="Snap fiducial corners to nearest target">
                 SNAP CORNERS
               </button>
+
+              {/* Lens K1 Distortion Slider */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#21262d', padding: '3px 8px', borderRadius: 4, border: '1px solid #30363d' }}>
+                <label style={{ fontSize: 10, fontWeight: 700, color: '#8b949e' }}>LENS K1:</label>
+                <input
+                  type="range"
+                  min="-0.30"
+                  max="0.30"
+                  step="0.01"
+                  value={lensDistortion}
+                  onChange={(e) => setLensDistortion(parseFloat(e.target.value))}
+                  style={{ width: 75, accentColor: '#00e5ff' }}
+                />
+                <code style={{ fontSize: 11, color: '#ffd33d', minWidth: 32, textAlign: 'right' }}>{lensDistortion.toFixed(2)}</code>
+                <button className="btn tiny" onClick={() => setLensDistortion(0)} title="Reset lens distortion to 0">RESET</button>
+              </div>
+
+              {/* Sensitivity Slider */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#21262d', padding: '3px 8px', borderRadius: 4, border: '1px solid #30363d' }}>
+                <label style={{ fontSize: 10, fontWeight: 700, color: '#8b949e' }}>SENSITIVITY:</label>
+                <input
+                  type="range"
+                  min="10"
+                  max="60"
+                  step="1"
+                  value={sensitivity}
+                  onChange={(e) => setSensitivity(parseFloat(e.target.value))}
+                  style={{ width: 60, accentColor: '#00e5ff' }}
+                />
+                <code style={{ fontSize: 11, color: '#ffd33d', minWidth: 20, textAlign: 'right' }}>{sensitivity.toFixed(0)}</code>
+              </div>
+
+              <a
+                href="/calibration_mat.svg"
+                download="staging_mat_100mm.svg"
+                className="btn small"
+                style={{ textDecoration: 'none', background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}
+                title="Download 100mm Target Mat SVG"
+              >
+                MAT SVG
+              </a>
+
               <button
                 className="btn small primary"
-                style={{ background: '#238636', borderColor: '#2ea043', fontWeight: 700, padding: '6px 14px' }}
+                style={{ background: '#238636', borderColor: '#2ea043', fontWeight: 700, padding: '5px 14px' }}
                 onClick={() => setIsCalibratingFullScreen(false)}
               >
                 DONE
@@ -2794,7 +2863,6 @@ export default function App() {
               cols={posterDims.cols > 0 ? posterDims.cols : 36}
               pieces={storedPieces}
               placedSlots={placedSlots}
-              pairedFixtures={pairedFixtures}
               onPlacePiece={handlePlacePiece}
               onUnplacePiece={handleUnplacePiece}
               selectedSlot={selectedBoardSlot}
@@ -2802,7 +2870,6 @@ export default function App() {
               onSlotClick={handleSlotClick}
               onRotatePerimeter={handleRotatePerimeter}
               onRotatePoster={handleRotatePoster}
-              onUpdatePairStatus={handleUpdatePairStatus}
               posterRgba={posterRgba}
               posterWidth={posterDims.w}
               posterHeight={posterDims.h}
@@ -2902,57 +2969,6 @@ export default function App() {
           />
         </main>
       )}
-
-      {/* 3. Bottom Controls & Scanned Piece History */}
-      <footer className="app-footer">
-        <div className="controls-row">
-          <div className="control-group">
-            <label>SENSITIVITY:</label>
-            <input
-              type="range"
-              min="10"
-              max="60"
-              step="1"
-              value={sensitivity}
-              onChange={(e) => setSensitivity(parseFloat(e.target.value))}
-            />
-            <code>{sensitivity.toFixed(0)}</code>
-          </div>
-
-          <div className="control-group">
-            <label>LENS K1:</label>
-            <input
-              type="range"
-              min="-0.30"
-              max="0.30"
-              step="0.01"
-              value={lensDistortion}
-              onChange={(e) => setLensDistortion(parseFloat(e.target.value))}
-            />
-            <code>{lensDistortion.toFixed(2)}</code>
-            <button className="btn tiny" onClick={() => setLensDistortion(0)}>RESET</button>
-          </div>
-
-          <a href="/calibration_mat.svg" download="staging_mat_100mm.svg" className="btn small">
-            DOWNLOAD MAT SVG
-          </a>
-        </div>
-
-        {/* History Strip */}
-        {scannedPieces.length > 0 && (
-          <div className="history-strip">
-            <span className="history-label">SCANNED ({scannedPieces.length}):</span>
-            <div className="history-items">
-              {scannedPieces.map((p, idx) => (
-                <span key={idx} className={`history-pill ${p.is_corner ? 'red' : p.is_border ? 'yellow' : 'green'}`}>
-                  #{scannedPieces.length - idx} {p.is_corner ? 'CORNER' : p.is_border ? 'BORDER' : 'INNER'}
-                </span>
-              ))}
-            </div>
-            <button className="btn tiny" onClick={() => setScannedPieces([])}>CLEAR</button>
-          </div>
-        )}
-      </footer>
 
       {/* Piece Detailed Inspection Modal */}
       {inspectedPiece && (

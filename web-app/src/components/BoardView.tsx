@@ -91,17 +91,126 @@ export interface CandidateMatchOverlay {
   rank: number
 }
 
+/**
+ * Creates an offscreen canvas rendering upright, contour-masked piece artwork.
+ * 1. Clips strictly inside piece contour path (transparent background outside piece).
+ * 2. Rotates piece by -theta so nominal North edge (Edge 0) points straight up.
+ * 3. Tightly crops to the rotated bounding box.
+ */
+export function createMaskedPieceCanvas(
+  img: HTMLImageElement,
+  piece: StoredPiece
+): HTMLCanvasElement | null {
+  const contour: { x: number; y: number }[] = []
+  if (piece.edges && Array.isArray(piece.edges) && piece.edges.length === 4) {
+    for (let e = 0; e < 4; e++) {
+      const edge = piece.edges[e]
+      if (edge.curve_samples && edge.curve_samples.length > 0) {
+        for (const pt of edge.curve_samples) {
+          contour.push({ x: pt.x, y: pt.y })
+        }
+      } else if (edge.start_corner) {
+        contour.push({ x: edge.start_corner.x, y: edge.start_corner.y })
+      }
+    }
+  } else if (piece.corners && piece.corners.length === 4) {
+    for (const c of piece.corners) {
+      contour.push({ x: c.x, y: c.y })
+    }
+  }
+
+  // Calculate center of piece in stage coords
+  let cx = 192
+  let cy = 192
+  if (piece.corners && piece.corners.length === 4) {
+    cx = (piece.corners[0].x + piece.corners[1].x + piece.corners[2].x + piece.corners[3].x) / 4
+    cy = (piece.corners[0].y + piece.corners[1].y + piece.corners[2].y + piece.corners[3].y) / 4
+  } else if (contour.length > 0) {
+    cx = contour.reduce((sum, p) => sum + p.x, 0) / contour.length
+    cy = contour.reduce((sum, p) => sum + p.y, 0) / contour.length
+  }
+
+  // Nominal North edge angle (Edge 0 from Corner 0 to Corner 1)
+  let theta = 0
+  if (piece.corners && piece.corners.length === 4) {
+    const dx = piece.corners[1].x - piece.corners[0].x
+    const dy = piece.corners[1].y - piece.corners[0].y
+    theta = Math.atan2(dy, dx)
+  }
+
+  const cosT = Math.cos(-theta)
+  const sinT = Math.sin(-theta)
+
+  // Rotate contour points by -theta around (cx, cy) to compute upright bounding box
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+
+  const rotatedContour = contour.length > 0 ? contour.map((pt) => {
+    const dx = pt.x - cx
+    const dy = pt.y - cy
+    const rx = dx * cosT - dy * sinT
+    const ry = dx * sinT + dy * cosT
+    minX = Math.min(minX, rx)
+    maxX = Math.max(maxX, rx)
+    minY = Math.min(minY, ry)
+    maxY = Math.max(maxY, ry)
+    return { x: rx, y: ry }
+  }) : []
+
+  if (!isFinite(minX) || !isFinite(maxX) || maxX <= minX) {
+    minX = -60
+    maxX = 60
+    minY = -60
+    maxY = 60
+  }
+
+  const pad = 2
+  const cropW = Math.ceil(maxX - minX + pad * 2)
+  const cropH = Math.ceil(maxY - minY + pad * 2)
+  if (cropW <= 0 || cropH <= 0) return null
+
+  const canvas = document.createElement('canvas')
+  canvas.width = cropW
+  canvas.height = cropH
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  ctx.save()
+  // Translate coordinate origin so (minX - pad, minY - pad) is at (0, 0)
+  ctx.translate(-minX + pad, -minY + pad)
+
+  if (rotatedContour.length >= 3) {
+    ctx.beginPath()
+    ctx.moveTo(rotatedContour[0].x, rotatedContour[0].y)
+    for (let i = 1; i < rotatedContour.length; i++) {
+      ctx.lineTo(rotatedContour[i].x, rotatedContour[i].y)
+    }
+    ctx.closePath()
+    ctx.clip()
+  }
+
+  // Draw image rotated by -theta around (cx, cy)
+  ctx.rotate(-theta)
+  ctx.translate(-cx, -cy)
+  ctx.drawImage(img, 0, 0, 384, 384)
+  ctx.restore()
+
+  return canvas
+}
+
 export const BoardView: React.FC<BoardViewProps> = ({
   rows,
   cols,
   pieces,
   placedSlots,
-  pairedFixtures = [],
+  pairedFixtures: _unusedPairedFixtures = [],
   onPlacePiece,
   onUnplacePiece,
   selectedSlot,
   onSelectSlot,
-  onUpdatePairStatus,
+  onUpdatePairStatus: _unusedOnUpdatePairStatus,
   posterRgba,
   posterWidth,
   posterHeight,
@@ -134,6 +243,8 @@ export const BoardView: React.FC<BoardViewProps> = ({
   const [zoom, setZoom] = useState<number>(1.0)
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 40, y: 40 })
   const isDraggingRef = useRef<boolean>(false)
+  const dragStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const hasDraggedRef = useRef<boolean>(false)
   const lastMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const [hoverSlot, setHoverSlot] = useState<{ r: number; c: number } | null>(null)
   const [posterOpacity, setPosterOpacity] = useState<number>(0.35)
@@ -239,23 +350,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
     }
   }, [posterRgba, posterWidth, posterHeight])
 
-  // Cache loaded Image objects for placed piece thumbnails to draw onto grid canvas
-  const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
-
-  useEffect(() => {
-    for (const slot of Object.values(placedSlots)) {
-      const piece = pieceMap.get(slot.piece_id)
-      if (piece && !imageCacheRef.current.has(piece.id)) {
-        const img = new Image()
-        img.src = piece.thumbnailDataUrl
-        img.onload = () => {
-          // Trigger redraw
-          drawBoard()
-        }
-        imageCacheRef.current.set(piece.id, img)
-      }
-    }
-  }, [placedSlots, pieceMap])
+  // Cache rendered upright masked offscreen canvases for placed piece artworks
+  const pieceCanvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map())
+  const rawImageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map())
 
   // Derive neighbor edge constraints for a given slot [r, c]
   const computeSlotRequirement = useCallback((r: number, c: number): SlotRequirementFilter => {
@@ -439,22 +536,30 @@ export const BoardView: React.FC<BoardViewProps> = ({
         }
         ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2)
 
-        // Draw placed piece thumbnail if loaded
+        // Draw placed piece upright masked artwork
         if (placed) {
-          const img = imageCacheRef.current.get(placed.piece_id)
-          if (img && img.complete) {
+          const pieceCanvas = pieceCanvasCacheRef.current.get(placed.piece_id)
+          if (pieceCanvas) {
+            const pw = pieceCanvas.width
+            const ph = pieceCanvas.height
+            // Maintain strict aspect ratio without distortion
+            const maxDim = Math.max(pw, ph)
+            const scale = (Math.min(cellW, cellH) - 2) / Math.max(1, maxDim)
+            const drawW = pw * scale
+            const drawH = ph * scale
+
             ctx.save()
             ctx.translate(x + cellW / 2, y + cellH / 2)
             ctx.rotate((placed.rotation * 90 * Math.PI) / 180)
-            ctx.drawImage(img, -cellW / 2 + 1, -cellH / 2 + 1, cellW - 2, cellH - 2)
+            ctx.drawImage(pieceCanvas, -drawW / 2, -drawH / 2, drawW, drawH)
             ctx.restore()
           }
 
-          // Subtle placed green corner dot
-          ctx.fillStyle = '#3fb950'
-          ctx.beginPath()
-          ctx.arc(x + 4, y + 4, 2, 0, Math.PI * 2)
-          ctx.fill()
+          if (isSelected || isHovered) {
+            ctx.strokeStyle = isSelected ? '#ffd33d' : '#58a6ff'
+            ctx.lineWidth = 2 / zoom
+            ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
+          }
         }
 
         const cand = candidateMatches?.find((cnd) => cnd.row === r && cnd.col === c)
@@ -469,13 +574,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
             ctx.lineWidth = 3 / zoom
             ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
           } else {
-            ctx.fillStyle = 'rgba(230, 180, 30, 0.20)'
+            ctx.fillStyle = 'rgba(230, 180, 30, 0.15)'
             ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2)
             ctx.strokeStyle = '#e3b341'
-            ctx.lineWidth = 2 / zoom
+            ctx.lineWidth = 1.5 / zoom
             ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2)
           }
-        } else {
+        } else if (!placed) {
           // Cell border outline
           ctx.strokeStyle = isHighlighted
             ? '#00ff88'
@@ -497,34 +602,23 @@ export const BoardView: React.FC<BoardViewProps> = ({
           }
         }
 
-        // Candidate Badge Overlay on cell
-        if (cand && !placed && cellW * zoom > 22) {
-          ctx.save()
-          ctx.font = `bold ${Math.max(8, Math.min(11, 8.5 * zoom))}px sans-serif`
-          ctx.textAlign = 'center'
-          ctx.textBaseline = 'middle'
-          const label = cand.rank === 1 ? `#1 ${Math.round(cand.confidence)}%` : `#${cand.rank} ${Math.round(cand.confidence)}%`
-          const tw = ctx.measureText(label).width + 6
-          const th = 14
-          ctx.fillStyle = cand.rank === 1 ? 'rgba(0, 40, 25, 0.90)' : 'rgba(40, 30, 10, 0.90)'
-          ctx.fillRect(x + cellW / 2 - tw / 2, y + cellH / 2 - th / 2, tw, th)
-          ctx.strokeStyle = cand.rank === 1 ? '#00ffb4' : '#e3b341'
-          ctx.lineWidth = 1
-          ctx.strokeRect(x + cellW / 2 - tw / 2, y + cellH / 2 - th / 2, tw, th)
-          ctx.fillStyle = cand.rank === 1 ? '#00ffb4' : '#ffd33d'
-          ctx.fillText(label, x + cellW / 2, y + cellH / 2)
-          ctx.restore()
-        }
-
-        // Piece number label or slot coordinates on cell
+        // Slot coordinates or piece number (only when hovered, selected, or coords toggled on)
         if (placed) {
-          const piece = pieceMap.get(placed.piece_id)
-          if (piece && cellW * zoom > 20) {
-            ctx.fillStyle = '#ffffff'
-            ctx.font = `bold ${Math.max(8, Math.min(11, 9 * zoom))}px monospace`
-            ctx.textAlign = 'center'
-            ctx.textBaseline = 'middle'
-            ctx.fillText(`#${piece.piece_number}`, x + cellW / 2, y + cellH / 2)
+          if ((showCoordinates || isHovered || isSelected) && cellW * zoom > 18) {
+            const piece = pieceMap.get(placed.piece_id)
+            if (piece) {
+              const fontSize = Math.max(7, Math.min(10, 8 * zoom))
+              ctx.font = `bold ${fontSize}px monospace`
+              ctx.textAlign = 'center'
+              ctx.textBaseline = 'middle'
+              const lbl = `#${piece.piece_number}`
+              const tw = ctx.measureText(lbl).width + 6
+              const th = fontSize + 4
+              ctx.fillStyle = 'rgba(0, 0, 0, 0.75)'
+              ctx.fillRect(x + cellW / 2 - tw / 2, y + cellH / 2 - th / 2, tw, th)
+              ctx.fillStyle = isSelected ? '#ffd33d' : '#e6edf3'
+              ctx.fillText(lbl, x + cellW / 2, y + cellH / 2)
+            }
           }
         } else if ((showCoordinates || isHovered || isSelected) && cellW * zoom > 18) {
           const fontSize = Math.max(7, Math.min(10, 8 * zoom))
@@ -537,88 +631,43 @@ export const BoardView: React.FC<BoardViewProps> = ({
       }
     }
 
-    // Render Mating Pair Seam Indicators between placed neighbors
-    const fixtureLookup = new Map<string, GroundTruthPairFixture>()
-    for (const fix of pairedFixtures) {
-      fixtureLookup.set([fix.piece_a_id, fix.piece_b_id].sort().join(':'), fix)
-    }
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const slotA = placedSlots[`${r},${c}`]
-        if (!slotA) continue
-
-        // East seam
-        if (c + 1 < cols) {
-          const slotB = placedSlots[`${r},${c + 1}`]
-          if (slotB) {
-            const pairKey = [slotA.piece_id, slotB.piece_id].sort().join(':')
-            const fix = fixtureLookup.get(pairKey)
-            const seamX = (c + 1) * cellW
-            const seamY1 = r * cellH + 3
-            const seamY2 = (r + 1) * cellH - 3
-
-            ctx.lineWidth = 3 / zoom
-            if (fix?.status === 'verified') {
-              ctx.strokeStyle = '#3fb950' // Green
-              ctx.setLineDash([])
-            } else if (fix?.status === 'rejected') {
-              ctx.strokeStyle = '#f85149' // Red
-              ctx.setLineDash([4 / zoom, 2 / zoom])
-            } else {
-              ctx.strokeStyle = '#d29922' // Yellow provisional
-              ctx.setLineDash([2 / zoom, 2 / zoom])
-            }
-            ctx.beginPath()
-            ctx.moveTo(seamX, seamY1)
-            ctx.lineTo(seamX, seamY2)
-            ctx.stroke()
-            ctx.setLineDash([])
-          }
-        }
-
-        // South seam
-        if (r + 1 < rows) {
-          const slotB = placedSlots[`${r + 1},${c}`]
-          if (slotB) {
-            const pairKey = [slotA.piece_id, slotB.piece_id].sort().join(':')
-            const fix = fixtureLookup.get(pairKey)
-            const seamY = (r + 1) * cellH
-            const seamX1 = c * cellW + 3
-            const seamX2 = (c + 1) * cellW - 3
-
-            ctx.lineWidth = 3 / zoom
-            if (fix?.status === 'verified') {
-              ctx.strokeStyle = '#3fb950' // Green
-              ctx.setLineDash([])
-            } else if (fix?.status === 'rejected') {
-              ctx.strokeStyle = '#f85149' // Red
-              ctx.setLineDash([4 / zoom, 2 / zoom])
-            } else {
-              ctx.strokeStyle = '#d29922' // Yellow provisional
-              ctx.setLineDash([2 / zoom, 2 / zoom])
-            }
-            ctx.beginPath()
-            ctx.moveTo(seamX1, seamY)
-            ctx.lineTo(seamX2, seamY)
-            ctx.stroke()
-            ctx.setLineDash([])
-          }
-        }
-      }
-    }
-
     // Outer puzzle frame
     ctx.strokeStyle = '#58a6ff'
     ctx.lineWidth = 2 / zoom
     ctx.strokeRect(0, 0, boardTotalW, boardTotalH)
 
     ctx.restore()
-  }, [rows, cols, pan, zoom, placedSlots, selectedSlot, hoverSlot, pieceMap, pairedFixtures, showPosterUnderlay, posterOpacity, showCoordinates])
+  }, [rows, cols, pan, zoom, placedSlots, selectedSlot, hoverSlot, pieceMap, showPosterUnderlay, posterOpacity, showCoordinates])
 
   useEffect(() => {
     drawBoard()
   }, [drawBoard])
+
+  useEffect(() => {
+    for (const slot of Object.values(placedSlots)) {
+      const piece = pieceMap.get(slot.piece_id)
+      if (piece && !pieceCanvasCacheRef.current.has(piece.id)) {
+        let img = rawImageCacheRef.current.get(piece.id)
+        if (!img) {
+          img = new Image()
+          img.src = piece.thumbnailDataUrl
+          img.onload = () => {
+            const maskedCanvas = createMaskedPieceCanvas(img!, piece)
+            if (maskedCanvas) {
+              pieceCanvasCacheRef.current.set(piece.id, maskedCanvas)
+            }
+            drawBoard()
+          }
+          rawImageCacheRef.current.set(piece.id, img)
+        } else if (img.complete) {
+          const maskedCanvas = createMaskedPieceCanvas(img, piece)
+          if (maskedCanvas) {
+            pieceCanvasCacheRef.current.set(piece.id, maskedCanvas)
+          }
+        }
+      }
+    }
+  }, [placedSlots, pieceMap, drawBoard])
 
   // Mouse wheel zoom
   const handleWheel = (e: React.WheelEvent) => {
@@ -627,11 +676,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
     setZoom((prev) => Math.min(4.0, Math.max(0.4, prev * zoomFactor)))
   }
 
-  // Drag and pan handling
+  // Drag and pan handling with >3px drag threshold isolation
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button === 0 || e.button === 1) {
       isDraggingRef.current = true
+      dragStartPosRef.current = { x: e.clientX, y: e.clientY }
       lastMouseRef.current = { x: e.clientX, y: e.clientY }
+      hasDraggedRef.current = false
     }
   }
 
@@ -640,6 +691,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
       const dx = e.clientX - lastMouseRef.current.x
       const dy = e.clientY - lastMouseRef.current.y
       lastMouseRef.current = { x: e.clientX, y: e.clientY }
+      const totalDist = Math.hypot(
+        e.clientX - dragStartPosRef.current.x,
+        e.clientY - dragStartPosRef.current.y
+      )
+      if (totalDist > 3) {
+        hasDraggedRef.current = true
+      }
       setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }))
     } else {
       const canvas = canvasRef.current
@@ -662,11 +720,29 @@ export const BoardView: React.FC<BoardViewProps> = ({
   }
 
   const handleMouseUp = () => {
-    isDraggingRef.current = false
+    if (isDraggingRef.current) {
+      const totalDist = Math.hypot(
+        lastMouseRef.current.x - dragStartPosRef.current.x,
+        lastMouseRef.current.y - dragStartPosRef.current.y
+      )
+      if (totalDist > 3) {
+        hasDraggedRef.current = true
+      }
+      isDraggingRef.current = false
+    }
   }
 
-  // Click slot to select and inspect (Mode C)
+  // Click slot to select and inspect (Mode C) - Aborts if mouse was dragged >3px
   const handleClick = (e: React.MouseEvent) => {
+    const totalDist = Math.hypot(
+      e.clientX - dragStartPosRef.current.x,
+      e.clientY - dragStartPosRef.current.y
+    )
+    if (hasDraggedRef.current || totalDist > 3) {
+      hasDraggedRef.current = false
+      return
+    }
+
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
@@ -1178,86 +1254,50 @@ export const BoardView: React.FC<BoardViewProps> = ({
                     )}
                   </div>
 
-                  {/* Manual Mating Pair Overrides */}
-                  <div className="inspector-artwork-section" style={{ marginTop: 12 }}>
-                    <span className="inspector-label">MATING PAIRS</span>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                      {pairedFixtures
-                        .filter(f => f.piece_a_id === selectedSlotPiece.id || f.piece_b_id === selectedSlotPiece.id)
-                        .map(fix => {
-                          const otherId = fix.piece_a_id === selectedSlotPiece.id ? fix.piece_b_id : fix.piece_a_id
-                          const otherPiece = pieceMap.get(otherId)
-                          const isVerified = fix.status === 'verified'
-                          const isRejected = fix.status === 'rejected'
+                  {/* Piece Properties & Edges */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
+                    <div style={{ background: '#161b22', padding: '6px 8px', borderRadius: 4, border: '1px solid #30363d' }}>
+                      <div style={{ fontSize: 9, color: '#8b949e' }}>DIMENSIONS</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#f0f6fc', marginTop: 2 }}>
+                        {selectedSlotPiece.metric_width_mm?.toFixed(1) || '--'} × {selectedSlotPiece.metric_height_mm?.toFixed(1) || '--'} mm
+                      </div>
+                      <div style={{ fontSize: 9, color: '#8b949e' }}>
+                        ({selectedSlotPiece.bounding_width_px} × {selectedSlotPiece.bounding_height_px} px)
+                      </div>
+                    </div>
+                    <div style={{ background: '#161b22', padding: '6px 8px', borderRadius: 4, border: '1px solid #30363d' }}>
+                      <div style={{ fontSize: 9, color: '#8b949e' }}>STATUS</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#3fb950', marginTop: 2 }}>
+                        BOARD [R{selectedSlot.row}, C{selectedSlot.col}]
+                      </div>
+                      <div style={{ fontSize: 9, color: '#8b949e' }}>
+                        Rotation: {selectedSlotPlaced.rotation * 90}° CW
+                      </div>
+                    </div>
+                  </div>
 
-                          return (
-                            <div key={fix.id} style={{
-                              background: '#161b22',
-                              border: `1px solid ${isVerified ? '#3fb950' : isRejected ? '#f85149' : '#d29922'}`,
-                              borderRadius: 4,
-                              padding: '6px 8px',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 4
-                            }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: 11, fontWeight: 'bold' }}>
-                                  Pair with #{otherPiece?.piece_number ?? otherId.slice(0, 5)}
-                                </span>
-                                <span style={{
-                                  fontSize: 9,
-                                  fontWeight: 'bold',
-                                  padding: '1px 5px',
-                                  borderRadius: 3,
-                                  background: isVerified ? 'rgba(63, 185, 80, 0.2)' : isRejected ? 'rgba(248, 81, 73, 0.2)' : 'rgba(210, 153, 34, 0.2)',
-                                  color: isVerified ? '#3fb950' : isRejected ? '#f85149' : '#d29922',
-                                }}>
-                                  {fix.status.toUpperCase()}
-                                </span>
-                              </div>
-                              <div style={{ fontSize: 10, color: '#8b949e' }}>
-                                {fix.notes || `Confidence: ${((fix.confidence_score ?? 0.8) * 100).toFixed(0)}%`}
-                              </div>
-                              {onUpdatePairStatus && (
-                                <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                                  <button
-                                    className="board-btn"
-                                    style={{
-                                      fontSize: 10,
-                                      padding: '2px 8px',
-                                      flex: 1,
-                                      background: isVerified ? '#238636' : '#21262d',
-                                      borderColor: isVerified ? '#3fb950' : '#30363d',
-                                      color: isVerified ? '#ffffff' : '#3fb950',
-                                    }}
-                                    onClick={() => onUpdatePairStatus(fix.id, 'verified')}
-                                  >
-                                    CONFIRM
-                                  </button>
-                                  <button
-                                    className="board-btn"
-                                    style={{
-                                      fontSize: 10,
-                                      padding: '2px 8px',
-                                      flex: 1,
-                                      background: isRejected ? '#da3633' : '#21262d',
-                                      borderColor: isRejected ? '#f85149' : '#30363d',
-                                      color: isRejected ? '#ffffff' : '#f85149',
-                                    }}
-                                    onClick={() => onUpdatePairStatus(fix.id, 'rejected')}
-                                  >
-                                    REJECT
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      {pairedFixtures.filter(f => f.piece_a_id === selectedSlotPiece.id || f.piece_b_id === selectedSlotPiece.id).length === 0 && (
-                        <div style={{ fontSize: 10, color: '#8b949e', fontStyle: 'italic' }}>
-                          No adjacent placed pieces yet.
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#8b949e', marginBottom: 4 }}>EDGES (N, E, S, W)</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                      {selectedSlotPiece.edges.map((edge, idx) => (
+                        <div key={idx} style={{
+                          background: '#161b22',
+                          border: '1px solid #30363d',
+                          borderRadius: 3,
+                          padding: '3px 6px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          fontSize: 10,
+                        }}>
+                          <span style={{ color: '#8b949e' }}>{['N', 'E', 'S', 'W'][idx]}:</span>
+                          <span style={{
+                            fontWeight: 700,
+                            color: edge.edge_type === 'Flat' ? '#d29922' : edge.edge_type === 'Tab' ? '#3fb950' : '#58a6ff'
+                          }}>
+                            {edge.edge_type.toUpperCase()}
+                          </span>
                         </div>
-                      )}
+                      ))}
                     </div>
                   </div>
                 </div>
