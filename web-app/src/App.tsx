@@ -1527,6 +1527,49 @@ export default function App() {
     }
   }
 
+  // Ground Truth: Drag and drop corner pins on 384x384 piece canvas
+  const getPieceCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>): Point2D => {
+    const canvas = pieceCanvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = canvas.width / rect.width
+    const scaleY = canvas.height / rect.height
+    return {
+      x: Math.max(0, Math.min(canvas.width, (e.clientX - rect.left) * scaleX)),
+      y: Math.max(0, Math.min(canvas.height, (e.clientY - rect.top) * scaleY)),
+    }
+  }
+
+  const handleGtPieceCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isGtMode || !gtCorners) return
+    const pt = getPieceCanvasCoords(e)
+    const HIT_RADIUS = 24
+    for (let i = 0; i < 4; i++) {
+      if (Math.hypot(gtCorners[i].x - pt.x, gtCorners[i].y - pt.y) <= HIT_RADIUS) {
+        setDraggingGtCorner(i)
+        ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+        return
+      }
+    }
+  }
+
+  const handleGtPieceCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isGtMode || draggingGtCorner === null || !gtCorners) return
+    const pt = getPieceCanvasCoords(e)
+    const updated = [...gtCorners] as [Point2D, Point2D, Point2D, Point2D]
+    updated[draggingGtCorner] = pt
+    setGtCorners(updated)
+  }
+
+  const handleGtPieceCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (draggingGtCorner !== null) {
+      setDraggingGtCorner(null)
+      try {
+        ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+      } catch {}
+    }
+  }
+
   const handleRecordPiece = async () => {
     if (isSavingRef.current) return
 
@@ -2601,15 +2644,21 @@ export default function App() {
                   ref={pieceCanvasRef}
                   width={384}
                   height={384}
+                  onPointerDown={handleGtPieceCanvasPointerDown}
+                  onPointerMove={handleGtPieceCanvasPointerMove}
+                  onPointerUp={handleGtPieceCanvasPointerUp}
+                  onPointerCancel={handleGtPieceCanvasPointerUp}
                   style={{
                     maxWidth: '100%',
                     maxHeight: '100%',
                     aspectRatio: '1 / 1',
                     objectFit: 'contain',
                     borderRadius: 8,
-                    border: detectedPiece ? '2px solid #2ea043' : '2px solid #30363d',
-                    boxShadow: detectedPiece ? '0 0 20px rgba(46, 160, 67, 0.25)' : '0 4px 16px rgba(0, 0, 0, 0.6)',
+                    border: isGtMode ? '2px solid #00e5ff' : detectedPiece ? '2px solid #2ea043' : '2px solid #30363d',
+                    boxShadow: isGtMode ? '0 0 20px rgba(0, 229, 255, 0.3)' : detectedPiece ? '0 0 20px rgba(46, 160, 67, 0.25)' : '0 4px 16px rgba(0, 0, 0, 0.6)',
                     background: '#0d1117',
+                    cursor: isGtMode ? (draggingGtCorner !== null ? 'grabbing' : 'crosshair') : 'default',
+                    touchAction: 'none',
                     transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
                   }}
                 />
