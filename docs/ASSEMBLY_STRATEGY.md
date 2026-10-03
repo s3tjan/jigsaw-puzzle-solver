@@ -12,6 +12,7 @@ Physical jigsaw puzzle assembly via a standard camera and WebAssembly operates u
 2. **Die Repeatability (Identical Twins)**: Commercial manufacturers stamp 1,000-piece puzzles using a 250-piece die repeated 4 times or flipped 180°. Pure contour geometry cannot distinguish between identical die twins on opposite sides of the puzzle.
 3. **Cardboard Kerf & Shadow Noise**: Die-cut edges produce 1–3 pixel shadow variations under ambient lighting. Contour $L_2$ curves alone are susceptible to greedy error accumulation.
 4. **The Single-Piece Poster Trap**: An isolated interior piece with low spatial entropy (e.g., solid sky, dark foliage) produces dozens of false-positive correlation peaks across the reference poster. Single-piece poster matching must be treated as a **spatial probability distribution**, not an absolute coordinate.
+5. **Universal Solver Generalization (1,008-Piece Scope)**: The ultimate goal is solving the complete 1,008-piece puzzle, not just the perimeter. The 124 border pieces serve as the initial validation set and rigid frame anchor, but the underlying 7-step mating pipeline (topology $\to$ metric tolerances $\to$ seam ink MGC $\to$ sub-pixel contour analysis $\to$ best-buddies $\to$ cluster formation $\to$ poster alignment) must be universal. Algorithms and data structures must never be siloed as border-only one-offs.
 
 ---
 

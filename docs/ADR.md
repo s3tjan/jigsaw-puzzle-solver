@@ -88,6 +88,7 @@ Physical tabletop validation revealed critical limitations in the previous assem
 
 - **Physical Ground Truth**: Cardboard edges fray and cast shadows, but printed ink and metric millimeters do not. Mating pieces must have continuous color across the seam and matching millimeter dimensions ($\pm 0.3\text{ mm}$).
 - **Zero Physical Labeling**: The user must be able to pull any random piece from the box and receive clear tabletop placement guidance.
+- **Universal Engine (1,008-Piece Scope)**: The core 7-step mating pipeline must be mathematically and architecturally universal for all 1,008 pieces. The 124-piece border is simply an initial closed-loop validation set and rigid frame anchor; the engine must not be specialized or siloed for border pieces only.
 - **Robustness Over False Precision**: The system must never present a single high-confidence coordinate for a piece when the underlying computer vision only supports a regional probability distribution.
 - **Clean, Focused UI**: Eliminate clutter, debug controls, and accidental drag-placements.
 

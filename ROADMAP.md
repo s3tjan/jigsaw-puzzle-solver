@@ -76,6 +76,10 @@ For the foundational theory, physical constraints, and multimodal mathematics, s
 * **Interface Decluttering**: Remove obsolete manual mating pair verification controls, candidate badge clutter, and redundant action buttons.
 
 ### Phase 7: Multimodal Perimeter Frame Solver (Current)
+
+> [!IMPORTANT]
+> **Universal Engine Design (1,008-Piece Scalability)**: While Phase 7 validates and anchors the initial closed-loop on the 124 border pieces, all underlying algorithms (topology, metric tolerances, seam ink MGC, and sub-pixel contour matching) are built from day one as the universal mating engine for the entire 1,008-piece puzzle. The border loop is simply the perimeter constraint on a solver that directly powers Phase 8 (boundary propagation/pocket filling) and Phase 9 (island clustering).
+
 * **1. Edge Topology Filtering**: Enforce discrete edge polarity (Tab requires a Hole; Flat outer edges never search for mates). Cheap, fast $O(1)$ binary check (either has it or doesn't).
 * **2. Metric Dimension Tolerances**: Reject candidate border seams whose baseline length, tab width, or tab depth differ by more than $\pm 0.3\text{ mm}$ (fast $O(1)$ dimensional check).
 * **3. Seam Ink Continuity (MGC)**: Measure color gradient continuity across candidate cut seams to eliminate identical die-cutter twins from different quadrants.
