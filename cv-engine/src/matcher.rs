@@ -319,12 +319,52 @@ pub struct PieceIdentityMatch {
     pub confidence: f32,        // [0.0, 100.0]%
 }
 
-/// Fast stored piece edge descriptor for in-memory matching
+/// Fast stored piece edge descriptor for in-memory matching and Phase 7 multimodal solver
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct IndexedEdgeData {
     pub edge_type: EdgeType,
     pub curvature_depth: f32,
     pub normalized_profile: Vec<f32>,
+    /// Step 2: Metric chord baseline length in mm (calibrated via 96px = 25.0mm stage)
+    #[serde(default)]
+    pub chord_length_mm: f32,
+    /// Step 2: Metric tab protrusion height or hole indentation depth in mm
+    #[serde(default)]
+    pub tab_depth_mm: f32,
+    /// Step 2: Metric tab neck width in mm
+    #[serde(default)]
+    pub tab_width_mm: f32,
+    /// Step 3: Seam ink color samples (RGB) along the edge cut for MGC color continuity
+    #[serde(default)]
+    pub seam_rgb_samples: Vec<[u8; 3]>,
+}
+
+impl IndexedEdgeData {
+    pub fn new(edge_type: EdgeType, curvature_depth: f32, normalized_profile: Vec<f32>) -> Self {
+        Self {
+            edge_type,
+            curvature_depth,
+            normalized_profile,
+            chord_length_mm: 0.0,
+            tab_depth_mm: 0.0,
+            tab_width_mm: 0.0,
+            seam_rgb_samples: Vec::new(),
+        }
+    }
+}
+
+impl Default for IndexedEdgeData {
+    fn default() -> Self {
+        Self {
+            edge_type: EdgeType::Flat,
+            curvature_depth: 0.0,
+            normalized_profile: Vec::new(),
+            chord_length_mm: 0.0,
+            tab_depth_mm: 0.0,
+            tab_width_mm: 0.0,
+            seam_rgb_samples: Vec::new(),
+        }
+    }
 }
 
 /// Fast stored piece descriptor for in-memory matching
@@ -420,8 +460,84 @@ pub fn identify_staged_piece_core(
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// Phase 7: Perimeter & Boundary Types
+// Phase 7: Cascading 7-Step Universal Mating Pipeline
 // ---------------------------------------------------------------------------
+
+/// Step 1: Fast edge polarity check (Tab requires Hole, Flat never mates with interlocking features)
+#[inline]
+pub fn check_step1_edge_topology(type_a: EdgeType, type_b: EdgeType) -> bool {
+    matches!(
+        (type_a, type_b),
+        (EdgeType::Tab, EdgeType::Hole) | (EdgeType::Hole, EdgeType::Tab)
+    )
+}
+
+/// Step 2: Metric dimension tolerance check (±0.3 mm)
+/// Tolerates minor cardboard compression while rejecting geometrically impossible pairings.
+#[inline]
+pub fn check_step2_metric_tolerances(
+    edge_a: &IndexedEdgeData,
+    edge_b: &IndexedEdgeData,
+    tolerance_mm: f32,
+) -> bool {
+    // If metric lengths are recorded (> 0.0 mm), enforce strict millimeter bounds
+    if edge_a.chord_length_mm > 0.0 && edge_b.chord_length_mm > 0.0 {
+        let chord_diff = (edge_a.chord_length_mm - edge_b.chord_length_mm).abs();
+        if chord_diff > tolerance_mm {
+            return false;
+        }
+    }
+
+    if edge_a.tab_depth_mm > 0.0 && edge_b.tab_depth_mm > 0.0 {
+        let depth_diff = (edge_a.tab_depth_mm - edge_b.tab_depth_mm).abs();
+        if depth_diff > tolerance_mm {
+            return false;
+        }
+    }
+
+    if edge_a.tab_width_mm > 0.0 && edge_b.tab_width_mm > 0.0 {
+        let width_diff = (edge_a.tab_width_mm - edge_b.tab_width_mm).abs();
+        if width_diff > tolerance_mm {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Step 3: Seam Ink Continuity (Modified Gradient Compatibility / MGC)
+/// Measures color/gradient compatibility across candidate cut seams:
+/// Cost_MGC(u, v) = sum_k || I_u(k) - I_v(rev(k)) ||^2
+/// Traverses edge_b in reverse since edges meet opposite along the cut seam.
+/// Returns normalized color discontinuity cost in [0.0, 1.0]. Lower is better.
+pub fn compute_step3_seam_ink_mgc(
+    samples_a: &[[u8; 3]],
+    samples_b: &[[u8; 3]],
+) -> f32 {
+    let n = samples_a.len().min(samples_b.len());
+    if n == 0 {
+        return 0.0; // If color strips not present, neutral cost
+    }
+
+    let mut sum_sq_diff = 0.0f32;
+    for k in 0..n {
+        let b_idx = n - 1 - k; // Traversed in reverse
+        let color_a = samples_a[k];
+        let color_b = samples_b[b_idx];
+
+        let dr = color_a[0] as f32 - color_b[0] as f32;
+        let dg = color_a[1] as f32 - color_b[1] as f32;
+        let db = color_a[2] as f32 - color_b[2] as f32;
+
+        // Perceptually weighted Euclidean RGB color difference squared
+        let d_sq = 0.299 * dr * dr + 0.587 * dg * dg + 0.114 * db * db;
+        sum_sq_diff += d_sq;
+    }
+
+    let mean_d_sq = sum_sq_diff / n as f32;
+    // Max possible difference is 255^2 = 65025
+    (mean_d_sq / 65025.0).sqrt().clamp(0.0, 1.0)
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SolvedBorderPlacement {

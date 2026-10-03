@@ -159,10 +159,10 @@ fn test_drop_to_locate_piece_identity_recognition() {
         piece_number: 1,
         classification: "Border".to_string(),
         edges: [
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: make_profile(0.20) },
-            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -18.0, normalized_profile: make_profile(-0.18) },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 22.0, normalized_profile: make_profile(0.22) },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: make_profile(0.20) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -18.0, normalized_profile: make_profile(-0.18) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 22.0, normalized_profile: make_profile(0.22) , ..Default::default() },
         ],
         mean_rgb: Some([100, 120, 140]),
     };
@@ -172,10 +172,10 @@ fn test_drop_to_locate_piece_identity_recognition() {
         piece_number: 2,
         classification: "Border".to_string(),
         edges: [
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) },
-            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) , ..Default::default() },
         ],
         mean_rgb: Some([200, 50, 60]),
     };
@@ -186,10 +186,10 @@ fn test_drop_to_locate_piece_identity_recognition() {
     // Under rot = 1 CW: query_edge[k] corresponds to stored_edge[(k + 1) % 4]
     // So query_edge[0] = stored_edge[1] (Hole), query_edge[1] = stored_edge[2] (Tab), etc.
     let mut query_edges = [
-        IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) },
-        IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) },
-        IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) },
-        IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+        IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) , ..Default::default() },
+        IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) , ..Default::default() },
+        IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) , ..Default::default() },
+        IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
     ];
 
     // Add small sensor noise (0.002) to verify robustness
@@ -252,10 +252,10 @@ fn test_solve_perimeter_1d_loop() {
         piece_number: 1,
         classification: "Corner".to_string(),
         edges: [
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: prof_tl_e },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) },
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: prof_tl_e , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 15.0, normalized_profile: make_profile(0.15) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
         ],
         mean_rgb: None,
     };
@@ -265,10 +265,10 @@ fn test_solve_perimeter_1d_loop() {
         piece_number: 2,
         classification: "Border".to_string(),
         edges: [
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 18.0, normalized_profile: prof_top_e },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 10.0, normalized_profile: make_profile(0.10) },
-            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: prof_top_w },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 18.0, normalized_profile: prof_top_e , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 10.0, normalized_profile: make_profile(0.10) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: prof_top_w , ..Default::default() },
         ],
         mean_rgb: None,
     };
@@ -278,10 +278,10 @@ fn test_solve_perimeter_1d_loop() {
         piece_number: 3,
         classification: "Corner".to_string(),
         edges: [
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 25.0, normalized_profile: make_profile(0.25) },
-            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -18.0, normalized_profile: prof_tr_w },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 25.0, normalized_profile: make_profile(0.25) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -18.0, normalized_profile: prof_tr_w , ..Default::default() },
         ],
         mean_rgb: None,
     };
@@ -291,10 +291,10 @@ fn test_solve_perimeter_1d_loop() {
         piece_number: 4,
         classification: "Corner".to_string(),
         edges: [
-            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) },
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: make_profile(0.20) },
+            IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -25.0, normalized_profile: make_profile(-0.25) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Tab, curvature_depth: 20.0, normalized_profile: make_profile(0.20) , ..Default::default() },
         ],
         mean_rgb: None,
     };
@@ -304,10 +304,10 @@ fn test_solve_perimeter_1d_loop() {
         piece_number: 5,
         classification: "Corner".to_string(),
         edges: [
-            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -15.0, normalized_profile: make_profile(-0.15) },
-            IndexedEdgeData { edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) },
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
-            IndexedEdgeData { edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] },
+            IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -15.0, normalized_profile: make_profile(-0.15) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Hole, curvature_depth: -20.0, normalized_profile: make_profile(-0.20) , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
+            IndexedEdgeData {  edge_type: EdgeType::Flat, curvature_depth: 0.0, normalized_profile: vec![0.0; 100] , ..Default::default() },
         ],
         mean_rgb: None,
     };
