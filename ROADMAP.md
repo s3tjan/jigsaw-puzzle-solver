@@ -97,15 +97,15 @@ The solver operates on a streamlined 3-step workflow:
 
 | Phase | Milestone | Tech Stack | Status |
 | :--- | :--- | :--- | :--- |
-| **Phase 0** | Rust + React WASM Scaffolding | Cargo, Vite, wasm-pack | **DONE** |
+| **Phase 0** | Rust + WASM Scaffolding | Cargo, wasm-pack | **DONE** |
 | **Phase 1** | Real-time Camera Feed & Frame Ingestion | WebRTC, Canvas, WASM Memory | **DONE** |
 | **Phase 2** | 100mm Calibration Mat & 3x3 Homography | Rust (`homography.rs`), Canvas | **DONE** |
 | **Phase 3** | Sub-pixel Contour Extraction & 4-Edge Classification | Rust (`contour.rs`), 90 Fixtures | **DONE** |
 | **Phase 4** | Zero-Lag Sampling & Audio Detection Chime | Web Audio API, Stability Consensus | **DONE** |
 | **Phase 5** | Reference Poster Ingestion & Metric Grid Setup | WASM Pyramids, CLAHE, CIELAB | **DONE** |
-| **Phase 6** | UI Ergonomics, Lens K1 & Canvas Interaction Polish | React Canvas, Full-Screen Modal | **DONE** |
-| **Phase 7** | Spatial Probability Density Heatmap & Candidate Engine | Rust WASM (`poster.rs`), Canvas Heatmap | **CURRENT** |
-| **Phase 8** | Board State Frontier & Occupancy Tracking | React / WASM Board Frontier State | ⏳ Planned |
+| **Phase 6** | Frontend Modernization: Angular Architecture Reset | Angular (Standalone, Signals, Services) | **CURRENT** |
+| **Phase 7** | Spatial Probability Density Heatmap & Candidate Engine | Rust WASM (`poster.rs`), Canvas Heatmap | ⏳ Planned |
+| **Phase 8** | Board State Frontier & Occupancy Tracking | Angular Signals / WASM Board Frontier | ⏳ Planned |
 | **Phase 9** | Multi-Piece Cluster Snapping & Heatmap Collapse | Cluster Descriptor Correlation | ⏳ Planned |
 
 ---

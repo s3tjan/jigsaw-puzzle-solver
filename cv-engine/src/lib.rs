@@ -8,17 +8,15 @@ use wasm_bindgen::prelude::*;
 use homography::{dewarp_image, Homography, Point2D};
 use contour::{trace_piece_contour, partition_edges_and_classify, ScannedPiece};
 pub use poster::{
-    process_poster_rgba, get_poster_grid_slots, get_slot_preview, precompute_poster_slots, locate_piece_fast,
+    get_poster_grid_slots, get_slot_preview,
     init_master_poster_spatial, locate_piece_spatial, SpatialCell, SpatialSlotDescriptor,
     precompute_spatial_poster_slots, locate_piece_spatial_core,
 };
 pub use matcher::{
-    evaluate_edge_pair_wasm, evaluate_pairwise_edge_compatibility, compute_complementary_l2_distance,
-    fast_rejection_filter, compute_turn_angles, PairwiseMatchResult, EdgeMatingCandidate,
-    identify_staged_piece_wasm, solve_perimeter_1d_loop_wasm, inspect_piece_pair_wasm,
-    find_mutual_best_buddies_wasm, MutualBestBuddyPair,
-    PieceIdentityMatch, IndexedPieceData, IndexedEdgeData, SolvedBorderPlacement, SolvedPerimeterResult,
-    DetailedPairwiseInspection, SingleSeamDetail,
+    evaluate_pairwise_edge_compatibility, compute_complementary_l2_distance,
+    fast_rejection_filter, compute_turn_angles, PairwiseMatchResult,
+    identify_staged_piece_wasm,
+    PieceIdentityMatch, IndexedPieceData, IndexedEdgeData,
 };
 
 

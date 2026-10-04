@@ -83,4 +83,5 @@ jigsaw-puzzle-solver/
 - [Architecture Decision Records (ADRs)](docs/ADR.md):
   - **ADR-001**: Ground-truth strategy, edge-corner synchronization, and iterated Gaussian contour smoothing.
   - **ADR-002**: Spatial probability density heatmaps and tabletop assembly synergy (superseding automated 1D perimeter loop chaining).
+  - **ADR-003**: Frontend architecture pivot to Angular (complete replacement of monolithic React client with enterprise standalone Angular services and signals).
 - [CV Engine Postmortem](docs/POSTMORTEM_CV_ENGINE.md): Incident log and resolution breakdown for corner detection, optical noise deadband, and segmentation invariants.

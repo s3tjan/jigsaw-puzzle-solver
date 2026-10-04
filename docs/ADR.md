@@ -71,3 +71,43 @@ Physical tabletop validation across the 124 border pieces revealed fundamental l
 
 #### Trade-offs
 - Requires the user to assemble the border manually before interior heatmaps reach maximum pruning efficiency (though coarse regional heatmaps work even without the border).
+
+---
+
+## ADR-003: Frontend Architecture Pivot to Angular (Complete Replacement of web-app)
+
+- **Status:** Accepted
+- **Date:** 2026-10-04
+- **Context:** The initial React frontend grew into a monolithic 3,600+ line component (`App.tsx`) with over 40 interwoven hooks managing camera streams, audio, canvas rendering, IndexedDB, and WASM memory calls. This structure became brittle, difficult to maintain, and lacked separation of concerns.
+
+---
+
+### 1. Decision & Implementation
+
+1. **Complete Replacement of `web-app`**:
+   - Deprecate and replace the existing React client in `web-app/` with an enterprise-grade **Angular** application (standalone components, signals, typed injectable services).
+   - Archive the existing React implementation to `web-app-legacy/` prior to re-initializing `web-app/` with Angular.
+
+2. **Decoupled Architecture with Injectable Services**:
+   - **`WasmService`** (Singleton): Encapsulates WebAssembly linear memory, module initialization (`init()`), and high-performance TypedArray exchanges with `cv-engine`.
+   - **`CameraService`**: Manages WebRTC device constraints, stream capture, and the requestVideoFrameCallback / requestAnimationFrame sampling loop.
+   - **`AudioFeedbackService`**: Manages the Web Audio API synthesizer for piece capture chimes.
+   - **`StorageService`**: Dedicated IndexedDB wrapper for persisting piece inventories and master poster descriptors.
+   - **`InventoryStore` & `BoardStore`**: Reactive, signal-based state management cleanly isolating scanned pieces and 34×26 board grid occupancy.
+
+3. **Domain-Driven Feature Modules**:
+   - **`WorkbenchFeature`**: Dedicated 2D board canvas with strict pan/zoom gesture isolation, candidate heatmap glow, and piece rotation HUD.
+   - **`ScannerFeature`**: Calibration mat staging modal, bullseye fiducial snapping, Lens K1 tuning, and rapid piece drop consensus.
+   - **`PosterFeature`**: Master poster upload, 34×26 grid division, CLAHE preview, and resident descriptor computation.
+
+---
+
+### 2. Consequences
+
+#### Positive
+- **Maintainability & Scalability**: Eliminates monolithic state files; logic is split across testable, single-responsibility services.
+- **Framework-Agnostic WASM Integration**: `cv-engine` compiles to standard ES modules and TypedArrays, integrating seamlessly into Angular services with zero Rust changes.
+- **Productivity & Developer Velocity**: Aligns with the core expertise of the team, enabling rapid delivery of clean enterprise UI patterns.
+
+#### Trade-offs
+- Requires rewriting UI components (calibration modal, canvas pan/zoom renderer, and inventory drawer) in Angular.
