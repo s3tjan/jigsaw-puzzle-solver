@@ -79,8 +79,8 @@ jigsaw-puzzle-solver/
 ---
 
 ## 📖 Documentation
-- [Technical Architecture & Roadmap](ROADMAP.md): Unified master specification covering physical constraints, two-stage solving architecture, 7-step mating cascade, milestone status, and phase specifications.
+- [Technical Architecture & Roadmap](ROADMAP.md): Unified master specification covering physical constraints, 3-step practical assembly workflow, spatial probability density heatmaps, and milestone status.
 - [Architecture Decision Records (ADRs)](docs/ADR.md):
   - **ADR-001**: Ground-truth strategy, edge-corner synchronization, and iterated Gaussian contour smoothing.
-  - **ADR-002**: Universal multimodal perimeter assembly, inward boundary propagation, and spatial probability density heatmaps.
+  - **ADR-002**: Spatial probability density heatmaps and tabletop assembly synergy (superseding automated 1D perimeter loop chaining).
 - [CV Engine Postmortem](docs/POSTMORTEM_CV_ENGINE.md): Incident log and resolution breakdown for corner detection, optical noise deadband, and segmentation invariants.
