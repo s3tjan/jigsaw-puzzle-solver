@@ -205,7 +205,7 @@
 .piece-thumb-wrap {
   width: 100%;
   aspect-ratio: 1;
-  background: #000;
+  background: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -222,7 +222,8 @@
 .placed-watermark {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--bg);
+  opacity: 0.85;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -246,9 +247,9 @@
   gap: 2px;
 }
 
-.edge-sig-item.tab  { color: #004488; font-weight: bold; }
+.edge-sig-item.tab  { color: var(--ok); font-weight: bold; }
 .edge-sig-item.hole { color: var(--warn); font-weight: bold; }
-.edge-sig-item.flat { color: #660099; }
+.edge-sig-item.flat { color: var(--muted); }
 
 /* Dimensions & Actions Footer */
 .piece-card-footer {
@@ -269,16 +270,13 @@
 }
 
 .card-action-btn {
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
   font: inherit;
-  padding: 0 2px;
+  padding: 2px 6px;
+  cursor: pointer;
 }
 
-.card-action-btn:hover {
-  color: var(--fg);
+.card-action-btn.place {
+  font-weight: bold;
 }
 
 /* Pairing Bar */

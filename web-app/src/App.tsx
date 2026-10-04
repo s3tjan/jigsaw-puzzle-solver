@@ -2602,7 +2602,7 @@ export default function App() {
     <div className="app-container">
       {/* Top Navigation Bar: Board, Piece Tray, Grid Info, Start Fresh */}
       <div className="app-top-nav">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="flex-row gap-6">
           <button
             type="button"
             className={`tab-pill-btn ${activeTopView === 'board' ? 'active' : ''}`}
@@ -2619,8 +2619,8 @@ export default function App() {
           </button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: 'var(--muted)' }}>
+        <div className="flex-row gap-12">
+          <span>
             Grid: <b>{posterDims.cols} × {posterDims.rows} ({posterDims.cols * posterDims.rows})</b>
           </span>
           <button
@@ -2635,47 +2635,15 @@ export default function App() {
 
       {/* Camera Calibration Full-Screen Modal or Background Container */}
       <div
-        style={
-          isCalibratingFullScreen
-            ? {
-                position: 'fixed',
-                inset: 0,
-                zIndex: 99999,
-                background: 'var(--bg)',
-                display: 'flex',
-                flexDirection: 'column',
-              }
-            : {
-                position: 'fixed',
-                width: 1,
-                height: 1,
-                opacity: 0.001,
-                pointerEvents: 'none',
-                top: 0,
-                left: 0,
-                zIndex: -1,
-                overflow: 'hidden',
-              }
-        }
+        className={isCalibratingFullScreen ? "calibration-fullscreen-container" : "calibration-hidden-container"}
       >
         {isCalibratingFullScreen && (
-          <div
-            style={{
-              padding: '6px 12px',
-              borderBottom: '1px solid var(--border)',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: 8,
-              background: 'var(--bg)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ fontWeight: 'bold' }}>
+          <div className="calibration-topbar">
+            <div className="flex-row gap-12">
+              <span className="bold">
                 Camera calibration & optics
               </span>
-              <span className="muted">
+              <span>
                 Focus: <b className={focusScore >= 40 ? 'green' : focusScore >= 20 ? 'yellow' : 'red'}>{focusScore.toFixed(0)}%</b>
               </span>
               <span className={isCameraActive ? 'green' : 'red'}>
@@ -2683,15 +2651,14 @@ export default function App() {
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div className="flex-row gap-8 flex-wrap">
               {isCameraActive ? (
                 <button className="btn" onClick={stopCamera}>Stop camera</button>
               ) : (
                 <button className="btn" onClick={startCamera}>Start camera</button>
               )}
               <button
-                className="btn"
-                style={{ fontWeight: isMirror ? 'bold' : 'normal' }}
+                className={`btn ${isMirror ? 'bold' : ''}`}
                 onClick={() => setIsMirror(!isMirror)}
                 title="Toggle horizontal mirror"
               >
@@ -2711,7 +2678,7 @@ export default function App() {
                   step="0.01"
                   value={lensDistortion}
                   onChange={(e) => setLensDistortion(parseFloat(e.target.value))}
-                  style={{ width: 80 }}
+                  className="w-80"
                 />
                 <code>{lensDistortion.toFixed(2)}</code>
                 <button className="btn" onClick={() => setLensDistortion(0)} title="Reset lens distortion to 0">Reset</button>
@@ -2727,7 +2694,7 @@ export default function App() {
                   step="1"
                   value={sensitivity}
                   onChange={(e) => setSensitivity(parseFloat(e.target.value))}
-                  style={{ width: 80 }}
+                  className="w-80"
                 />
                 <code>{sensitivity.toFixed(0)}</code>
               </div>
@@ -2742,8 +2709,7 @@ export default function App() {
               </a>
 
               <button
-                className="btn"
-                style={{ fontWeight: 'bold' }}
+                className="btn bold"
                 onClick={() => setIsCalibratingFullScreen(false)}
               >
                 Done
@@ -2753,51 +2719,18 @@ export default function App() {
         )}
 
         <div
-          style={
-            isCalibratingFullScreen
-              ? {
-                  flex: 1,
-                  position: 'relative',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: '#000',
-                  overflow: 'hidden',
-                  padding: 12,
-                }
-              : { display: 'block' }
-          }
+          className={isCalibratingFullScreen ? "calibration-viewport" : "calibration-viewport-hidden"}
         >
           <video
             ref={videoRef}
             playsInline
             muted
-            className={`camera-video ${isMirror ? 'mirrored' : ''}`}
-            style={
-              isCalibratingFullScreen
-                ? {
-                    maxWidth: '96vw',
-                    maxHeight: '84vh',
-                    objectFit: 'contain',
-                    display: isCameraActive ? 'block' : 'none',
-                  }
-                : undefined
-            }
+            className={`camera-video ${isMirror ? 'mirrored' : ''} ${isCalibratingFullScreen ? 'camera-video-fullscreen' : ''} ${isCalibratingFullScreen && !isCameraActive ? 'hidden' : ''}`}
           />
-          <canvas ref={canvasRef} style={{ display: 'none' }} />
+          <canvas ref={canvasRef} className="hidden" />
           <canvas
             ref={overlayCanvasRef}
-            className={`camera-overlay ${isMirror ? 'mirrored' : ''}`}
-            style={
-              isCalibratingFullScreen
-                ? {
-                    maxWidth: '96vw',
-                    maxHeight: '84vh',
-                    objectFit: 'contain',
-                    display: isCameraActive ? 'block' : 'none',
-                  }
-                : undefined
-            }
+            className={`camera-overlay ${isMirror ? 'mirrored' : ''} ${isCalibratingFullScreen ? 'camera-overlay-fullscreen' : ''} ${isCalibratingFullScreen && !isCameraActive ? 'hidden' : ''}`}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -2807,22 +2740,12 @@ export default function App() {
           {isCalibratingFullScreen && !isCameraActive && (
             <div className="camera-empty">
               {cameraError ? <span className="red">{cameraError}</span> : <span>Camera is inactive.</span>}
-              <button className="btn" style={{ fontWeight: 'bold' }} onClick={startCamera}>Start camera</button>
+              <button className="btn bold" onClick={startCamera}>Start camera</button>
             </div>
           )}
 
           {isCalibratingFullScreen && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 16,
-                background: 'var(--bg)',
-                border: '1px solid var(--border)',
-                padding: '4px 10px',
-                color: 'var(--muted)',
-                pointerEvents: 'none',
-              }}
-            >
+            <div className="calibration-help-hint">
               Drag corners C1–C4 to match the 4 fiducials on the mat. Click Done or press ESC when finished.
             </div>
           )}
@@ -2835,7 +2758,7 @@ export default function App() {
           {/* Left Column: Dewarp Stage */}
           <section className="workbench-panel">
             <div className="panel-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="flex-row gap-8">
                 <span>Dewarp stage</span>
                 {gtSavedCount > 0 && (
                   <span className="badge">
@@ -2844,7 +2767,7 @@ export default function App() {
                 )}
               </div>
 
-              <div className="panel-actions" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="panel-actions flex-row gap-8">
                 <button
                   className="btn small"
                   onClick={() => setIsCalibratingFullScreen(true)}
@@ -2852,30 +2775,19 @@ export default function App() {
                 >
                   Calibrate camera
                 </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div className="flex-row gap-8">
                   <span className={isCameraActive ? 'green' : 'red'}>
                     {isCameraActive ? 'Live' : 'Offline'}
                   </span>
-                  <span className="muted">
+                  <span>
                     Focus: <b className={focusScore >= 40 ? 'green' : focusScore >= 20 ? 'yellow' : 'red'}>{focusScore.toFixed(0)}%</b>
                   </span>
                 </div>
               </div>
             </div>
 
-            <div className="panel-view" style={{ minHeight: 280, maxHeight: '48vh', flex: 1, background: '#000', position: 'relative', overflow: 'hidden' }}>
-              <div
-                style={{
-                  display: 'flex',
-                  width: '100%',
-                  height: '100%',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexDirection: 'column',
-                  position: 'relative',
-                  padding: 8,
-                }}
-              >
+            <div className="panel-view dewarp-view">
+              <div className="dewarp-canvas-box">
                 <canvas
                   ref={pieceCanvasRef}
                   width={384}
@@ -2884,48 +2796,18 @@ export default function App() {
                   onPointerMove={handleGtPieceCanvasPointerMove}
                   onPointerUp={handleGtPieceCanvasPointerUp}
                   onPointerCancel={handleGtPieceCanvasPointerUp}
-                  style={{
-                    maxWidth: '100%',
-                    maxHeight: '100%',
-                    aspectRatio: '1 / 1',
-                    objectFit: 'contain',
-                    border: isGtMode ? '2px solid var(--fg)' : detectedPiece ? '2px solid var(--ok)' : '1px solid var(--border)',
-                    background: '#000',
-                    cursor: isGtMode ? (draggingGtCorner !== null ? 'grabbing' : 'crosshair') : 'default',
-                    touchAction: 'none',
-                  }}
+                  className={`dewarp-piece-canvas ${isGtMode ? 'gt-mode' : ''} ${isGtMode && draggingGtCorner !== null ? 'dragging' : ''} ${detectedPiece && !isGtMode ? 'detected' : ''}`}
                 />
 
                 {!isCameraActive && (
-                  <div style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    background: 'rgba(0, 0, 0, 0.75)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 10,
-                  }}>
-                    <span style={{ color: '#fff', fontSize: 13 }}>Camera is offline</span>
+                  <div className="dewarp-offline-overlay">
+                    <span>Camera is offline</span>
                     <button className="btn" onClick={startCamera}>Start camera</button>
                   </div>
                 )}
 
                 {isCameraActive && !detectedPiece && !lastValidPieceRef.current && (
-                  <div style={{
-                    position: 'absolute',
-                    bottom: 14,
-                    background: 'var(--bg)',
-                    border: '1px solid var(--border)',
-                    padding: '3px 8px',
-                    fontSize: 12,
-                    color: 'var(--muted)',
-                    pointerEvents: 'none',
-                  }}>
+                  <div className="dewarp-hint-badge">
                     Place piece on 100mm mat stage
                   </div>
                 )}
@@ -2933,10 +2815,10 @@ export default function App() {
             </div>
 
             {/* Staged Piece Diagnostics & Fast Placement */}
-            <div className="panel-body" style={{ padding: 10, gap: 8, alignItems: 'stretch' }}>
+            <div className="panel-body p-10 gap-8">
               {!isGtMode ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%', justifyContent: 'space-between' }}>
-                  <div className="piece-data-card" style={{ width: '100%', maxWidth: 'none', padding: 8 }}>
+                <div className="panel-col gap-8 flex-1">
+                  <div className="piece-data-card piece-data-card-full">
                     <div className="data-row">
                       <span className="data-label">AUTO TYPE:</span>
                       <span className={`data-val ${detectedPiece ? (detectedPiece.is_corner ? 'red' : detectedPiece.is_border ? 'yellow' : 'green') : ''}`}>
@@ -2970,28 +2852,28 @@ export default function App() {
                             </span>
                           ))
                         ) : (
-                          <span className="muted">--</span>
+                          <span>--</span>
                         )}
                       </div>
                     </div>
 
-                    <div className="data-row" style={{ marginTop: 2, paddingTop: 4, borderTop: '1px solid #30363d' }}>
+                    <div className="data-row data-row-bordered">
                       <span className="data-label">INVENTORY L2:</span>
-                      <span className="data-val" style={{ fontFamily: 'monospace' }}>
+                      <span className="data-val mono">
                         {identifiedPieceMatch ? (
-                          <span style={{ color: identifiedPieceMatch.is_matched ? '#3fb950' : '#ffd33d', fontWeight: 700 }}>
+                          <span className={identifiedPieceMatch.is_matched ? 'green bold' : 'yellow bold'}>
                             #{identifiedPieceMatch.piece_number} ({identifiedPieceMatch.rotation_offset * 90}°) L2={identifiedPieceMatch.identity_distance.toFixed(4)}
                             {identifiedPieceMatch.is_matched ? ' [MATCH]' : ' [>0.045]'}
                           </span>
                         ) : (
-                          <span style={{ color: '#8b949e' }}>-- (Scan pieces to inventory)</span>
+                          <span>-- (Scan pieces to inventory)</span>
                         )}
                       </span>
                     </div>
                   </div>
 
                   {/* Primary Action Controls */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
+                  <div className="panel-col gap-6 mt-auto">
                     <button
                       className="btn primary record-btn"
                       disabled={!detectedPiece && !lastValidPieceRef.current}
@@ -3003,7 +2885,7 @@ export default function App() {
                       ) : detectedPiece || lastValidPieceRef.current ? (
                         <>
                           <span>Save piece #{storedPieces.length + 1}</span>
-                          <span className="muted" style={{ marginLeft: 6 }}>
+                          <span className="ml-6">
                             [S / Space]
                           </span>
                         </>
@@ -3012,10 +2894,9 @@ export default function App() {
                       )}
                     </button>
 
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div className="flex-row gap-6">
                       <button
-                        className="btn"
-                        style={{ flex: 1 }}
+                        className="btn flex-1"
                         disabled={!detectedPiece}
                         onClick={handleFreezeGroundTruth}
                         title="Freeze corners to label ground truth [F or G]"
@@ -3026,43 +2907,34 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                <div className="panel-col gap-8">
+                  <div className="fs-10">
                     Drag <b>cyan pins (C1..C4)</b> on preview:
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: 4, border: '1px solid var(--border)' }}>
+                  <div className="gt-pin-grid">
                     {gtCorners && gtCorners.map((pt, i) => (
                       <div
                         key={i}
                         onClick={() => setDraggingGtCorner(draggingGtCorner === i ? null : i)}
-                        style={{
-                          padding: '3px 5px',
-                          border: `1px solid ${draggingGtCorner === i ? 'var(--fg)' : 'var(--border)'}`,
-                          cursor: 'pointer',
-                          fontSize: 11,
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          fontWeight: draggingGtCorner === i ? 'bold' : 'normal',
-                        }}
+                        className={`gt-pin-item ${draggingGtCorner === i ? 'active' : ''}`}
                       >
                         <b>C{i + 1}</b>
-                        <span style={{ fontFamily: 'monospace', color: 'var(--muted)' }}>({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
+                        <span className="mono">({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
                       </div>
                     ))}
                   </div>
 
                   <div className="gt-edge-list">
                     {gtEdges.map((type, idx) => (
-                      <div key={idx} className={`gt-edge-item ${type.toLowerCase()}`} style={{ padding: '3px 6px' }}>
-                        <span className="gt-edge-label" style={{ fontSize: 11 }}>E{idx + 1}:</span>
+                      <div key={idx} className={`gt-edge-item ${type.toLowerCase()} p-4`}>
+                        <span className="gt-edge-label fs-11">E{idx + 1}:</span>
                         <div className="gt-edge-toggle">
                           {(['Tab', 'Hole', 'Flat'] as const).map((t) => (
                             <button
                               key={t}
-                              className={`gt-edge-btn ${type === t ? `active ${t.toLowerCase()}` : ''}`}
+                              className={`gt-edge-btn ${type === t ? `active ${t.toLowerCase()}` : ''} p-2 fs-11`}
                               onClick={() => handleToggleEdgeType(idx, t)}
-                              style={{ padding: '2px 5px', fontSize: 11 }}
                             >
                               {t}
                             </button>
@@ -3073,16 +2945,16 @@ export default function App() {
                   </div>
 
                   {gtSaveStatus && (
-                    <div style={{ fontSize: 11, textAlign: 'center', color: gtSaveStatus.startsWith('Saved') ? 'var(--ok)' : 'var(--err)' }}>
+                    <div className={`fs-11 text-center ${gtSaveStatus.startsWith('Saved') ? 'green' : 'red'}`}>
                       {gtSaveStatus}
                     </div>
                   )}
 
-                  <div className="gt-actions" style={{ marginTop: 4 }}>
+                  <div className="gt-actions mt-4">
                     <button className="btn small" onClick={handleExitGtMode}>
                       Cancel [Esc]
                     </button>
-                    <button className="btn small" style={{ fontWeight: 'bold' }} onClick={handleSaveGroundTruth}>
+                    <button className="btn small bold" onClick={handleSaveGroundTruth}>
                       Save [Space]
                     </button>
                   </div>
@@ -3092,20 +2964,9 @@ export default function App() {
           </section>
 
           {/* Right Column: Assembly Board */}
-          <section className="workbench-panel center-panel" style={{ flex: 1, minHeight: 0 }}>
+          <section className="workbench-panel center-panel flex-1">
             {activePlacementPiece && (
-              <div
-                style={{
-                  background: 'var(--bg)',
-                  borderBottom: '1px solid var(--border)',
-                  padding: '6px 12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  fontSize: 12,
-                  zIndex: 10,
-                }}
-              >
+              <div className="panel-sub-header">
                 <span>
                   Placing piece #{activePlacementPiece.piece_number} ({activePlacementPiece.classification}) — click any slot on board to place
                 </span>
@@ -3210,7 +3071,7 @@ export default function App() {
           </section>
         </main>
       ) : (
-        <main style={{ flex: 1, width: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#0d1117' }}>
+        <main className="tray-fullwidth-main">
           <PieceTray
             pieces={storedPieces}
             selectedPieceId={activePlacementPiece?.id || inspectedPiece?.id || null}
@@ -3248,21 +3109,20 @@ export default function App() {
         <div className="modal-backdrop" onClick={() => setInspectedPiece(null)}>
           <div className="piece-preview-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="piece-preview-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 16, fontWeight: 700, color: '#f0f6fc' }}>
-                  PIECE #{inspectedPiece.piece_number}
+              <div className="dialog-header-title">
+                <span className="fs-16 bold">
+                  Piece #{inspectedPiece.piece_number}
                 </span>
                 <span className={`pill ${inspectedPiece.classification.toLowerCase()}`}>
-                  {inspectedPiece.classification.toUpperCase()}
+                  {inspectedPiece.classification}
                 </span>
-                {inspectedPiece.is_favorite && <span style={{ color: '#e3b341', fontSize: 12 }}>FAVORITE</span>}
+                {inspectedPiece.is_favorite && <span className="yellow fs-12 bold">Favorite</span>}
               </div>
               <button
                 className="btn small"
                 onClick={() => setInspectedPiece(null)}
-                style={{ background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}
               >
-                CLOSE
+                Close
               </button>
             </div>
 
@@ -3275,43 +3135,43 @@ export default function App() {
                     className="piece-preview-image"
                   />
                 ) : (
-                  <div style={{ color: '#8b949e', fontSize: 12 }}>No image available</div>
+                  <div className="fs-12">No image available</div>
                 )}
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
-                  <div style={{ fontSize: 10, color: '#8b949e' }}>DIMENSIONS</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#f0f6fc', marginTop: 2 }}>
+              <div className="two-col-grid">
+                <div className="stat-cell">
+                  <div className="label-text">Dimensions</div>
+                  <div className="val-text">
                     {inspectedPiece.metric_width_mm?.toFixed(1) || '--'} × {inspectedPiece.metric_height_mm?.toFixed(1) || '--'} mm
                   </div>
-                  <div style={{ fontSize: 10, color: '#8b949e' }}>
+                  <div className="val-subtext">
                     ({inspectedPiece.bounding_width_px} × {inspectedPiece.bounding_height_px} px)
                   </div>
                 </div>
 
-                <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
-                  <div style={{ fontSize: 10, color: '#8b949e' }}>BOARD STATUS</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: inspectedPiece.status === 'Placed' ? '#3fb950' : '#8b949e', marginTop: 2 }}>
+                <div className="stat-cell">
+                  <div className="label-text">Board status</div>
+                  <div className={`val-text ${inspectedPiece.status === 'Placed' ? 'green' : ''}`}>
                     {inspectedPiece.status === 'Placed' && inspectedPiece.placed_slot
                       ? `[R${inspectedPiece.placed_slot.row}, C${inspectedPiece.placed_slot.col}]`
-                      : 'IN TRAY'}
+                      : 'In tray'}
                   </div>
-                  <div style={{ fontSize: 10, color: '#8b949e' }}>
+                  <div className="val-subtext">
                     {inspectedPiece.status === 'Placed' ? 'Placed on Assembly Grid' : 'Unplaced Inventory'}
                   </div>
                 </div>
               </div>
 
               <div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#8b949e', marginBottom: 6 }}>EDGES (N, E, S, W)</div>
+                <div className="label-text bold mb-6">Edges (North, East, South, West)</div>
                 <div className="piece-preview-edges">
                   {inspectedPiece.edges.map((edge, idx) => (
                     <div key={idx} className={`piece-preview-edge-pill ${edge.edge_type.toLowerCase()}`}>
-                      <span style={{ fontWeight: 600, color: '#c9d1d9' }}>
+                      <span className="bold">
                         E{idx + 1} ({['North', 'East', 'South', 'West'][idx]}):
                       </span>
-                      <span style={{ fontWeight: 700 }}>{edge.edge_type}</span>
+                      <span className="bold">{edge.edge_type}</span>
                     </div>
                   ))}
                 </div>
@@ -3321,16 +3181,14 @@ export default function App() {
             <div className="piece-preview-footer">
               <button
                 className="btn"
-                style={{ background: '#21262d', color: '#c9d1d9', borderColor: '#30363d' }}
                 onClick={() => handleToggleFavorite(inspectedPiece.id)}
               >
-                {inspectedPiece.is_favorite ? 'UNFAVORITE' : 'FAVORITE'}
+                {inspectedPiece.is_favorite ? 'Unfavorite' : 'Favorite'}
               </button>
 
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="flex-row gap-8">
                 <button
-                  className="btn"
-                  style={{ background: '#1f6feb', borderColor: '#388bfd', color: '#fff', fontWeight: 600 }}
+                  className="btn bold"
                   onClick={() => {
                     const srcId = inspectedPiece.id
                     setInspectedPiece(null)
@@ -3339,27 +3197,25 @@ export default function App() {
                   }}
                   title="Select another piece to diagnostically inspect pairwise seam fit"
                 >
-                  PAIR WITH ANOTHER...
+                  Pair with another...
                 </button>
 
                 {inspectedPiece.status !== 'Placed' && (
                   <button
-                    className="btn primary"
-                    style={{ background: '#238636', borderColor: '#2ea043', color: '#fff', fontWeight: 700 }}
+                    className="btn primary bold"
                     onClick={() => {
                       setActivePlacementPiece(inspectedPiece)
                       setInspectedPiece(null)
                       setActiveTopView('board')
                     }}
                   >
-                    PLACE ON BOARD
+                    Place on board
                   </button>
                 )}
 
                 {inspectedPiece.status === 'Placed' && inspectedPiece.placed_slot && (
                   <button
                     className="btn"
-                    style={{ background: '#30363d', color: '#ff7b72', borderColor: '#484f58' }}
                     onClick={() => {
                       if (inspectedPiece.placed_slot) {
                         handleUnplacePiece(inspectedPiece.placed_slot.row, inspectedPiece.placed_slot.col)
@@ -3367,20 +3223,19 @@ export default function App() {
                       }
                     }}
                   >
-                    UNPLACE
+                    Unplace
                   </button>
                 )}
 
                 <button
                   className="btn danger"
-                  style={{ background: '#da3633', borderColor: '#f85149', color: '#fff' }}
                   onClick={() => {
                     if (window.confirm(`Permanently delete Piece #${inspectedPiece.piece_number}?`)) {
                       handleDeletePiece(inspectedPiece.id)
                     }
                   }}
                 >
-                  DELETE PIECE
+                  Delete piece
                 </button>
               </div>
             </div>
@@ -3392,32 +3247,30 @@ export default function App() {
       {showResetConfirm && (
         <div className="modal-backdrop" onClick={() => setShowResetConfirm(false)}>
           <div className="reset-confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: '#f85149', display: 'flex', alignItems: 'center', gap: 8 }}>
-              START FRESH &amp; RESET ALL
+            <div className="dialog-header-title red fs-16 bold">
+              Start fresh &amp; reset all
             </div>
-            <p style={{ fontSize: 13, color: '#c9d1d9', lineHeight: 1.5, margin: '8px 0' }}>
+            <p className="fs-13">
               Are you sure you want to completely reset the application?
             </p>
-            <ul style={{ fontSize: 12, color: '#8b949e', margin: '0 0 12px 18px', lineHeight: 1.6 }}>
+            <ul className="fs-12">
               <li>Delete all <strong>{storedPieces.length} stored pieces</strong> from IndexedDB</li>
               <li>Clear all board slots &amp; placed pieces</li>
               <li>Reset puzzle grid to <strong>1008 pieces (36 cols × 28 rows)</strong></li>
               <li>Reset calibration and stored local storage keys</li>
             </ul>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+            <div className="dialog-actions-row mt-8">
               <button
                 className="btn"
-                style={{ background: '#21262d', color: '#c9d1d9', borderColor: '#30363d' }}
                 onClick={() => setShowResetConfirm(false)}
               >
-                CANCEL
+                Cancel
               </button>
               <button
-                className="btn danger"
-                style={{ background: '#da3633', borderColor: '#f85149', color: '#fff', fontWeight: 700 }}
+                className="btn danger bold"
                 onClick={handleResetApplication}
               >
-                DELETE ALL &amp; RESET
+                Delete all &amp; reset
               </button>
             </div>
           </div>
@@ -3428,18 +3281,17 @@ export default function App() {
       {activeSeamInspection && (
         <div className="modal-backdrop" onClick={() => setActiveSeamInspection(null)}>
           <div
-            className="piece-preview-dialog"
-            style={{ width: '92vw', maxWidth: 880, maxHeight: '90vh', overflowY: 'auto' }}
+            className="piece-preview-dialog seam-dialog"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div className="piece-preview-header">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: '#58a6ff' }}>
-                  PAIRWISE SEAM DEBUGGER: PIECE #{activeSeamInspection.pieceA.piece_number} ↔ PIECE #{activeSeamInspection.pieceB.piece_number}
+              <div className="flex-row gap-12">
+                <span className="fs-15 bold">
+                  Pairwise seam debugger: Piece #{activeSeamInspection.pieceA.piece_number} ↔ Piece #{activeSeamInspection.pieceB.piece_number}
                 </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 11, color: '#8b949e' }}>Metric Tol:</span>
+                <div className="flex-row gap-6">
+                  <span className="fs-11">Metric Tol:</span>
                   <input
                     type="range"
                     min="0.5"
@@ -3450,9 +3302,9 @@ export default function App() {
                       const newTol = parseFloat(e.target.value)
                       handleInspectPiecePair(activeSeamInspection.pieceA, activeSeamInspection.pieceB, newTol)
                     }}
-                    style={{ width: 80, cursor: 'pointer' }}
+                    className="w-80"
                   />
-                  <span className="badge" style={{ background: '#21262d', color: '#58a6ff', border: '1px solid #30363d', minWidth: 60, textAlign: 'center' }}>
+                  <span className="badge">
                     ±{activeSeamInspection.toleranceMm.toFixed(1)}mm
                   </span>
                 </div>
@@ -3460,20 +3312,19 @@ export default function App() {
               <button
                 className="btn small"
                 onClick={() => setActiveSeamInspection(null)}
-                style={{ background: '#21262d', color: '#c9d1d9', borderColor: '#30363d' }}
               >
-                CLOSE
+                Close
               </button>
             </div>
 
             {/* Side-by-side piece thumbnails & seam selector */}
-            <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="seam-dialog-body">
               {/* Filtered Candidate Seams (Only Polarity-Compatible Tab ↔ Hole) */}
               <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#8b949e', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-                  <span>VALID CANDIDATE SEAMS (TAB ↔ HOLE ONLY):</span>
-                  <span style={{ color: '#58a6ff' }}>
-                    SELECTED: Seam #{activeSeamInspection.selectedSeamIndex + 1}
+                <div className="seam-selector-header">
+                  <span>Valid candidate seams (Tab ↔ Hole only):</span>
+                  <span>
+                    Selected: Seam #{activeSeamInspection.selectedSeamIndex + 1}
                   </span>
                 </div>
                 {(() => {
@@ -3487,14 +3338,14 @@ export default function App() {
 
                   if (candidateSeams.length === 0) {
                     return (
-                      <div style={{ padding: '8px 12px', background: '#161b22', borderRadius: 4, color: '#8b949e', fontSize: 11 }}>
+                      <div className="seam-empty-banner">
                         No Tab ↔ Hole pairings exist between these pieces (e.g. flat borders only).
                       </div>
                     )
                   }
 
                   return (
-                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(4, candidateSeams.length)}, 1fr)`, gap: 8 }}>
+                    <div className="seam-btn-grid" style={{ gridTemplateColumns: `repeat(${Math.min(4, candidateSeams.length)}, 1fr)` }}>
                       {candidateSeams.map((s: any) => {
                         const isSelected = activeSeamInspection.selectedSeamIndex === s.origIdx
                         const isMate = s.is_mate
@@ -3503,25 +3354,15 @@ export default function App() {
                           <button
                             key={s.origIdx}
                             onClick={() => setActiveSeamInspection((prev) => prev ? { ...prev, selectedSeamIndex: s.origIdx } : null)}
-                            className="btn"
-                            style={{
-                              padding: '6px 8px',
-                              borderWidth: isSelected ? 2 : 1,
-                              borderColor: isSelected ? 'var(--fg)' : 'var(--border)',
-                              textAlign: 'left',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              fontWeight: isSelected ? 'bold' : 'normal',
-                            }}
+                            className={`btn seam-candidate-btn ${isSelected ? 'selected' : ''}`}
                           >
                             <div>
                               <div>Piece #{activeSeamInspection.pieceA.piece_number} [E{s.edge_a_idx + 1}] ↔ Piece #{activeSeamInspection.pieceB.piece_number} [E{s.edge_b_idx + 1}]</div>
-                              <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                              <div className="fs-12 mt-2">
                                 {s.edge_a_type} ↔ {s.edge_b_type} | Δchord: {s.chord_diff_mm.toFixed(1)}mm
                               </div>
                             </div>
-                            <span className={isMate ? 'green' : 'muted'} style={{ fontWeight: 'bold' }}>
+                            <span className={isMate ? 'green bold' : 'bold'}>
                               L2: {s.l2_curve_distance.toFixed(3)}
                             </span>
                           </button>
@@ -3539,10 +3380,6 @@ export default function App() {
                 const edgeA = activeSeamInspection.pieceA.edges[s.edge_a_idx]
                 const edgeB = activeSeamInspection.pieceB.edges[s.edge_b_idx]
 
-                // Compute physical rotation angles so Edge A faces East (90 deg CW) and Edge B faces West (270 deg CW)
-                // In standard indexing: Edge 0=North (0°), 1=East (90°), 2=South (180°), 3=West (270°)
-                // To orient Edge A facing East: rotate by (1 - edge_a_idx) * 90°
-                // To orient Edge B facing West: rotate by (3 - edge_b_idx) * 90°
                 const rotDegA = ((1 - s.edge_a_idx + 4) % 4) * 90
                 const rotDegB = ((3 - s.edge_b_idx + 4) % 4) * 90
 
@@ -3560,191 +3397,153 @@ export default function App() {
                 }
 
                 return (
-                  <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 6, padding: 14 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: '#f0f6fc' }}>
-                          PHYSICAL SEAM INSPECTION: Piece #{activeSeamInspection.pieceA.piece_number} [Edge {s.edge_a_idx + 1}: {s.edge_a_type}] ◄══► Piece #{activeSeamInspection.pieceB.piece_number} [Edge {s.edge_b_idx + 1}: {s.edge_b_type}]
+                  <div className="seam-card">
+                    <div className="seam-card-header">
+                      <div className="flex-row gap-10">
+                        <span className="fs-14 bold">
+                          Physical seam inspection: Piece #{activeSeamInspection.pieceA.piece_number} [Edge {s.edge_a_idx + 1}: {s.edge_a_type}] ◄══► Piece #{activeSeamInspection.pieceB.piece_number} [Edge {s.edge_b_idx + 1}: {s.edge_b_type}]
                         </span>
-                        <span
-                          className="badge"
-                          style={{
-                            background: s.is_mate ? '#238636' : '#da3633',
-                            color: '#fff',
-                            fontSize: 10,
-                            padding: '3px 8px',
-                            fontWeight: 700,
-                          }}
-                        >
-                          {s.is_mate ? 'GENUINE MATE (PASSED ALL GATES)' : 'REJECTED PAIRING'}
+                        <span className={`badge bold ${s.is_mate ? 'green' : 'red'}`}>
+                          {s.is_mate ? 'Genuine mate (passed all gates)' : 'Rejected pairing'}
                         </span>
                       </div>
                     </div>
 
                     {/* Side-by-Side Physically Oriented Alignment Preview */}
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr auto 1fr',
-                      gap: 16,
-                      alignItems: 'center',
-                      background: '#0d1117',
-                      border: '1px solid #30363d',
-                      borderRadius: 6,
-                      padding: 14,
-                      marginBottom: 12,
-                    }}>
+                    <div className="seam-align-preview">
                       {/* Piece A Rotated so Edge A faces East (Right) */}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: '#58a6ff' }}>
+                      <div className="panel-col gap-6">
+                        <div className="fs-11 bold">
                           Piece #{activeSeamInspection.pieceA.piece_number} (Edge {s.edge_a_idx + 1} facing Seam ➔)
                         </div>
-                        <div style={{ position: 'relative', width: 140, height: 140, background: '#161b22', borderRadius: 4, border: '1px solid #30363d', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div className="seam-piece-thumb-wrap">
                           <img
                             src={activeSeamInspection.pieceA.thumbnailDataUrl}
                             alt={`Piece #${activeSeamInspection.pieceA.piece_number}`}
+                            className="seam-piece-thumb"
                             style={{
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'contain',
                               transform: `rotate(${rotDegA}deg)`,
-                              transition: 'transform 0.2s ease',
                             }}
                           />
-                          {/* Indicator arrow on mating edge */}
-                          <div style={{ position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)', background: 'rgba(88, 166, 255, 0.85)', color: '#fff', fontSize: 9, fontWeight: 700, padding: '2px 4px', borderRadius: 3 }}>
+                          {/* Indicator label on mating edge */}
+                          <div className="seam-edge-badge-a">
                             E{s.edge_a_idx + 1}
                           </div>
                         </div>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>
+                        <div className="fs-10">
                           Chord: {s.chord_len_a_mm.toFixed(1)}mm | Depth: {s.tab_depth_a_mm.toFixed(1)}mm
                         </div>
                       </div>
 
                       {/* Seam Cut Line Divider */}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                        <div style={{ width: 2, height: 90, background: s.is_mate ? '#2ea043' : '#da3633', borderRadius: 1 }} />
-                        <span style={{ fontSize: 9, fontWeight: 700, color: s.is_mate ? '#3fb950' : '#f85149' }}>
-                          {s.is_mate ? 'SEAM FIT' : 'MISMATCH'}
+                      <div className="seam-divider-wrap">
+                        <div className={`seam-divider-line ${s.is_mate ? 'ok' : 'err'}`} />
+                        <span className={`fs-10 bold ${s.is_mate ? 'green' : 'red'}`}>
+                          {s.is_mate ? 'Seam fit' : 'Mismatch'}
                         </span>
-                        <div style={{ width: 2, height: 90, background: s.is_mate ? '#2ea043' : '#da3633', borderRadius: 1 }} />
+                        <div className={`seam-divider-line ${s.is_mate ? 'ok' : 'err'}`} />
                       </div>
 
                       {/* Piece B Rotated so Edge B faces West (Left) */}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: '#ffd33d' }}>
+                      <div className="panel-col gap-6">
+                        <div className="fs-11 bold">
                           ( Edge {s.edge_b_idx + 1} facing Seam) Piece #{activeSeamInspection.pieceB.piece_number}
                         </div>
-                        <div style={{ position: 'relative', width: 140, height: 140, background: '#161b22', borderRadius: 4, border: '1px solid #30363d', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div className="seam-piece-thumb-wrap">
                           <img
                             src={activeSeamInspection.pieceB.thumbnailDataUrl}
                             alt={`Piece #${activeSeamInspection.pieceB.piece_number}`}
+                            className="seam-piece-thumb"
                             style={{
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'contain',
                               transform: `rotate(${rotDegB}deg)`,
-                              transition: 'transform 0.2s ease',
                             }}
                           />
-                          {/* Indicator arrow on mating edge */}
-                          <div style={{ position: 'absolute', left: 4, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255, 211, 61, 0.85)', color: '#000', fontSize: 9, fontWeight: 700, padding: '2px 4px', borderRadius: 3 }}>
+                          {/* Indicator label on mating edge */}
+                          <div className="seam-edge-badge-b">
                             E{s.edge_b_idx + 1}
                           </div>
                         </div>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>
+                        <div className="fs-10">
                           Chord: {s.chord_len_b_mm.toFixed(1)}mm | Depth: {s.tab_depth_b_mm.toFixed(1)}mm
                         </div>
                       </div>
                     </div>
 
                     {/* Diagnostic Metric Grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+                    <div className="seam-metrics-grid">
                       {/* Step 1: Topology */}
-                      <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>STEP 1: POLARITY</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: s.polarity_compatible ? '#3fb950' : '#f85149' }}>
-                          {s.polarity_compatible ? 'COMPATIBLE' : 'INCOMPATIBLE'}
+                      <div className="stat-cell">
+                        <div className="label-text">Step 1: Polarity</div>
+                        <div className={`val-text ${s.polarity_compatible ? 'green' : 'red'}`}>
+                          {s.polarity_compatible ? 'Compatible' : 'Incompatible'}
                         </div>
-                        <div style={{ fontSize: 10, color: '#8b949e', marginTop: 1 }}>
+                        <div className="val-subtext mt-2">
                           {s.edge_a_type} ↔ {s.edge_b_type}
                         </div>
                       </div>
 
                       {/* Step 2: Millimeter Metric Chord & Tab Depth */}
-                      <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>STEP 2: METRIC TOLERANCE</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: s.metric_pass ? '#3fb950' : '#f85149' }}>
-                          {s.metric_pass ? `PASSED (≤${activeSeamInspection.toleranceMm.toFixed(1)}mm)` : `EXCEEDED (>${activeSeamInspection.toleranceMm.toFixed(1)}mm)`}
+                      <div className="stat-cell">
+                        <div className="label-text">Step 2: Metric tolerance</div>
+                        <div className={`val-text ${s.metric_pass ? 'green' : 'red'}`}>
+                          {s.metric_pass ? `Passed (≤${activeSeamInspection.toleranceMm.toFixed(1)}mm)` : `Exceeded (>${activeSeamInspection.toleranceMm.toFixed(1)}mm)`}
                         </div>
-                        <div style={{ fontSize: 10, color: '#8b949e', marginTop: 1 }}>
+                        <div className="val-subtext mt-2">
                           Δchord: {s.chord_diff_mm.toFixed(2)}mm | Δdepth: {s.tab_depth_diff_mm.toFixed(2)}mm
                         </div>
                       </div>
 
                       {/* Step 4: Sub-pixel Contour L2 Residual */}
-                      <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>STEP 4: CONTOUR L2 / L∞</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: s.l2_curve_distance <= 0.045 ? '#3fb950' : s.l2_curve_distance <= 0.070 ? '#ffd33d' : '#f85149' }}>
+                      <div className="stat-cell">
+                        <div className="label-text">Step 4: Contour L2 / L∞</div>
+                        <div className={`val-text ${s.l2_curve_distance <= 0.045 ? 'green' : s.l2_curve_distance <= 0.070 ? 'yellow' : 'red'}`}>
                           L2: {s.l2_curve_distance.toFixed(4)}
                         </div>
-                        <div style={{ fontSize: 10, color: '#8b949e', marginTop: 1 }}>
+                        <div className="val-subtext mt-2">
                           L∞: {s.linf_curve_distance ? s.linf_curve_distance.toFixed(3) : 'N/A'} | Shift: {s.alignment_shift}px
                         </div>
                       </div>
 
                       {/* Step 3: Ink MGC Cost */}
-                      <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
-                        <div style={{ fontSize: 10, color: '#8b949e' }}>STEP 3: SEAM INK MGC</div>
-                        <div style={{
-                          fontSize: 13,
-                          fontWeight: 700,
-                          marginTop: 2,
-                          color: s.ink_continuity_cost < 0 ? '#8b949e' : s.ink_continuity_cost <= 0.30 ? '#3fb950' : '#f85149'
-                        }}>
+                      <div className="stat-cell">
+                        <div className="label-text">Step 3: Seam ink MGC</div>
+                        <div className={`val-text ${s.ink_continuity_cost < 0 ? '' : s.ink_continuity_cost <= 0.30 ? 'green' : 'red'}`}>
                           {s.ink_continuity_cost < 0 ? 'N/A (No Ink)' : `Cost: ${s.ink_continuity_cost.toFixed(3)}`}
                         </div>
-                        <div style={{ fontSize: 10, color: '#8b949e', marginTop: 1 }}>
+                        <div className="val-subtext mt-2">
                           Score: {(s.combined_score * 100).toFixed(0)}%
                         </div>
                       </div>
                     </div>
 
                     {/* Detailed Rejection Reason or Success Banner */}
-                    <div style={{
-                      padding: '8px 12px',
-                      borderRadius: 4,
-                      background: s.is_mate ? 'rgba(46, 160, 67, 0.15)' : 'rgba(218, 54, 51, 0.15)',
-                      border: `1px solid ${s.is_mate ? '#2ea043' : '#da3633'}`,
-                      fontSize: 12,
-                      color: s.is_mate ? '#56d364' : '#ff7b72',
-                      marginBottom: 12,
-                    }}>
-                      <b>STATUS:</b> {s.is_mate ? 'Passes all 4 physical gates: Complementary polarity, metric millimeter bounds, and complementary contour matching curve.' : s.rejection_reason || 'Failed physical verification gates.'}
+                    <div className={`seam-status-banner ${s.is_mate ? 'ok' : 'err'}`}>
+                      <b>Status:</b> {s.is_mate ? 'Passes all 4 physical gates: Complementary polarity, metric millimeter bounds, and complementary contour matching curve.' : s.rejection_reason || 'Failed physical verification gates.'}
                     </div>
 
                     {/* Seam Ink Continuity Strip (Gallagher MGC Color Preview) */}
                     {seamSamplesA.length > 0 && seamSamplesB.length > 0 && (
-                      <div style={{ background: '#090d13', borderRadius: 6, border: '1px solid #30363d', padding: 10, marginBottom: 12 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
-                          <span>SEAM INK CONTINUITY STRIP (Edge A Pixels ◄══► Reversed Edge B Pixels):</span>
-                          <span style={{ color: s.ink_continuity_cost < 0.25 ? '#3fb950' : '#ffd33d' }}>
+                      <div className="seam-ink-strip-container">
+                        <div className="fs-10 bold mb-6 space-between">
+                          <span>Seam ink continuity strip (Edge A Pixels ◄══► Reversed Edge B Pixels):</span>
+                          <span className={s.ink_continuity_cost < 0.25 ? 'green' : 'yellow'}>
                             MGC Cost: {s.ink_continuity_cost.toFixed(3)}
                           </span>
                         </div>
                         {/* 100-pixel color strips meeting at seam */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <div className="seam-ink-strips">
                           {/* Strip A */}
-                          <div style={{ display: 'flex', height: 12, borderRadius: 2, overflow: 'hidden' }}>
+                          <div className="seam-ink-row">
                             {seamSamplesA.map((rgb, idx) => (
-                              <div key={idx} style={{ flex: 1, background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }} />
+                              <div key={idx} className="flex-1" style={{ background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }} />
                             ))}
                           </div>
                           {/* Strip B (Traversed in reverse along common seam) */}
-                          <div style={{ display: 'flex', height: 12, borderRadius: 2, overflow: 'hidden' }}>
+                          <div className="seam-ink-row">
                             {seamSamplesA.map((_, idx) => {
                               const revIdx = seamSamplesB.length - 1 - idx
                               const rgb = seamSamplesB[revIdx] || [0, 0, 0]
-                              return <div key={idx} style={{ flex: 1, background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }} />
+                              return <div key={idx} className="flex-1" style={{ background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }} />
                             })}
                           </div>
                         </div>
@@ -3752,18 +3551,18 @@ export default function App() {
                     )}
 
                     {/* Point-by-Point Curve Superposition & Residual Error Heatmap */}
-                    <div style={{ background: '#090d13', borderRadius: 6, border: '1px solid #30363d', padding: 12 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-                        <span>COMPLEMENTARY CURVE OVERLAY & RESIDUAL GAP:</span>
-                        <div style={{ display: 'flex', gap: 12 }}>
-                          <span style={{ color: '#58a6ff' }}>― Piece #{activeSeamInspection.pieceA.piece_number} [E{s.edge_a_idx + 1}]</span>
-                          <span style={{ color: '#ffd33d' }}>― Piece #{activeSeamInspection.pieceB.piece_number} [E{s.edge_b_idx + 1}] (Reversed Seam)</span>
-                          <span style={{ color: '#f85149' }}>― Local Residual Error</span>
+                    <div className="seam-curve-box">
+                      <div className="fs-10 bold mb-8 space-between">
+                        <span>Complementary curve overlay & residual gap:</span>
+                        <div className="flex-row gap-12">
+                          <span>― Piece #{activeSeamInspection.pieceA.piece_number} [E{s.edge_a_idx + 1}]</span>
+                          <span>― Piece #{activeSeamInspection.pieceB.piece_number} [E{s.edge_b_idx + 1}] (Reversed)</span>
+                          <span className="red">― Residual Error</span>
                         </div>
                       </div>
-                      <svg width="100%" height="100" viewBox="0 0 600 100" style={{ overflow: 'visible' }}>
+                      <svg width="100%" height="100" viewBox="0 0 600 100">
                         {/* Baseline Chord */}
-                        <line x1="20" y1="50" x2="580" y2="50" stroke="#30363d" strokeWidth="1" strokeDasharray="4 4" />
+                        <line x1="20" y1="50" x2="580" y2="50" stroke="var(--border)" strokeWidth="1" strokeDasharray="4 4" />
                         {/* Residual error shaded bars */}
                         {residuals.map((res, i) => {
                           const x = 20 + (i / 99) * 560
@@ -3776,24 +3575,24 @@ export default function App() {
                               y1={50 - barH / 2}
                               x2={x}
                               y2={50 + barH / 2}
-                              stroke={isHigh ? 'rgba(248, 81, 73, 0.5)' : 'rgba(46, 160, 67, 0.25)'}
-                              strokeWidth="4"
+                              stroke={isHigh ? 'var(--err)' : 'var(--ok)'}
+                              strokeWidth="2"
                             />
                           )
                         })}
-                        {/* Profile A (Blue) */}
+                        {/* Profile A */}
                         {(() => {
                           const ptsA = profA.map((v, i) => `${20 + (i / 99) * 560},${50 - v * 200}`).join(' ')
-                          return <polyline points={ptsA} fill="none" stroke="#58a6ff" strokeWidth="2.5" />
+                          return <polyline points={ptsA} fill="none" stroke="var(--fg)" strokeWidth="2" />
                         })()}
-                        {/* Profile B Reversed and Inverted Complement (Yellow) */}
+                        {/* Profile B Reversed and Inverted Complement */}
                         {(() => {
                           const ptsB = profB.map((_, i) => {
                             const revIdx = 99 - i
                             const valB = profB[revIdx] || 0
                             return `${20 + (i / 99) * 560},${50 + valB * 200}`
                           }).join(' ')
-                          return <polyline points={ptsB} fill="none" stroke="#ffd33d" strokeWidth="2.0" strokeDasharray="2 2" />
+                          return <polyline points={ptsB} fill="none" stroke="var(--fg)" strokeWidth="1.5" strokeDasharray="2 2" />
                         })()}
                       </svg>
                     </div>
@@ -3802,26 +3601,24 @@ export default function App() {
               })()}
 
               {/* Footer Actions: Ground-Truth Fixture Recording */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                <div style={{ fontSize: 11, color: activeSeamInspection.saveStatus?.startsWith('Saved') ? '#3fb950' : '#8b949e' }}>
+              <div className="seam-footer-row">
+                <div className={`fs-11 ${activeSeamInspection.saveStatus?.startsWith('Saved') ? 'green' : ''}`}>
                   {activeSeamInspection.saveStatus || 'Export verification fixture to datasets/ground_truth/pairs/ for automated test gating.'}
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div className="flex-row gap-8">
                   <button
-                    className="btn"
-                    style={{ background: '#da3633', borderColor: '#f85149', color: '#fff', fontSize: 11, padding: '6px 12px' }}
+                    className="btn danger"
                     onClick={() => handleSavePairFixture(false)}
                     title="Save as True Negative ground truth fixture (these pieces do NOT match)"
                   >
-                    SAVE AS NON-MATE (FALSE)
+                    Save as non-mate (False)
                   </button>
                   <button
-                    className="btn primary"
-                    style={{ background: '#238636', borderColor: '#2ea043', color: '#fff', fontSize: 11, padding: '6px 14px', fontWeight: 700 }}
+                    className="btn primary bold"
                     onClick={() => handleSavePairFixture(true)}
                     title="Save as True Positive ground truth fixture (these pieces physically match on cardboard)"
                   >
-                    SAVE AS CONFIRMED MATE (TRUE)
+                    Save as confirmed mate (True)
                   </button>
                 </div>
               </div>

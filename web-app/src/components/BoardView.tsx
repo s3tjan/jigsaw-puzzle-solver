@@ -850,9 +850,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
     <div className="board-view-container">
       {/* Top Header Bar */}
       <div className="board-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="stat-badge placed">PLACED: {placedCount} / {totalSlots} ({progressPct}%)</span>
-          <span className="stat-badge unplaced">REMAINING: {totalSlots - placedCount}</span>
+        <div className="flex-row-center-gap8">
+          <span className="stat-badge placed">Placed: {placedCount} / {totalSlots} ({progressPct}%)</span>
+          <span className="stat-badge unplaced">Remaining: {totalSlots - placedCount}</span>
           {posterFileName && <span className="stat-badge unplaced">{posterFileName}</span>}
           {posterWidth > 0 && (
             <span className="stat-badge unplaced">
@@ -864,8 +864,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
         <div className="board-header-actions">
           {onSolvePerimeter && (
             <button
-              className="board-btn"
-              style={{ fontWeight: 'bold' }}
+              className="board-btn bold"
               onClick={onSolvePerimeter}
               title="Solve 1D closed border loop"
             >
@@ -874,8 +873,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
           )}
           {onApplyPerimeter && solvedPerimeterCount > 0 && (
             <button
-              className="board-btn"
-              style={{ fontWeight: 'bold' }}
+              className="board-btn bold"
               onClick={onApplyPerimeter}
               title="Apply all solved perimeter pieces to the board"
             >
@@ -912,7 +910,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
           <button className="board-btn" onClick={onImportFixtures} title="Import saved assembly JSON dataset">
             Import JSON
           </button>
-          <button className="board-btn" style={{ fontWeight: 'bold' }} onClick={onExportFixtures} title="Export ground-truth assembly fixtures">
+          <button className="board-btn bold" onClick={onExportFixtures} title="Export ground-truth assembly fixtures">
             Export fixtures
           </button>
         </div>
@@ -921,11 +919,10 @@ export const BoardView: React.FC<BoardViewProps> = ({
       {/* Specification & Dimension Controls Bar */}
       <div className="board-spec-bar">
         <div className="spec-group">
-          <label>PIECES:</label>
+          <label>Pieces:</label>
           <input
             type="number"
-            className="spec-input"
-            style={{ width: 64, fontWeight: 'bold', color: '#58a6ff', textAlign: 'center' }}
+            className="spec-input w-64 bold text-center"
             value={inputTotalPieces || ''}
             min={4}
             max={10000}
@@ -937,7 +934,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
         </div>
 
         <div className="spec-group">
-          <label>GRID (COLS × ROWS):</label>
+          <label>Grid (cols × rows):</label>
           <input
             type="number"
             className="spec-input"
@@ -964,7 +961,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
         </div>
 
         <div className="spec-group">
-          <label>PHYSICAL (W × H):</label>
+          <label>Physical (w × h):</label>
           <input
             type="number"
             className="spec-input"
@@ -995,11 +992,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
           const isDirty = inputCols !== cols || inputRows !== rows || inputWidthMm !== physWidthMm || inputHeightMm !== physHeightMm
           return (
             <button
-              className="board-btn"
-              style={{
-                fontWeight: isDirty ? 'bold' : 'normal',
-                cursor: 'pointer',
-              }}
+              className={`board-btn ${isDirty ? 'bold' : ''}`}
               onClick={handleApplyDimensions}
               title="Apply grid and physical dimensions [Enter]"
             >
@@ -1010,7 +1003,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
 
         <div className="spec-slot-info">
           Slot: <b>{cols > 0 ? (physWidthMm / cols).toFixed(1) : 0} × {rows > 0 ? (physHeightMm / rows).toFixed(1) : 0} mm</b>
-          <span style={{ marginLeft: 6, color: 'var(--muted)', fontSize: 12 }}>
+          <span className="ml-6 fs-12">
             (Perimeter: 4 corners + {2 * Math.max(0, cols - 2) + 2 * Math.max(0, rows - 2)} borders = {2 * Math.max(0, cols - 2) + 2 * Math.max(0, rows - 2) + 4} total)
           </span>
         </div>
@@ -1018,9 +1011,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
         {onResetApplication && (
           <button
             className="board-btn"
-            style={{
-              marginLeft: 'auto',
-            }}
             onClick={onResetApplication}
             title="Delete all scanned pieces and reset application to fresh state"
           >
@@ -1049,9 +1039,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 <button
                   className={`board-tool-btn ${showPosterUnderlay ? 'active' : ''}`}
                   onClick={() => setShowPosterUnderlay(!showPosterUnderlay)}
-                  style={{
-                    fontWeight: showPosterUnderlay ? 'bold' : 'normal',
-                  }}
                   title="Toggle Reference Poster background"
                 >
                   {showPosterUnderlay ? 'Poster: On' : 'Poster: Off'}
@@ -1064,7 +1051,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                     step="0.05"
                     value={posterOpacity}
                     onChange={(e) => setPosterOpacity(parseFloat(e.target.value))}
-                    style={{ width: 60 }}
+                    className="w-60"
                     title={`Poster Opacity: ${(posterOpacity * 100).toFixed(0)}%`}
                   />
                 )}
@@ -1078,8 +1065,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
               </>
             ) : (
               <button
-                className="board-tool-btn"
-                style={{ fontWeight: 'bold' }}
+                className="board-tool-btn bold"
                 onClick={() => fileInputRef.current?.click()}
                 title="Load reference poster image"
               >
@@ -1089,7 +1075,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
             <input
               type="file"
               ref={fileInputRef}
-              style={{ display: 'none' }}
+              className="d-none"
               accept="image/*"
               onChange={(e) => {
                 const file = e.target.files?.[0]
@@ -1193,17 +1179,17 @@ export const BoardView: React.FC<BoardViewProps> = ({
               {selectedSlotPlaced && selectedSlotPiece ? (
                 <div className="placed-piece-detail">
                   <div className="placed-piece-header">
-                    <strong>PIECE #{selectedSlotPiece.piece_number}</strong>
-                    <span className="stat-badge placed">PLACED</span>
+                    <strong>Piece #{selectedSlotPiece.piece_number}</strong>
+                    <span className="stat-badge placed">Placed</span>
                   </div>
                   <img
                     src={selectedSlotPiece.thumbnailDataUrl}
                     alt={`Piece #${selectedSlotPiece.piece_number}`}
-                    style={{ width: '100%', border: '1px solid var(--border)', cursor: onSelectPiecePreview ? 'pointer' : 'default' }}
+                    className={`w-100p ${onSelectPiecePreview ? 'cursor-pointer' : ''}`}
                     onClick={() => onSelectPiecePreview?.(selectedSlotPiece)}
                     title="Click for full piece preview"
                   />
-                  <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="fs-12 text-muted space-between align-center">
                     <span>Rotation: {selectedSlotPlaced.rotation * 90}° CW</span>
                     <button
                       className="board-btn"
@@ -1212,18 +1198,16 @@ export const BoardView: React.FC<BoardViewProps> = ({
                       Rotate 90°
                     </button>
                   </div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                  <div className="flex-row gap-6 mt-4">
                     <button
-                      className="unplace-btn"
-                      style={{ flex: 1 }}
+                      className="unplace-btn flex-1"
                       onClick={() => onUnplacePiece(selectedSlot.row, selectedSlot.col)}
                     >
                       Unplace
                     </button>
                     {onDeletePiece && (
                       <button
-                        className="unplace-btn"
-                        style={{ flex: 1 }}
+                        className="unplace-btn flex-1"
                         onClick={() => {
                           if (confirm(`Permanently delete Piece #${selectedSlotPiece.piece_number} from database?`)) {
                             onDeletePiece(selectedSlotPiece.id)
@@ -1236,43 +1220,34 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   </div>
 
                   {/* Piece Properties & Edges */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 8 }}>
-                    <div style={{ padding: '6px 8px', border: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>Dimensions</div>
-                      <div style={{ fontSize: 12, fontWeight: 'bold', marginTop: 2 }}>
+                  <div className="grid-2col-gap6 mt-8">
+                    <div className="stat-cell">
+                      <div className="label-text">Dimensions</div>
+                      <div className="val-text">
                         {selectedSlotPiece.metric_width_mm?.toFixed(1) || '--'} × {selectedSlotPiece.metric_height_mm?.toFixed(1) || '--'} mm
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      <div className="val-subtext mt-2">
                         ({selectedSlotPiece.bounding_width_px} × {selectedSlotPiece.bounding_height_px} px)
                       </div>
                     </div>
-                    <div style={{ padding: '6px 8px', border: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>Status</div>
-                      <div style={{ fontSize: 12, fontWeight: 'bold', color: 'var(--ok)', marginTop: 2 }}>
+                    <div className="stat-cell">
+                      <div className="label-text">Status</div>
+                      <div className="val-text green">
                         Board [R{selectedSlot.row}, C{selectedSlot.col}]
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      <div className="val-subtext mt-2">
                         Rotation: {selectedSlotPlaced.rotation * 90}° CW
                       </div>
                     </div>
                   </div>
 
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Edges (N, E, S, W)</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                  <div className="mt-8">
+                    <div className="fs-11 text-muted mb-4">Edges (N, E, S, W)</div>
+                    <div className="grid-2col-gap4">
                       {selectedSlotPiece.edges.map((edge, idx) => (
-                        <div key={idx} style={{
-                          border: '1px solid var(--border)',
-                          padding: '3px 6px',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          fontSize: 11,
-                        }}>
-                          <span style={{ color: 'var(--muted)' }}>{['N', 'E', 'S', 'W'][idx]}:</span>
-                          <span style={{
-                            fontWeight: 'bold',
-                            color: edge.edge_type === 'Flat' ? '#660099' : edge.edge_type === 'Tab' ? '#004488' : 'var(--warn)'
-                          }}>
+                        <div key={idx} className="edge-inspect-item">
+                          <span className="text-muted">{['N', 'E', 'S', 'W'][idx]}:</span>
+                          <span className={`bold ${edge.edge_type === 'Tab' ? 'green' : edge.edge_type === 'Hole' ? 'yellow' : 'text-muted'}`}>
                             {edge.edge_type}
                           </span>
                         </div>
@@ -1284,7 +1259,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 <>
                   {/* Expected Artwork Crop */}
                   <div className="inspector-artwork-section">
-                    <span className="inspector-label">EXPECTED ARTWORK</span>
+                    <span className="inspector-label">Expected artwork</span>
                     <div className="artwork-preview-card">
                       {activeSlotPreview ? (
                         <>
@@ -1301,19 +1276,19 @@ export const BoardView: React.FC<BoardViewProps> = ({
                             </span>
                           </div>
                           {activeSlotPreview.mean_lab && (
-                            <div style={{ fontSize: 10, fontFamily: 'monospace', color: '#8b949e' }}>
+                            <div className="artwork-meta-text">
                               LAB: L*{activeSlotPreview.mean_lab[0].toFixed(0)} a*{activeSlotPreview.mean_lab[1].toFixed(0)} b*{activeSlotPreview.mean_lab[2].toFixed(0)}
                             </div>
                           )}
-                          <div style={{ fontSize: 10, color: '#8b949e', marginTop: 2 }}>
-                            SIZE: {activeSlotPreview.width} × {activeSlotPreview.height} px
+                          <div className="artwork-meta-text mt-2">
+                            Size: {activeSlotPreview.width} × {activeSlotPreview.height} px
                             {physWidthMm > 0 && physHeightMm > 0 && (
                               <span> ({(physWidthMm / cols).toFixed(1)} × {(physHeightMm / rows).toFixed(1)} mm)</span>
                             )}
                           </div>
                         </>
                       ) : (
-                        <div style={{ fontSize: 11, color: '#8b949e', padding: '16px 0', textAlign: 'center' }}>
+                        <div className="artwork-empty-text">
                           {posterRgba
                             ? 'Generating slot crop...'
                             : 'Upload reference poster to preview artwork crops.'}
@@ -1325,15 +1300,15 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   {/* Required Edge Constraints */}
                   {selectedSlotReq && (
                     <div className="inspector-artwork-section">
-                      <span className="inspector-label">REQUIRED EDGES</span>
+                      <span className="inspector-label">Required edges</span>
                       <div className="edge-constraints-grid">
-                        {(['NORTH', 'EAST', 'SOUTH', 'WEST'] as const).map((dir, idx) => {
+                        {(['North', 'East', 'South', 'West'] as const).map((dir, idx) => {
                           const req = selectedSlotReq.required_edges[idx]
                           return (
                             <div key={dir} className="edge-constraint-card">
                               <span className="edge-dir">{dir}</span>
                               <span className={`edge-status ${req ? req.toLowerCase() : 'open'}`}>
-                                {req ? req.toUpperCase() : 'ANY (OPEN)'}
+                                {req || 'Any (open)'}
                               </span>
                             </div>
                           )
@@ -1349,7 +1324,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
               )}
             </div>
           ) : (
-            <div className="inspector-help-hint" style={{ marginTop: 40 }}>
+            <div className="inspector-help-hint mt-40">
               Select any slot on the grid to inspect artwork previews and edge requirements.
             </div>
           )}
