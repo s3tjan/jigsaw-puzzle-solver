@@ -9,6 +9,7 @@ import init, {
   locate_piece_spatial,
   identify_staged_piece_wasm,
   solve_perimeter_1d_loop_wasm,
+  inspect_piece_pair_wasm,
 } from './pkg/cv_engine'
 import { BoardView } from './components/BoardView'
 import type { CandidateMatchOverlay } from './components/BoardView'
@@ -106,6 +107,121 @@ export function getOrComputeNormalizedProfile(edge: any): number[] {
   }
   return normProfile
 }
+
+export function extractEdgeSeamRgbSamples(
+  edge: any,
+  dewarpedBytes: Uint8Array | null,
+  pieceCentroid: { x: number; y: number }
+): [number, number, number][] {
+  if (!dewarpedBytes || dewarpedBytes.length < 384 * 384 * 4) {
+    return []
+  }
+  const samples = edge.curve_samples
+  const pStart = edge.start_corner
+  const pEnd = edge.end_corner
+  if (!samples || samples.length === 0 || !pStart || !pEnd) {
+    return []
+  }
+
+  const nS = samples.length
+  const rgbSamples: [number, number, number][] = []
+
+  for (let k = 0; k < 100; k++) {
+    const t = k / 99.0
+    const sampleIdx = Math.min(nS - 1, Math.round(t * (nS - 1)))
+    const s = samples[sampleIdx]
+
+    // Sample 2 pixels inward towards the piece centroid to avoid white paper mat bleed
+    const toCx = pieceCentroid.x - s.x
+    const toCy = pieceCentroid.y - s.y
+    const distC = Math.hypot(toCx, toCy)
+    const inwardDist = distC > 1.0 ? 2.0 : 0.0
+    const sampleX = Math.round(Math.max(0, Math.min(383, s.x + (toCx / (distC || 1)) * inwardDist)))
+    const sampleY = Math.round(Math.max(0, Math.min(383, s.y + (toCy / (distC || 1)) * inwardDist)))
+
+    const idx = (sampleY * 384 + sampleX) * 4
+    rgbSamples.push([
+      dewarpedBytes[idx],
+      dewarpedBytes[idx + 1],
+      dewarpedBytes[idx + 2],
+    ])
+  }
+
+  return rgbSamples
+}
+
+export function extractSeamRgbSamplesFromThumbnail(
+  edge: any,
+  imgData: ImageData,
+  pieceCentroid: { x: number; y: number }
+): [number, number, number][] {
+  const samples = edge.curve_samples
+  const pStart = edge.start_corner
+  const pEnd = edge.end_corner
+  if (!samples || samples.length === 0 || !pStart || !pEnd) {
+    return []
+  }
+
+  const nS = samples.length
+  const rgbSamples: [number, number, number][] = []
+  const w = imgData.width
+  const h = imgData.height
+  const data = imgData.data
+
+  for (let k = 0; k < 100; k++) {
+    const t = k / 99.0
+    const sampleIdx = Math.min(nS - 1, Math.round(t * (nS - 1)))
+    const s = samples[sampleIdx]
+
+    // Sample 2 pixels inward towards the piece centroid
+    const toCx = pieceCentroid.x - s.x
+    const toCy = pieceCentroid.y - s.y
+    const distC = Math.hypot(toCx, toCy)
+    const inwardDist = distC > 1.0 ? 2.0 : 0.0
+    const sampleX = Math.round(Math.max(0, Math.min(w - 1, s.x + (toCx / (distC || 1)) * inwardDist)))
+    const sampleY = Math.round(Math.max(0, Math.min(h - 1, s.y + (toCy / (distC || 1)) * inwardDist)))
+
+    const idx = (sampleY * w + sampleX) * 4
+    rgbSamples.push([data[idx], data[idx + 1], data[idx + 2]])
+  }
+
+  return rgbSamples
+}
+
+export function pieceToIndexedData(piece: StoredPiece) {
+  const mmPerPx = 96.0 / 384.0
+  return {
+    id: piece.id,
+    piece_number: piece.piece_number,
+    classification: piece.classification,
+    edges: piece.edges.map((e) => {
+      let chordMm = e.chord_length_mm || 0
+      let tabDepthMm = e.tab_depth_mm || 0
+      let tabWidthMm = e.tab_width_mm || 0
+
+      if (chordMm === 0 && e.start_corner && e.end_corner) {
+        const dx = e.end_corner.x - e.start_corner.x
+        const dy = e.end_corner.y - e.start_corner.y
+        chordMm = Math.hypot(dx, dy) * mmPerPx
+      }
+      if (tabDepthMm === 0 && e.curvature_depth) {
+        tabDepthMm = Math.abs(e.curvature_depth) * mmPerPx
+      }
+
+      return {
+        edge_type: e.edge_type,
+        curvature_depth: e.curvature_depth,
+        normalized_profile: getOrComputeNormalizedProfile(e),
+        chord_length_mm: chordMm,
+        tab_depth_mm: tabDepthMm,
+        tab_width_mm: tabWidthMm,
+        seam_rgb_samples: e.seam_rgb_samples || [],
+      }
+    }),
+    mean_rgb: null,
+  }
+}
+
 
 export function createCleanPieceThumbnail(
   dewarpedBytes: Uint8Array | null,
@@ -241,6 +357,17 @@ export default function App() {
   const storedPiecesRef = useRef(storedPieces)
   storedPiecesRef.current = storedPieces
 
+  // Phase 7: Pairwise Seam Inspection State & Tooling
+  const [pairingSourcePieceId, setPairingSourcePieceId] = useState<string | null>(null)
+  const [activeSeamInspection, setActiveSeamInspection] = useState<{
+    pieceA: StoredPiece
+    pieceB: StoredPiece
+    details: any
+    toleranceMm: number
+    selectedSeamIndex: number
+    saveStatus: string | null
+  } | null>(null)
+
   // Load persistent pieces and board state from IndexedDB on startup
   const refreshStorage = useCallback(async () => {
     try {
@@ -251,25 +378,72 @@ export default function App() {
       setStoredPieces(allPieces)
       setPlacedSlots(allSlots)
 
-      // Auto-backfill normalized_profile for existing pieces that were recorded without it
-      const missingProfiles = allPieces.filter(
-        (p) => p.edges.some((e) => !e.normalized_profile || e.normalized_profile.length < 10)
+      // Auto-backfill seam_rgb_samples and normalized_profile for existing pieces recorded without them
+      const piecesNeedingUpgrade = allPieces.filter(
+        (p) =>
+          p.edges.some((e) => !e.normalized_profile || e.normalized_profile.length < 10) ||
+          p.edges.some((e) => !e.seam_rgb_samples || e.seam_rgb_samples.length === 0)
       )
-      if (missingProfiles.length > 0) {
+
+      if (piecesNeedingUpgrade.length > 0) {
         Promise.all(
-          missingProfiles.map((p) => {
-            const updated = {
-              ...p,
-              edges: p.edges.map((e) => ({
-                ...e,
-                normalized_profile: getOrComputeNormalizedProfile(e),
-              })) as any,
+          piecesNeedingUpgrade.map(async (p) => {
+            let imgData: ImageData | null = null
+            if (p.thumbnailDataUrl) {
+              try {
+                imgData = await new Promise<ImageData | null>((resolve) => {
+                  const img = new Image()
+                  img.onload = () => {
+                    const c = document.createElement('canvas')
+                    c.width = img.width || 384
+                    c.height = img.height || 384
+                    const ctx = c.getContext('2d')
+                    if (!ctx) return resolve(null)
+                    ctx.drawImage(img, 0, 0)
+                    resolve(ctx.getImageData(0, 0, c.width, c.height))
+                  }
+                  img.onerror = () => resolve(null)
+                  img.src = p.thumbnailDataUrl
+                })
+              } catch {}
             }
-            return savePiece(updated)
+
+            const pCentroid = {
+              x: (p.corners[0].x + p.corners[1].x + p.corners[2].x + p.corners[3].x) / 4,
+              y: (p.corners[0].y + p.corners[1].y + p.corners[2].y + p.corners[3].y) / 4,
+            }
+
+            const updated: StoredPiece = {
+              ...p,
+              edges: p.edges.map((e) => {
+                let samples = e.seam_rgb_samples || []
+                if (samples.length === 0 && imgData) {
+                  samples = extractSeamRgbSamplesFromThumbnail(e, imgData, pCentroid)
+                }
+                return {
+                  ...e,
+                  normalized_profile: e.normalized_profile && e.normalized_profile.length >= 10
+                    ? e.normalized_profile
+                    : getOrComputeNormalizedProfile(e),
+                  seam_rgb_samples: samples,
+                }
+              }) as any,
+            }
+
+            await savePiece(updated)
+            return updated
           })
         )
-          .then(() => console.log(`Auto-upgraded ${missingProfiles.length} pieces with normalized profiles`))
-          .catch((err) => console.warn('Profile backfill non-fatal error:', err))
+          .then((upgraded) => {
+            console.log(`Auto-upgraded ${upgraded.length} pieces with seam ink & profiles`)
+            setStoredPieces((prev) =>
+              prev.map((p) => {
+                const found = upgraded.find((u) => u.id === p.id)
+                return found || p
+              })
+            )
+          })
+          .catch((err) => console.warn('Upgrade backfill non-fatal error:', err))
       }
     } catch (err) {
       console.error('Failed to load from IndexedDB:', err)
@@ -890,14 +1064,15 @@ export default function App() {
           let borderColor = '#58a6ff'
           let textColor = '#ffffff'
 
-          if (solvedPlc && idMatch) {
-            hudText = `PIECE #${idMatch.piece_number} -> [R${solvedPlc.row}, C${solvedPlc.col}] (${solvedPlc.rotation * 90}°) — ${idMatch.confidence.toFixed(0)}%`
+          if (solvedPlc && idMatch && idMatch.is_matched) {
+            hudText = `PIECE #${idMatch.piece_number} -> [R${solvedPlc.row}, C${solvedPlc.col}] (${solvedPlc.rotation * 90}°) — L2: ${idMatch.identity_distance.toFixed(4)} (${idMatch.confidence.toFixed(0)}%)`
             borderColor = '#2ea043'
             textColor = '#3fb950'
-          } else if (idMatch?.is_matched) {
-            hudText = `PIECE #${idMatch.piece_number} (${idMatch.rotation_offset * 90}°) — ${idMatch.confidence.toFixed(0)}%`
-            borderColor = '#d29922'
-            textColor = '#e3b341'
+          } else if (idMatch) {
+            const isMatch = idMatch.is_matched
+            hudText = `PIECE #${idMatch.piece_number} (${idMatch.rotation_offset * 90}°) — L2: ${idMatch.identity_distance.toFixed(4)} ${isMatch ? `[MATCH ${idMatch.confidence.toFixed(0)}%]` : `[NO MATCH > 0.045]`}`
+            borderColor = isMatch ? '#2ea043' : '#d29922'
+            textColor = isMatch ? '#3fb950' : '#e3b341'
           } else if (activePosterMatch) {
             hudText = `POSTER: [R${activePosterMatch.best_row}, C${activePosterMatch.best_col}] (${activePosterMatch.best_rotation_deg.toFixed(0)}°) — ${((activePosterMatch.confidence) * 100).toFixed(0)}%`
             borderColor = '#ffd33d'
@@ -1284,11 +1459,7 @@ export default function App() {
                       mean_rgb: null,
                     }))
                     const idMatch = identify_staged_piece_wasm(JSON.stringify(queryEdges), JSON.stringify(indexed))
-                    if (idMatch && idMatch.is_matched) {
-                      setIdentifiedPieceMatch(idMatch)
-                    } else {
-                      setIdentifiedPieceMatch(null)
-                    }
+                    setIdentifiedPieceMatch(idMatch || null)
                   } catch (err) {
                     // ignore
                   }
@@ -1612,6 +1783,11 @@ export default function App() {
     const metricH = targetPiece.bounding_height * mmPerPx
 
     const now = Date.now()
+    const pCentroid = {
+      x: (targetPiece.corners[0].x + targetPiece.corners[1].x + targetPiece.corners[2].x + targetPiece.corners[3].x) / 4,
+      y: (targetPiece.corners[0].y + targetPiece.corners[1].y + targetPiece.corners[2].y + targetPiece.corners[3].y) / 4,
+    }
+
     const stored: StoredPiece = {
       id: `piece_${now}_${nextPieceNum}`,
       piece_number: nextPieceNum,
@@ -1623,14 +1799,26 @@ export default function App() {
         { ...targetPiece.corners[2] },
         { ...targetPiece.corners[3] },
       ],
-      edges: targetPiece.edges.map((e) => ({
-        edge_type: e.edge_type,
-        start_corner: { ...e.start_corner },
-        end_corner: { ...e.end_corner },
-        curvature_depth: e.curvature_depth,
-        curve_samples: e.curve_samples ? e.curve_samples.map((p) => ({ ...p })) : [],
-        normalized_profile: Array.from(e.normalized_profile || getOrComputeNormalizedProfile(e)),
-      })) as any,
+      edges: targetPiece.edges.map((e) => {
+        const dx = e.end_corner.x - e.start_corner.x
+        const dy = e.end_corner.y - e.start_corner.y
+        const chordMm = Math.hypot(dx, dy) * mmPerPx
+        const tabDepthMm = Math.abs(e.curvature_depth) * mmPerPx
+        const rgbSamples = extractEdgeSeamRgbSamples(e, latestDewarpedRef.current, pCentroid)
+
+        return {
+          edge_type: e.edge_type,
+          start_corner: { ...e.start_corner },
+          end_corner: { ...e.end_corner },
+          curvature_depth: e.curvature_depth,
+          curve_samples: e.curve_samples ? e.curve_samples.map((p) => ({ ...p })) : [],
+          normalized_profile: Array.from(e.normalized_profile || getOrComputeNormalizedProfile(e)),
+          chord_length_mm: chordMm,
+          tab_depth_mm: tabDepthMm,
+          tab_width_mm: 0,
+          seam_rgb_samples: rgbSamples,
+        }
+      }) as any,
       bounding_width_px: targetPiece.bounding_width,
       bounding_height_px: targetPiece.bounding_height,
       metric_width_mm: metricW,
@@ -1756,17 +1944,7 @@ export default function App() {
       const curRows = posterDims.rows > 0 ? posterDims.rows : 28
       const curCols = posterDims.cols > 0 ? posterDims.cols : 36
 
-      const indexed = storedPieces.map((p) => ({
-        id: p.id,
-        piece_number: p.piece_number,
-        classification: p.classification,
-        edges: p.edges.map((e) => ({
-          edge_type: e.edge_type,
-          curvature_depth: e.curvature_depth,
-          normalized_profile: getOrComputeNormalizedProfile(e),
-        })),
-        mean_rgb: null,
-      }))
+      const indexed = storedPieces.map((p) => pieceToIndexedData(p))
 
       const res = solve_perimeter_1d_loop_wasm(JSON.stringify(indexed), curRows, curCols)
       if (res) {
@@ -1894,6 +2072,80 @@ export default function App() {
     playSaveSound()
     console.log('Perimeter solution and board placements rotated 180 degrees.')
   }, [posterDims, solvedPerimeterMap, placedSlots, playSaveSound])
+
+  // Phase 7: Inspect Pairwise Seams Between Piece A and Piece B
+  const handleInspectPiecePair = useCallback((pieceA: StoredPiece, pieceB: StoredPiece, tolMm = 1.5) => {
+    try {
+      const idxA = pieceToIndexedData(pieceA)
+      const idxB = pieceToIndexedData(pieceB)
+      const res = inspect_piece_pair_wasm(JSON.stringify(idxA), JSON.stringify(idxB), tolMm)
+      if (res) {
+        let bestIdx = 0
+        if (res.best_seam && res.seams) {
+          const found = res.seams.findIndex(
+            (s: any) => s.edge_a_idx === res.best_seam.edge_a_idx && s.edge_b_idx === res.best_seam.edge_b_idx
+          )
+          if (found >= 0) bestIdx = found
+        }
+        setActiveSeamInspection({
+          pieceA,
+          pieceB,
+          details: res,
+          toleranceMm: tolMm,
+          selectedSeamIndex: bestIdx,
+          saveStatus: null,
+        })
+      }
+    } catch (err) {
+      console.error('Failed to inspect piece pair seams:', err)
+      alert('Error inspecting piece pair: ' + String(err))
+    }
+  }, [])
+
+  // Phase 7: Save Ground-Truth Mating Pair Fixture
+  const handleSavePairFixture = useCallback(async (isTrueMate: boolean) => {
+    if (!activeSeamInspection) return
+    const { pieceA, pieceB, details, selectedSeamIndex } = activeSeamInspection
+    const seam = details.seams[selectedSeamIndex] || details.best_seam
+
+    const fixture = {
+      timestamp: new Date().toISOString(),
+      piece_a_id: pieceA.id,
+      piece_a_number: pieceA.piece_number,
+      piece_b_id: pieceB.id,
+      piece_b_number: pieceB.piece_number,
+      edge_a_idx: seam ? seam.edge_a_idx : 0,
+      edge_b_idx: seam ? seam.edge_b_idx : 0,
+      is_true_physical_mate: isTrueMate,
+      chord_diff_mm: seam ? seam.chord_diff_mm : 0,
+      tab_depth_diff_mm: seam ? seam.tab_depth_diff_mm : 0,
+      l2_curve_distance: seam ? seam.l2_curve_distance : 1.0,
+      combined_score: seam ? seam.combined_score : 0,
+      rejection_reason: seam ? seam.rejection_reason : null,
+      piece_a_data: pieceToIndexedData(pieceA),
+      piece_b_data: pieceToIndexedData(pieceB),
+    }
+
+    try {
+      setActiveSeamInspection((prev) => prev ? { ...prev, saveStatus: 'Saving...' } : null)
+      const res = await fetch('/api/save-pair-fixture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fixture),
+      })
+      const result = await res.json()
+      if (result.success) {
+        setActiveSeamInspection((prev) => prev ? { ...prev, saveStatus: `Saved as ${result.file}` } : null)
+        setTimeout(() => {
+          setActiveSeamInspection((prev) => prev ? { ...prev, saveStatus: null } : null)
+        }, 1500)
+      } else {
+        setActiveSeamInspection((prev) => prev ? { ...prev, saveStatus: `Error: ${result.error || 'Failed'}` } : null)
+      }
+    } catch (err: any) {
+      setActiveSeamInspection((prev) => prev ? { ...prev, saveStatus: `Error: ${err.message}` } : null)
+    }
+  }, [activeSeamInspection])
 
   // Rotate master reference poster by 90 or 180 degrees
   const handleRotatePoster = useCallback((deg: 90 | 180) => {
@@ -2289,6 +2541,7 @@ export default function App() {
       const isS = e.code === 'KeyS' || e.key === 's' || e.key === 'S'
       const isSpace = e.code === 'Space'
       const isG = e.code === 'KeyG' || e.key === 'g' || e.key === 'G'
+      const isF = e.code === 'KeyF' || e.key === 'f' || e.key === 'F'
 
       if (isS || (isSpace && !isGtMode)) {
         e.preventDefault()
@@ -2296,7 +2549,7 @@ export default function App() {
       } else if (isSpace && isGtMode) {
         e.preventDefault()
         handleSaveGroundTruth()
-      } else if (isG && !isGtMode) {
+      } else if ((isG || isF) && !isGtMode) {
         e.preventDefault()
         if (detectedPiece) {
           handleFreezeGroundTruth()
@@ -2348,46 +2601,34 @@ export default function App() {
   return (
     <div className="app-container">
       {/* Top Navigation Bar: Board, Piece Tray, Grid Info, Start Fresh */}
-      <div
-        className="app-top-nav"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '6px 14px',
-          background: '#161b22',
-          borderBottom: '1px solid #30363d',
-          flexShrink: 0,
-        }}
-      >
+      <div className="app-top-nav">
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <button
             type="button"
             className={`tab-pill-btn ${activeTopView === 'board' ? 'active' : ''}`}
             onClick={() => setActiveTopView('board')}
           >
-            BOARD
+            Board
           </button>
           <button
             type="button"
             className={`tab-pill-btn ${activeTopView === 'tray' ? 'active' : ''}`}
             onClick={() => setActiveTopView('tray')}
           >
-            PIECE TRAY ({storedPieces.length})
+            Piece Tray ({storedPieces.length})
           </button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 11, color: '#8b949e' }}>
-            GRID: <b>{posterDims.cols} × {posterDims.rows} ({posterDims.cols * posterDims.rows})</b>
+          <span style={{ color: 'var(--muted)' }}>
+            Grid: <b>{posterDims.cols} × {posterDims.rows} ({posterDims.cols * posterDims.rows})</b>
           </span>
           <button
             className="btn small danger"
-            style={{ padding: '3px 8px', fontSize: 10, background: '#21262d', borderColor: '#da3633', color: '#f85149' }}
             onClick={() => setShowResetConfirm(true)}
             title="Reset application and start completely fresh"
           >
-            START FRESH
+            Start fresh
           </button>
         </div>
       </div>
@@ -2400,7 +2641,7 @@ export default function App() {
                 position: 'fixed',
                 inset: 0,
                 zIndex: 99999,
-                background: '#090d13',
+                background: 'var(--bg)',
                 display: 'flex',
                 flexDirection: 'column',
               }
@@ -2420,48 +2661,49 @@ export default function App() {
         {isCalibratingFullScreen && (
           <div
             style={{
-              padding: '8px 16px',
-              background: '#161b22',
-              borderBottom: '1px solid #30363d',
+              padding: '6px 12px',
+              borderBottom: '1px solid var(--border)',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
               flexWrap: 'wrap',
-              gap: 12,
+              gap: 8,
+              background: 'var(--bg)',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#f0f6fc', letterSpacing: 0.5 }}>
-                CAMERA CALIBRATION & OPTICS
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontWeight: 'bold' }}>
+                Camera calibration & optics
               </span>
-              <span style={{ fontSize: 12, color: '#8b949e' }}>
-                FOCUS: <b style={{ color: focusScore >= 40 ? '#3fb950' : focusScore >= 20 ? '#d29922' : '#f85149' }}>{focusScore.toFixed(0)}%</b>
+              <span className="muted">
+                Focus: <b className={focusScore >= 40 ? 'green' : focusScore >= 20 ? 'yellow' : 'red'}>{focusScore.toFixed(0)}%</b>
               </span>
-              <span style={{ fontSize: 11, color: isCameraActive ? '#3fb950' : '#f85149', fontWeight: 600 }}>
-                {isCameraActive ? 'LIVE' : 'OFFLINE'}
+              <span className={isCameraActive ? 'green' : 'red'}>
+                {isCameraActive ? 'Live' : 'Offline'}
               </span>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               {isCameraActive ? (
-                <button className="btn small" onClick={stopCamera}>STOP CAMERA</button>
+                <button className="btn" onClick={stopCamera}>Stop camera</button>
               ) : (
-                <button className="btn small primary" onClick={startCamera}>START CAMERA</button>
+                <button className="btn" onClick={startCamera}>Start camera</button>
               )}
               <button
-                className={`btn small ${isMirror ? 'primary' : ''}`}
+                className="btn"
+                style={{ fontWeight: isMirror ? 'bold' : 'normal' }}
                 onClick={() => setIsMirror(!isMirror)}
                 title="Toggle horizontal mirror"
               >
-                {isMirror ? 'MIRRORED' : 'MIRROR'}
+                {isMirror ? 'Mirrored' : 'Mirror'}
               </button>
-              <button className="btn small" onClick={handleSnapAll} title="Snap fiducial corners to nearest target">
-                SNAP CORNERS
+              <button className="btn" onClick={handleSnapAll} title="Snap fiducial corners to nearest target">
+                Snap corners
               </button>
 
               {/* Lens K1 Distortion Slider */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#21262d', padding: '3px 8px', borderRadius: 4, border: '1px solid #30363d' }}>
-                <label style={{ fontSize: 10, fontWeight: 700, color: '#8b949e' }}>LENS K1:</label>
+              <div className="control-group">
+                <label>Lens K1:</label>
                 <input
                   type="range"
                   min="-0.30"
@@ -2469,15 +2711,15 @@ export default function App() {
                   step="0.01"
                   value={lensDistortion}
                   onChange={(e) => setLensDistortion(parseFloat(e.target.value))}
-                  style={{ width: 75, accentColor: '#00e5ff' }}
+                  style={{ width: 80 }}
                 />
-                <code style={{ fontSize: 11, color: '#ffd33d', minWidth: 32, textAlign: 'right' }}>{lensDistortion.toFixed(2)}</code>
-                <button className="btn tiny" onClick={() => setLensDistortion(0)} title="Reset lens distortion to 0">RESET</button>
+                <code>{lensDistortion.toFixed(2)}</code>
+                <button className="btn" onClick={() => setLensDistortion(0)} title="Reset lens distortion to 0">Reset</button>
               </div>
 
               {/* Sensitivity Slider */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#21262d', padding: '3px 8px', borderRadius: 4, border: '1px solid #30363d' }}>
-                <label style={{ fontSize: 10, fontWeight: 700, color: '#8b949e' }}>SENSITIVITY:</label>
+              <div className="control-group">
+                <label>Sensitivity:</label>
                 <input
                   type="range"
                   min="10"
@@ -2485,27 +2727,26 @@ export default function App() {
                   step="1"
                   value={sensitivity}
                   onChange={(e) => setSensitivity(parseFloat(e.target.value))}
-                  style={{ width: 60, accentColor: '#00e5ff' }}
+                  style={{ width: 80 }}
                 />
-                <code style={{ fontSize: 11, color: '#ffd33d', minWidth: 20, textAlign: 'right' }}>{sensitivity.toFixed(0)}</code>
+                <code>{sensitivity.toFixed(0)}</code>
               </div>
 
               <a
                 href="/calibration_mat.svg"
                 download="staging_mat_100mm.svg"
-                className="btn small"
-                style={{ textDecoration: 'none', background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}
+                className="btn"
                 title="Download 100mm Target Mat SVG"
               >
-                MAT SVG
+                Mat SVG
               </a>
 
               <button
-                className="btn small primary"
-                style={{ background: '#238636', borderColor: '#2ea043', fontWeight: 700, padding: '5px 14px' }}
+                className="btn"
+                style={{ fontWeight: 'bold' }}
                 onClick={() => setIsCalibratingFullScreen(false)}
               >
-                DONE
+                Done
               </button>
             </div>
           </div>
@@ -2520,7 +2761,7 @@ export default function App() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  background: '#04070a',
+                  background: '#000',
                   overflow: 'hidden',
                   padding: 12,
                 }
@@ -2566,7 +2807,7 @@ export default function App() {
           {isCalibratingFullScreen && !isCameraActive && (
             <div className="camera-empty">
               {cameraError ? <span className="red">{cameraError}</span> : <span>Camera is inactive.</span>}
-              <button className="btn primary" onClick={startCamera}>START CAMERA</button>
+              <button className="btn" style={{ fontWeight: 'bold' }} onClick={startCamera}>Start camera</button>
             </div>
           )}
 
@@ -2575,16 +2816,14 @@ export default function App() {
               style={{
                 position: 'absolute',
                 bottom: 16,
-                background: 'rgba(22, 27, 34, 0.9)',
-                border: '1px solid #30363d',
-                borderRadius: 6,
-                padding: '6px 14px',
-                fontSize: 12,
-                color: '#8b949e',
+                background: 'var(--bg)',
+                border: '1px solid var(--border)',
+                padding: '4px 10px',
+                color: 'var(--muted)',
                 pointerEvents: 'none',
               }}
             >
-              Drag corners C1–C4 to match the 4 fiducials on the mat. Click DONE or press ESC when finished.
+              Drag corners C1–C4 to match the 4 fiducials on the mat. Click Done or press ESC when finished.
             </div>
           )}
         </div>
@@ -2594,15 +2833,13 @@ export default function App() {
       {activeTopView === 'board' ? (
         <main className="main-workbench">
           {/* Left Column: Dewarp Stage */}
-          <section className="workbench-panel" style={{ borderRight: '1px solid var(--border)' }}>
-            <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px' }}>
+          <section className="workbench-panel">
+            <div className="panel-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontWeight: 700, fontSize: 12, color: '#f0f6fc', letterSpacing: 0.5 }}>
-                  DEWARP STAGE
-                </span>
+                <span>Dewarp stage</span>
                 {gtSavedCount > 0 && (
-                  <span className="badge" style={{ background: '#2b6cb0', color: '#fff', fontSize: 9 }}>
-                    GT #{gtSavedCount}
+                  <span className="badge">
+                    (GT #{gtSavedCount})
                   </span>
                 )}
               </div>
@@ -2610,24 +2847,23 @@ export default function App() {
               <div className="panel-actions" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <button
                   className="btn small"
-                  style={{ background: '#21262d', borderColor: '#388bfd', color: '#58a6ff', fontWeight: 600 }}
                   onClick={() => setIsCalibratingFullScreen(true)}
                   title="Open full-screen camera view and fiducial calibration"
                 >
-                  CALIBRATE CAMERA
+                  Calibrate camera
                 </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
-                  <span style={{ color: isCameraActive ? '#3fb950' : '#f85149', fontWeight: 600 }}>
-                    {isCameraActive ? 'LIVE' : 'OFFLINE'}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className={isCameraActive ? 'green' : 'red'}>
+                    {isCameraActive ? 'Live' : 'Offline'}
                   </span>
-                  <span style={{ color: '#8b949e' }}>
-                    FOCUS: <b style={{ color: focusScore >= 40 ? '#3fb950' : focusScore >= 20 ? '#d29922' : '#f85149' }}>{focusScore.toFixed(0)}%</b>
+                  <span className="muted">
+                    Focus: <b className={focusScore >= 40 ? 'green' : focusScore >= 20 ? 'yellow' : 'red'}>{focusScore.toFixed(0)}%</b>
                   </span>
                 </div>
               </div>
             </div>
 
-            <div className="panel-view" style={{ minHeight: 280, maxHeight: '48vh', flex: 1, background: '#090d13', position: 'relative', overflow: 'hidden' }}>
+            <div className="panel-view" style={{ minHeight: 280, maxHeight: '48vh', flex: 1, background: '#000', position: 'relative', overflow: 'hidden' }}>
               <div
                 style={{
                   display: 'flex',
@@ -2653,13 +2889,10 @@ export default function App() {
                     maxHeight: '100%',
                     aspectRatio: '1 / 1',
                     objectFit: 'contain',
-                    borderRadius: 8,
-                    border: isGtMode ? '2px solid #00e5ff' : detectedPiece ? '2px solid #2ea043' : '2px solid #30363d',
-                    boxShadow: isGtMode ? '0 0 20px rgba(0, 229, 255, 0.3)' : detectedPiece ? '0 0 20px rgba(46, 160, 67, 0.25)' : '0 4px 16px rgba(0, 0, 0, 0.6)',
-                    background: '#0d1117',
+                    border: isGtMode ? '2px solid var(--fg)' : detectedPiece ? '2px solid var(--ok)' : '1px solid var(--border)',
+                    background: '#000',
                     cursor: isGtMode ? (draggingGtCorner !== null ? 'grabbing' : 'crosshair') : 'default',
                     touchAction: 'none',
-                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
                   }}
                 />
 
@@ -2670,16 +2903,15 @@ export default function App() {
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    background: 'rgba(13, 17, 23, 0.85)',
+                    background: 'rgba(0, 0, 0, 0.75)',
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 10,
-                    borderRadius: 8,
                   }}>
-                    <span style={{ color: '#8b949e', fontSize: 13 }}>Camera is offline</span>
-                    <button className="btn primary" onClick={startCamera}>START CAMERA</button>
+                    <span style={{ color: '#fff', fontSize: 13 }}>Camera is offline</span>
+                    <button className="btn" onClick={startCamera}>Start camera</button>
                   </div>
                 )}
 
@@ -2687,13 +2919,11 @@ export default function App() {
                   <div style={{
                     position: 'absolute',
                     bottom: 14,
-                    background: 'rgba(22, 27, 34, 0.88)',
-                    backdropFilter: 'blur(4px)',
-                    border: '1px solid #30363d',
-                    borderRadius: 20,
-                    padding: '4px 12px',
-                    fontSize: 11,
-                    color: '#8b949e',
+                    background: 'var(--bg)',
+                    border: '1px solid var(--border)',
+                    padding: '3px 8px',
+                    fontSize: 12,
+                    color: 'var(--muted)',
                     pointerEvents: 'none',
                   }}>
                     Place piece on 100mm mat stage
@@ -2744,69 +2974,53 @@ export default function App() {
                         )}
                       </div>
                     </div>
+
+                    <div className="data-row" style={{ marginTop: 2, paddingTop: 4, borderTop: '1px solid #30363d' }}>
+                      <span className="data-label">INVENTORY L2:</span>
+                      <span className="data-val" style={{ fontFamily: 'monospace' }}>
+                        {identifiedPieceMatch ? (
+                          <span style={{ color: identifiedPieceMatch.is_matched ? '#3fb950' : '#ffd33d', fontWeight: 700 }}>
+                            #{identifiedPieceMatch.piece_number} ({identifiedPieceMatch.rotation_offset * 90}°) L2={identifiedPieceMatch.identity_distance.toFixed(4)}
+                            {identifiedPieceMatch.is_matched ? ' [MATCH]' : ' [>0.045]'}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#8b949e' }}>-- (Scan pieces to inventory)</span>
+                        )}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Primary Action Controls: Prominent, zero-scroll Save Piece + GT */}
+                  {/* Primary Action Controls */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
                     <button
-                      className="btn primary"
-                      style={{
-                        background: detectedPiece || lastValidPieceRef.current ? '#238636' : '#21262d',
-                        borderColor: detectedPiece || lastValidPieceRef.current ? '#2ea043' : '#30363d',
-                        color: detectedPiece || lastValidPieceRef.current ? '#ffffff' : '#8b949e',
-                        padding: '10px 14px',
-                        fontSize: 13,
-                        fontWeight: 700,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                        cursor: detectedPiece || lastValidPieceRef.current ? 'pointer' : 'not-allowed',
-                        boxShadow: detectedPiece || lastValidPieceRef.current ? '0 2px 8px rgba(35, 134, 54, 0.4)' : 'none',
-                        transition: 'all 0.15s ease',
-                      }}
+                      className="btn primary record-btn"
                       disabled={!detectedPiece && !lastValidPieceRef.current}
                       onClick={handleRecordPiece}
                       title="Save detected piece to inventory (Shortcut: S or SPACE)"
                     >
                       {saveFeedback ? (
-                        <span style={{ color: '#56d364', fontWeight: 'bold' }}>{saveFeedback}</span>
+                        <span className="green">{saveFeedback}</span>
                       ) : detectedPiece || lastValidPieceRef.current ? (
                         <>
-                          <span>SAVE PIECE #{storedPieces.length + 1}</span>
-                          <span style={{
-                            fontSize: 10,
-                            background: '#196c2e',
-                            color: '#fff',
-                            padding: '2px 6px',
-                            borderRadius: 3,
-                            letterSpacing: 0.5,
-                          }}>
-                            [S] or [SPACE]
+                          <span>Save piece #{storedPieces.length + 1}</span>
+                          <span className="muted" style={{ marginLeft: 6 }}>
+                            [S / Space]
                           </span>
                         </>
                       ) : (
-                        <span style={{ fontSize: 12 }}>PLACE PIECE ON MAT TO SCAN</span>
+                        <span>Place piece on mat to scan</span>
                       )}
                     </button>
 
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button
                         className="btn"
-                        style={{
-                          flex: 1,
-                          background: '#1a365d',
-                          borderColor: '#3182ce',
-                          color: '#63b3ed',
-                          fontSize: 10,
-                          padding: '6px 8px',
-                          fontWeight: 600,
-                        }}
+                        style={{ flex: 1 }}
                         disabled={!detectedPiece}
                         onClick={handleFreezeGroundTruth}
-                        title="Freeze corners to label ground truth [G]"
+                        title="Freeze corners to label ground truth [F or G]"
                       >
-                        LABEL GT [G]
+                        Label ground truth [F / G]
                       </button>
                     </div>
                   </div>
@@ -2817,24 +3031,23 @@ export default function App() {
                     Drag <b>cyan pins (C1..C4)</b> on preview:
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, background: '#161b22', padding: 4, borderRadius: 4, border: '1px solid var(--border)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, padding: 4, border: '1px solid var(--border)' }}>
                     {gtCorners && gtCorners.map((pt, i) => (
                       <div
                         key={i}
                         onClick={() => setDraggingGtCorner(draggingGtCorner === i ? null : i)}
                         style={{
                           padding: '3px 5px',
-                          background: draggingGtCorner === i ? '#00e5ff22' : '#21262d',
-                          border: `1px solid ${draggingGtCorner === i ? '#00e5ff' : 'var(--border)'}`,
-                          borderRadius: 3,
+                          border: `1px solid ${draggingGtCorner === i ? 'var(--fg)' : 'var(--border)'}`,
                           cursor: 'pointer',
-                          fontSize: 9,
+                          fontSize: 11,
                           display: 'flex',
                           justifyContent: 'space-between',
+                          fontWeight: draggingGtCorner === i ? 'bold' : 'normal',
                         }}
                       >
-                        <b style={{ color: draggingGtCorner === i ? '#00e5ff' : 'var(--text)' }}>C{i + 1}</b>
-                        <span style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
+                        <b>C{i + 1}</b>
+                        <span style={{ fontFamily: 'monospace', color: 'var(--muted)' }}>({pt.x.toFixed(0)}, {pt.y.toFixed(0)})</span>
                       </div>
                     ))}
                   </div>
@@ -2842,14 +3055,14 @@ export default function App() {
                   <div className="gt-edge-list">
                     {gtEdges.map((type, idx) => (
                       <div key={idx} className={`gt-edge-item ${type.toLowerCase()}`} style={{ padding: '3px 6px' }}>
-                        <span className="gt-edge-label" style={{ fontSize: 10 }}>E{idx + 1}:</span>
+                        <span className="gt-edge-label" style={{ fontSize: 11 }}>E{idx + 1}:</span>
                         <div className="gt-edge-toggle">
                           {(['Tab', 'Hole', 'Flat'] as const).map((t) => (
                             <button
                               key={t}
                               className={`gt-edge-btn ${type === t ? `active ${t.toLowerCase()}` : ''}`}
                               onClick={() => handleToggleEdgeType(idx, t)}
-                              style={{ padding: '2px 5px', fontSize: 9 }}
+                              style={{ padding: '2px 5px', fontSize: 11 }}
                             >
                               {t}
                             </button>
@@ -2860,17 +3073,17 @@ export default function App() {
                   </div>
 
                   {gtSaveStatus && (
-                    <div style={{ fontSize: 10, textAlign: 'center', color: gtSaveStatus.startsWith('Saved') ? '#38a169' : '#e53e3e' }}>
+                    <div style={{ fontSize: 11, textAlign: 'center', color: gtSaveStatus.startsWith('Saved') ? 'var(--ok)' : 'var(--err)' }}>
                       {gtSaveStatus}
                     </div>
                   )}
 
                   <div className="gt-actions" style={{ marginTop: 4 }}>
                     <button className="btn small" onClick={handleExitGtMode}>
-                      CANCEL [ESC]
+                      Cancel [Esc]
                     </button>
-                    <button className="btn small primary" onClick={handleSaveGroundTruth}>
-                      SAVE [SPACE]
+                    <button className="btn small" style={{ fontWeight: 'bold' }} onClick={handleSaveGroundTruth}>
+                      Save [Space]
                     </button>
                   </div>
                 </div>
@@ -2883,27 +3096,24 @@ export default function App() {
             {activePlacementPiece && (
               <div
                 style={{
-                  background: '#1f6feb',
-                  color: '#fff',
-                  padding: '7px 14px',
+                  background: 'var(--bg)',
+                  borderBottom: '1px solid var(--border)',
+                  padding: '6px 12px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   fontSize: 12,
-                  fontWeight: 600,
-                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.4)',
                   zIndex: 10,
                 }}
               >
                 <span>
-                  PLACING PIECE #{activePlacementPiece.piece_number} ({activePlacementPiece.classification.toUpperCase()}) — CLICK ANY SLOT ON BOARD TO PLACE
+                  Placing piece #{activePlacementPiece.piece_number} ({activePlacementPiece.classification}) — click any slot on board to place
                 </span>
                 <button
                   className="btn small"
-                  style={{ background: '#0d1117', color: '#f0f6fc', border: '1px solid #30363d', padding: '2px 8px', fontWeight: 600 }}
                   onClick={() => setActivePlacementPiece(null)}
                 >
-                  CANCEL
+                  Cancel
                 </button>
               </div>
             )}
@@ -3010,6 +3220,20 @@ export default function App() {
             onClearAllPieces={() => setShowResetConfirm(true)}
             slotFilter={null}
             onClearSlotFilter={() => { }}
+            pairingSourcePieceId={pairingSourcePieceId}
+            onStartPairingWith={(pieceId) => {
+              if (!pairingSourcePieceId) {
+                setPairingSourcePieceId(pieceId)
+              } else {
+                const pieceA = storedPieces.find((p) => p.id === pairingSourcePieceId)
+                const pieceB = storedPieces.find((p) => p.id === pieceId)
+                setPairingSourcePieceId(null)
+                if (pieceA && pieceB) {
+                  handleInspectPiecePair(pieceA, pieceB)
+                }
+              }
+            }}
+            onCancelPairing={() => setPairingSourcePieceId(null)}
             onPlaceOnBoard={(piece) => {
               setActivePlacementPiece(piece)
               setInspectedPiece(null)
@@ -3104,6 +3328,20 @@ export default function App() {
               </button>
 
               <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn"
+                  style={{ background: '#1f6feb', borderColor: '#388bfd', color: '#fff', fontWeight: 600 }}
+                  onClick={() => {
+                    const srcId = inspectedPiece.id
+                    setInspectedPiece(null)
+                    setPairingSourcePieceId(srcId)
+                    setActiveTopView('tray')
+                  }}
+                  title="Select another piece to diagnostically inspect pairwise seam fit"
+                >
+                  PAIR WITH ANOTHER...
+                </button>
+
                 {inspectedPiece.status !== 'Placed' && (
                   <button
                     className="btn primary"
@@ -3181,6 +3419,412 @@ export default function App() {
               >
                 DELETE ALL &amp; RESET
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 7: Pairwise Seam Debugger Modal */}
+      {activeSeamInspection && (
+        <div className="modal-backdrop" onClick={() => setActiveSeamInspection(null)}>
+          <div
+            className="piece-preview-dialog"
+            style={{ width: '92vw', maxWidth: 880, maxHeight: '90vh', overflowY: 'auto' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="piece-preview-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: '#58a6ff' }}>
+                  PAIRWISE SEAM DEBUGGER: PIECE #{activeSeamInspection.pieceA.piece_number} ↔ PIECE #{activeSeamInspection.pieceB.piece_number}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: '#8b949e' }}>Metric Tol:</span>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="4.0"
+                    step="0.1"
+                    value={activeSeamInspection.toleranceMm}
+                    onChange={(e) => {
+                      const newTol = parseFloat(e.target.value)
+                      handleInspectPiecePair(activeSeamInspection.pieceA, activeSeamInspection.pieceB, newTol)
+                    }}
+                    style={{ width: 80, cursor: 'pointer' }}
+                  />
+                  <span className="badge" style={{ background: '#21262d', color: '#58a6ff', border: '1px solid #30363d', minWidth: 60, textAlign: 'center' }}>
+                    ±{activeSeamInspection.toleranceMm.toFixed(1)}mm
+                  </span>
+                </div>
+              </div>
+              <button
+                className="btn small"
+                onClick={() => setActiveSeamInspection(null)}
+                style={{ background: '#21262d', color: '#c9d1d9', borderColor: '#30363d' }}
+              >
+                CLOSE
+              </button>
+            </div>
+
+            {/* Side-by-side piece thumbnails & seam selector */}
+            <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Filtered Candidate Seams (Only Polarity-Compatible Tab ↔ Hole) */}
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#8b949e', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+                  <span>VALID CANDIDATE SEAMS (TAB ↔ HOLE ONLY):</span>
+                  <span style={{ color: '#58a6ff' }}>
+                    SELECTED: Seam #{activeSeamInspection.selectedSeamIndex + 1}
+                  </span>
+                </div>
+                {(() => {
+                  const candidateSeams = activeSeamInspection.details.seams
+                    .map((s: any, origIdx: number) => ({ ...s, origIdx }))
+                    .filter((s: any) => s.polarity_compatible)
+                    .sort((a: any, b: any) => {
+                      if (a.is_mate !== b.is_mate) return a.is_mate ? -1 : 1
+                      return a.l2_curve_distance - b.l2_curve_distance
+                    })
+
+                  if (candidateSeams.length === 0) {
+                    return (
+                      <div style={{ padding: '8px 12px', background: '#161b22', borderRadius: 4, color: '#8b949e', fontSize: 11 }}>
+                        No Tab ↔ Hole pairings exist between these pieces (e.g. flat borders only).
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(4, candidateSeams.length)}, 1fr)`, gap: 8 }}>
+                      {candidateSeams.map((s: any) => {
+                        const isSelected = activeSeamInspection.selectedSeamIndex === s.origIdx
+                        const isMate = s.is_mate
+
+                        return (
+                          <button
+                            key={s.origIdx}
+                            onClick={() => setActiveSeamInspection((prev) => prev ? { ...prev, selectedSeamIndex: s.origIdx } : null)}
+                            className="btn"
+                            style={{
+                              padding: '6px 8px',
+                              borderWidth: isSelected ? 2 : 1,
+                              borderColor: isSelected ? 'var(--fg)' : 'var(--border)',
+                              textAlign: 'left',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              fontWeight: isSelected ? 'bold' : 'normal',
+                            }}
+                          >
+                            <div>
+                              <div>Piece #{activeSeamInspection.pieceA.piece_number} [E{s.edge_a_idx + 1}] ↔ Piece #{activeSeamInspection.pieceB.piece_number} [E{s.edge_b_idx + 1}]</div>
+                              <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                                {s.edge_a_type} ↔ {s.edge_b_type} | Δchord: {s.chord_diff_mm.toFixed(1)}mm
+                              </div>
+                            </div>
+                            <span className={isMate ? 'green' : 'muted'} style={{ fontWeight: 'bold' }}>
+                              L2: {s.l2_curve_distance.toFixed(3)}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+              </div>
+
+              {/* Active Selected Seam Deep-Dive Card */}
+              {(() => {
+                const s = activeSeamInspection.details.seams[activeSeamInspection.selectedSeamIndex]
+                if (!s) return null
+                const edgeA = activeSeamInspection.pieceA.edges[s.edge_a_idx]
+                const edgeB = activeSeamInspection.pieceB.edges[s.edge_b_idx]
+
+                // Compute physical rotation angles so Edge A faces East (90 deg CW) and Edge B faces West (270 deg CW)
+                // In standard indexing: Edge 0=North (0°), 1=East (90°), 2=South (180°), 3=West (270°)
+                // To orient Edge A facing East: rotate by (1 - edge_a_idx) * 90°
+                // To orient Edge B facing West: rotate by (3 - edge_b_idx) * 90°
+                const rotDegA = ((1 - s.edge_a_idx + 4) % 4) * 90
+                const rotDegB = ((3 - s.edge_b_idx + 4) % 4) * 90
+
+                const profA = getOrComputeNormalizedProfile(edgeA)
+                const profB = getOrComputeNormalizedProfile(edgeB)
+                const seamSamplesA = edgeA.seam_rgb_samples || []
+                const seamSamplesB = edgeB.seam_rgb_samples || []
+
+                // Point-by-point residual curve
+                const residuals: number[] = []
+                for (let k = 0; k < 100; k++) {
+                  const valA = profA[k] || 0
+                  const revB = profB[99 - k] || 0
+                  residuals.push(valA + revB) // 0 if perfect complementary tab+hole
+                }
+
+                return (
+                  <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 6, padding: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#f0f6fc' }}>
+                          PHYSICAL SEAM INSPECTION: Piece #{activeSeamInspection.pieceA.piece_number} [Edge {s.edge_a_idx + 1}: {s.edge_a_type}] ◄══► Piece #{activeSeamInspection.pieceB.piece_number} [Edge {s.edge_b_idx + 1}: {s.edge_b_type}]
+                        </span>
+                        <span
+                          className="badge"
+                          style={{
+                            background: s.is_mate ? '#238636' : '#da3633',
+                            color: '#fff',
+                            fontSize: 10,
+                            padding: '3px 8px',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {s.is_mate ? 'GENUINE MATE (PASSED ALL GATES)' : 'REJECTED PAIRING'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Side-by-Side Physically Oriented Alignment Preview */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto 1fr',
+                      gap: 16,
+                      alignItems: 'center',
+                      background: '#0d1117',
+                      border: '1px solid #30363d',
+                      borderRadius: 6,
+                      padding: 14,
+                      marginBottom: 12,
+                    }}>
+                      {/* Piece A Rotated so Edge A faces East (Right) */}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#58a6ff' }}>
+                          Piece #{activeSeamInspection.pieceA.piece_number} (Edge {s.edge_a_idx + 1} facing Seam ➔)
+                        </div>
+                        <div style={{ position: 'relative', width: 140, height: 140, background: '#161b22', borderRadius: 4, border: '1px solid #30363d', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <img
+                            src={activeSeamInspection.pieceA.thumbnailDataUrl}
+                            alt={`Piece #${activeSeamInspection.pieceA.piece_number}`}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'contain',
+                              transform: `rotate(${rotDegA}deg)`,
+                              transition: 'transform 0.2s ease',
+                            }}
+                          />
+                          {/* Indicator arrow on mating edge */}
+                          <div style={{ position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)', background: 'rgba(88, 166, 255, 0.85)', color: '#fff', fontSize: 9, fontWeight: 700, padding: '2px 4px', borderRadius: 3 }}>
+                            E{s.edge_a_idx + 1}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 10, color: '#8b949e' }}>
+                          Chord: {s.chord_len_a_mm.toFixed(1)}mm | Depth: {s.tab_depth_a_mm.toFixed(1)}mm
+                        </div>
+                      </div>
+
+                      {/* Seam Cut Line Divider */}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <div style={{ width: 2, height: 90, background: s.is_mate ? '#2ea043' : '#da3633', borderRadius: 1 }} />
+                        <span style={{ fontSize: 9, fontWeight: 700, color: s.is_mate ? '#3fb950' : '#f85149' }}>
+                          {s.is_mate ? 'SEAM FIT' : 'MISMATCH'}
+                        </span>
+                        <div style={{ width: 2, height: 90, background: s.is_mate ? '#2ea043' : '#da3633', borderRadius: 1 }} />
+                      </div>
+
+                      {/* Piece B Rotated so Edge B faces West (Left) */}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#ffd33d' }}>
+                          ( Edge {s.edge_b_idx + 1} facing Seam) Piece #{activeSeamInspection.pieceB.piece_number}
+                        </div>
+                        <div style={{ position: 'relative', width: 140, height: 140, background: '#161b22', borderRadius: 4, border: '1px solid #30363d', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <img
+                            src={activeSeamInspection.pieceB.thumbnailDataUrl}
+                            alt={`Piece #${activeSeamInspection.pieceB.piece_number}`}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'contain',
+                              transform: `rotate(${rotDegB}deg)`,
+                              transition: 'transform 0.2s ease',
+                            }}
+                          />
+                          {/* Indicator arrow on mating edge */}
+                          <div style={{ position: 'absolute', left: 4, top: '50%', transform: 'translateY(-50%)', background: 'rgba(255, 211, 61, 0.85)', color: '#000', fontSize: 9, fontWeight: 700, padding: '2px 4px', borderRadius: 3 }}>
+                            E{s.edge_b_idx + 1}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 10, color: '#8b949e' }}>
+                          Chord: {s.chord_len_b_mm.toFixed(1)}mm | Depth: {s.tab_depth_b_mm.toFixed(1)}mm
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Diagnostic Metric Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+                      {/* Step 1: Topology */}
+                      <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
+                        <div style={{ fontSize: 10, color: '#8b949e' }}>STEP 1: POLARITY</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: s.polarity_compatible ? '#3fb950' : '#f85149' }}>
+                          {s.polarity_compatible ? 'COMPATIBLE' : 'INCOMPATIBLE'}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#8b949e', marginTop: 1 }}>
+                          {s.edge_a_type} ↔ {s.edge_b_type}
+                        </div>
+                      </div>
+
+                      {/* Step 2: Millimeter Metric Chord & Tab Depth */}
+                      <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
+                        <div style={{ fontSize: 10, color: '#8b949e' }}>STEP 2: METRIC TOLERANCE</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: s.metric_pass ? '#3fb950' : '#f85149' }}>
+                          {s.metric_pass ? `PASSED (≤${activeSeamInspection.toleranceMm.toFixed(1)}mm)` : `EXCEEDED (>${activeSeamInspection.toleranceMm.toFixed(1)}mm)`}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#8b949e', marginTop: 1 }}>
+                          Δchord: {s.chord_diff_mm.toFixed(2)}mm | Δdepth: {s.tab_depth_diff_mm.toFixed(2)}mm
+                        </div>
+                      </div>
+
+                      {/* Step 4: Sub-pixel Contour L2 Residual */}
+                      <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
+                        <div style={{ fontSize: 10, color: '#8b949e' }}>STEP 4: CONTOUR L2 / L∞</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2, color: s.l2_curve_distance <= 0.045 ? '#3fb950' : s.l2_curve_distance <= 0.070 ? '#ffd33d' : '#f85149' }}>
+                          L2: {s.l2_curve_distance.toFixed(4)}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#8b949e', marginTop: 1 }}>
+                          L∞: {s.linf_curve_distance ? s.linf_curve_distance.toFixed(3) : 'N/A'} | Shift: {s.alignment_shift}px
+                        </div>
+                      </div>
+
+                      {/* Step 3: Ink MGC Cost */}
+                      <div style={{ background: '#21262d', padding: '8px 10px', borderRadius: 4, border: '1px solid #30363d' }}>
+                        <div style={{ fontSize: 10, color: '#8b949e' }}>STEP 3: SEAM INK MGC</div>
+                        <div style={{
+                          fontSize: 13,
+                          fontWeight: 700,
+                          marginTop: 2,
+                          color: s.ink_continuity_cost < 0 ? '#8b949e' : s.ink_continuity_cost <= 0.30 ? '#3fb950' : '#f85149'
+                        }}>
+                          {s.ink_continuity_cost < 0 ? 'N/A (No Ink)' : `Cost: ${s.ink_continuity_cost.toFixed(3)}`}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#8b949e', marginTop: 1 }}>
+                          Score: {(s.combined_score * 100).toFixed(0)}%
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Detailed Rejection Reason or Success Banner */}
+                    <div style={{
+                      padding: '8px 12px',
+                      borderRadius: 4,
+                      background: s.is_mate ? 'rgba(46, 160, 67, 0.15)' : 'rgba(218, 54, 51, 0.15)',
+                      border: `1px solid ${s.is_mate ? '#2ea043' : '#da3633'}`,
+                      fontSize: 12,
+                      color: s.is_mate ? '#56d364' : '#ff7b72',
+                      marginBottom: 12,
+                    }}>
+                      <b>STATUS:</b> {s.is_mate ? 'Passes all 4 physical gates: Complementary polarity, metric millimeter bounds, and complementary contour matching curve.' : s.rejection_reason || 'Failed physical verification gates.'}
+                    </div>
+
+                    {/* Seam Ink Continuity Strip (Gallagher MGC Color Preview) */}
+                    {seamSamplesA.length > 0 && seamSamplesB.length > 0 && (
+                      <div style={{ background: '#090d13', borderRadius: 6, border: '1px solid #30363d', padding: 10, marginBottom: 12 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
+                          <span>SEAM INK CONTINUITY STRIP (Edge A Pixels ◄══► Reversed Edge B Pixels):</span>
+                          <span style={{ color: s.ink_continuity_cost < 0.25 ? '#3fb950' : '#ffd33d' }}>
+                            MGC Cost: {s.ink_continuity_cost.toFixed(3)}
+                          </span>
+                        </div>
+                        {/* 100-pixel color strips meeting at seam */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          {/* Strip A */}
+                          <div style={{ display: 'flex', height: 12, borderRadius: 2, overflow: 'hidden' }}>
+                            {seamSamplesA.map((rgb, idx) => (
+                              <div key={idx} style={{ flex: 1, background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }} />
+                            ))}
+                          </div>
+                          {/* Strip B (Traversed in reverse along common seam) */}
+                          <div style={{ display: 'flex', height: 12, borderRadius: 2, overflow: 'hidden' }}>
+                            {seamSamplesA.map((_, idx) => {
+                              const revIdx = seamSamplesB.length - 1 - idx
+                              const rgb = seamSamplesB[revIdx] || [0, 0, 0]
+                              return <div key={idx} style={{ flex: 1, background: `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})` }} />
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Point-by-Point Curve Superposition & Residual Error Heatmap */}
+                    <div style={{ background: '#090d13', borderRadius: 6, border: '1px solid #30363d', padding: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: '#8b949e', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>COMPLEMENTARY CURVE OVERLAY & RESIDUAL GAP:</span>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          <span style={{ color: '#58a6ff' }}>― Piece #{activeSeamInspection.pieceA.piece_number} [E{s.edge_a_idx + 1}]</span>
+                          <span style={{ color: '#ffd33d' }}>― Piece #{activeSeamInspection.pieceB.piece_number} [E{s.edge_b_idx + 1}] (Reversed Seam)</span>
+                          <span style={{ color: '#f85149' }}>― Local Residual Error</span>
+                        </div>
+                      </div>
+                      <svg width="100%" height="100" viewBox="0 0 600 100" style={{ overflow: 'visible' }}>
+                        {/* Baseline Chord */}
+                        <line x1="20" y1="50" x2="580" y2="50" stroke="#30363d" strokeWidth="1" strokeDasharray="4 4" />
+                        {/* Residual error shaded bars */}
+                        {residuals.map((res, i) => {
+                          const x = 20 + (i / 99) * 560
+                          const barH = Math.min(40, Math.abs(res) * 200)
+                          const isHigh = Math.abs(res) > 0.065
+                          return (
+                            <line
+                              key={i}
+                              x1={x}
+                              y1={50 - barH / 2}
+                              x2={x}
+                              y2={50 + barH / 2}
+                              stroke={isHigh ? 'rgba(248, 81, 73, 0.5)' : 'rgba(46, 160, 67, 0.25)'}
+                              strokeWidth="4"
+                            />
+                          )
+                        })}
+                        {/* Profile A (Blue) */}
+                        {(() => {
+                          const ptsA = profA.map((v, i) => `${20 + (i / 99) * 560},${50 - v * 200}`).join(' ')
+                          return <polyline points={ptsA} fill="none" stroke="#58a6ff" strokeWidth="2.5" />
+                        })()}
+                        {/* Profile B Reversed and Inverted Complement (Yellow) */}
+                        {(() => {
+                          const ptsB = profB.map((_, i) => {
+                            const revIdx = 99 - i
+                            const valB = profB[revIdx] || 0
+                            return `${20 + (i / 99) * 560},${50 + valB * 200}`
+                          }).join(' ')
+                          return <polyline points={ptsB} fill="none" stroke="#ffd33d" strokeWidth="2.0" strokeDasharray="2 2" />
+                        })()}
+                      </svg>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Footer Actions: Ground-Truth Fixture Recording */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <div style={{ fontSize: 11, color: activeSeamInspection.saveStatus?.startsWith('Saved') ? '#3fb950' : '#8b949e' }}>
+                  {activeSeamInspection.saveStatus || 'Export verification fixture to datasets/ground_truth/pairs/ for automated test gating.'}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className="btn"
+                    style={{ background: '#da3633', borderColor: '#f85149', color: '#fff', fontSize: 11, padding: '6px 12px' }}
+                    onClick={() => handleSavePairFixture(false)}
+                    title="Save as True Negative ground truth fixture (these pieces do NOT match)"
+                  >
+                    SAVE AS NON-MATE (FALSE)
+                  </button>
+                  <button
+                    className="btn primary"
+                    style={{ background: '#238636', borderColor: '#2ea043', color: '#fff', fontSize: 11, padding: '6px 14px', fontWeight: 700 }}
+                    onClick={() => handleSavePairFixture(true)}
+                    title="Save as True Positive ground truth fixture (these pieces physically match on cardboard)"
+                  >
+                    SAVE AS CONFIRMED MATE (TRUE)
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

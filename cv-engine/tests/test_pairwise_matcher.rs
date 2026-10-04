@@ -23,7 +23,7 @@ fn test_exact_complementary_tab_and_hole_matching() {
         hole_profile[j] = -tab_profile[99 - j];
     }
 
-    let (l2_dist, best_shift) = compute_complementary_l2_distance(&tab_profile, &hole_profile, 2);
+    let (l2_dist, _linf_dist, best_shift) = compute_complementary_l2_distance(&tab_profile, &hole_profile, 2);
 
     println!("Exact complementary pair: L2 = {:.6}, best_shift = {}", l2_dist, best_shift);
     assert!(l2_dist < 1e-5, "Exact complementary pair must have near-zero L2 distance, got {}", l2_dist);
@@ -96,7 +96,7 @@ fn test_sliding_window_recovers_corner_jitter() {
         }
     }
 
-    let (l2_dist, best_shift) = compute_complementary_l2_distance(&tab_profile, &hole_profile_shifted, 2);
+    let (l2_dist, _linf_dist, best_shift) = compute_complementary_l2_distance(&tab_profile, &hole_profile_shifted, 2);
     println!("Shifted pair recovery: L2 = {:.6}, best_shift = {}", l2_dist, best_shift);
 
     assert_eq!(best_shift, jitter, "Sliding window must recover the exact +1 sample jitter");
@@ -119,7 +119,7 @@ fn test_incompatible_curve_shapes_produce_high_l2() {
         hole_b[j] = -0.25 * (std::f32::consts::PI * t).sin();
     }
 
-    let (l2_dist, _) = compute_complementary_l2_distance(&tab_a, &hole_b, 2);
+    let (l2_dist, _linf_dist, _) = compute_complementary_l2_distance(&tab_a, &hole_b, 2);
     println!("Incompatible curve shapes: L2 = {:.6}", l2_dist);
 
     assert!(l2_dist > 0.08, "Incompatible shapes must have high L2 distance (> 0.08), got {}", l2_dist);
@@ -214,7 +214,6 @@ fn test_drop_to_locate_piece_identity_recognition() {
 }
 
 #[test]
-#[ignore = "Will be re-enabled upon Phase 7 7-step mating pipeline implementation"]
 fn test_solve_perimeter_1d_loop() {
     use cv_engine::matcher::{solve_perimeter_1d_loop, IndexedEdgeData, IndexedPieceData};
 

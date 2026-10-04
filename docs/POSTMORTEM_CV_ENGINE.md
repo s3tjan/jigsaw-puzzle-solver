@@ -177,6 +177,21 @@ This postmortem categorizes every identified bug, details the root causes, descr
 
 ---
 
+## 6. Pairwise Seam Mating & Verification Pipeline Bugs
+
+### Bug 6.1: Seam Median MGC Aggregation Masking & Border–Border Interior Topology Leakage
+* **Symptoms:** In pairwise seam verification, 7 out of 10 false positive piece pairings passed all 4 physical verification gates (Step 1 Topology, Step 2 Metric Tolerances, Step 3 Ink MGC, Step 4 Normalized Contour $L_2$). For instance, in test fixture `pair_gt_1791063161419.json` (Piece 4 vs Piece 2), an invalid match scored as a legitimate mate with $L_2 = 0.0457$ and MGC cost $0.216 \le 0.300$.
+* **Root Causes:**
+  1. *Aggregate Percentile Blindness:* The MGC formula relied on `0.50 * median + 0.50 * p75` of CIELAB $\Delta E$. In false pairings where 75% of the edge happened to be relatively uniform cardboard or medium background, the median ($\Delta E \approx 11.1$) and 75th percentile ($\Delta E \approx 19.1$) produced a low cost ($0.216$). However, the seam contained stark, localized visual contradictions: e.g., sample index 34 had near-black $\text{RGB}(25, 5, 0)$ against light beige $\text{RGB}(219, 219, 215)$ with an extreme localized clash of $\Delta E = \mathbf{84.8}$. The aggregate metric discarded the upper 25% of the distribution, masking localized artwork impossibilities.
+  2. *Border–Border Interior Topology Invariant Violation:* Piece 4 (`[Tab, Hole, Tab, Flat]`) and Piece 2 (`[Flat, Hole, Hole, Tab]`) are both border pieces. On a rectangular puzzle grid, two border pieces can **only** mate along their perimeter-adjacent edges (connecting their flat edges in a continuous outer loop). The pipeline evaluated Piece 4's Edge 3 against Piece 2's Edge 2—both of which are *interior-facing* edges. Two border pieces cannot physically mate on their interior sides unless $\min(\text{rows}, \text{cols}) \le 2$.
+  3. *Die-Cut Scale-Invariant Uniformity ($L_2$ Ambiguity):* Commercial puzzle stamping tools reuse tooth dies across multiple grid cuts. When normalized to a unit box $[0..1] \times [-1..1]$, unrelated tabs and holes can produce $L_2 \approx 0.035 - 0.050$, slipping past generic $L_2 \le 0.070$ thresholds without tail color or topology constraints.
+* **Resolution:**
+  - *Tail Disparity Gating (Anti-Clash Guard):* Inspect the 90th percentile and max $\Delta E$. Reject candidate seams where more than $5\%$ of valid boundary samples exhibit catastrophic color disparity ($\Delta E > 45$) or where $P_{90} > 40$.
+  - *Border–Border Topological Alignment:* Strictly reject any pairing between two Border pieces unless the mating edges correspond to adjacent positions along the continuous outer perimeter.
+  - *Multi-gate Strict Verification:* Incorporate unnormalized physical millimeter tab width and depth tolerances alongside normalized profile comparison.
+
+---
+
 ## Summary Matrix of Critical Incidents
 
 | Issue ID | Component | Root Cause | Impact | Fix Deployed |
@@ -194,15 +209,18 @@ This postmortem categorizes every identified bug, details the root causes, descr
 | **BUG-011** | `poster.rs` | Permissive 4-rotation search allowed upside-down pieces to match opposite borders | High: Corner & border misplacements | Strict geometric edge topology gating (only 1 valid rotation per boundary slot) |
 | **BUG-012** | `poster.rs` | Axis-aligned bounding box on tilted pieces degraded spatial pyramid | Medium: Score degradation at arbitrary angles | 4-point homography canonical rectification (`warp_piece_core`) |
 | **BUG-013** | `poster.rs` / System | Low visual entropy on borders & missing neighbor edge constraints | Critical: 50% border misplacement & bootstrap paradox | Shift from single-piece guessing to Phase 9 Pairwise Die-Cut Mating & directed assembly |
+| **BUG-014** | `matcher.rs` | Seam median/p75 MGC masked high $\Delta E$ art clashes & border interior edges mated | High: 7/10 false positive pairs passed mating gates | Upper tail $\Delta E$ clash rejection + Border–Border perimeter-only topological gating |
 
 ---
 
 ## Architectural Guardrails Going Forward
 
-1. **Automated Regression Suite Gate:** No changes to `contour.rs`, `lib.rs`, or `poster.rs` may be merged unless all test suites (`test_ground_truth_benchmarks`, `test_poster_localization`, `test_corner_and_border_invariants`) pass 100%.
+1. **Automated Regression Suite Gate:** No changes to `contour.rs`, `lib.rs`, `poster.rs`, or `matcher.rs` may be merged unless all test suites (`test_ground_truth_benchmarks`, `test_poster_localization`, `test_corner_and_border_invariants`, `test_pairwise_fixtures`) pass 100%.
 2. **Deterministic Corner & Edge Invariants:** The quad optimizer must always return strictly 4 non-overlapping corners ordered clockwise, and boundary slots may only test rotations where flat edges lie on the puzzle exterior.
 3. **No Artificial Exclusion Band-Aids:** Never lock out occupied slots to force diversity; visual and geometric discrimination must naturally separate candidates.
 4. **Physical Reality Over Heuristic Tweaks:** Low-entropy border and corner matching cannot rely solely on 16-cell color averages; pairwise complementary tab/hole die-cut contours (Phase 9) and seam continuity must resolve low-contrast visual ambiguities.
-5. **Acknowledge the Ground-Truth Bootstrap Paradox:** Never expect human operators or models to label loose pieces with unverified ground-truth $[R, C]$ coordinates. Validate matching through physical mating pairs and closed-loop solver consistency.
+5. **No Aggregate Color Blindness on Seams:** Seam ink matching must evaluate both central continuity (median) AND tail clashing ($P_{90}$ and extreme outliers). A 10% region with $\Delta E > 50$ is a physical disproof of cut continuity.
+6. **Enforce Global Puzzle Topology Invariants:** Two border pieces cannot mate across their interior edges; border-to-border mating must strictly align their flat edges along a continuous perimeter line.
+7. **Acknowledge the Ground-Truth Bootstrap Paradox:** Never expect human operators or models to label loose pieces with unverified ground-truth $[R, C]$ coordinates. Validate matching through physical mating pairs and closed-loop solver consistency.
 
 

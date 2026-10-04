@@ -32,11 +32,36 @@ function groundTruthApiPlugin(): Plugin {
           return
         }
 
+        if (req.url === '/api/save-pair-fixture' && req.method === 'POST') {
+          let body = ''
+          req.on('data', chunk => { body += chunk })
+          req.on('end', () => {
+            try {
+              const data = JSON.parse(body)
+              const pairsDir = path.join(gtDir, 'pairs')
+              if (!fs.existsSync(pairsDir)) {
+                fs.mkdirSync(pairsDir, { recursive: true })
+              }
+              const filename = data.filename || `pair_gt_${Date.now()}.json`
+              const filePath = path.join(pairsDir, filename)
+              fs.writeFileSync(filePath, JSON.stringify(data, null, 2))
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ success: true, file: filename }))
+            } catch (err) {
+              res.statusCode = 500
+              res.end(JSON.stringify({ error: String(err) }))
+            }
+          })
+          return
+        }
+
         if (req.url === '/api/ground-truth-count' && req.method === 'GET') {
           try {
             const files = fs.readdirSync(gtDir).filter(f => f.endsWith('.json'))
+            const pairsDir = path.join(gtDir, 'pairs')
+            const pairFiles = fs.existsSync(pairsDir) ? fs.readdirSync(pairsDir).filter(f => f.endsWith('.json')) : []
             res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ count: files.length, files }))
+            res.end(JSON.stringify({ count: files.length, files, pairCount: pairFiles.length, pairFiles }))
           } catch (err) {
             res.statusCode = 500
             res.end(JSON.stringify({ error: String(err) }))

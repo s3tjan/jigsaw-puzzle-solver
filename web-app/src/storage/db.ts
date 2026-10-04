@@ -12,6 +12,10 @@ export interface StoredPieceEdge {
   curve_samples?: { x: number; y: number }[]
   normalized_profile?: number[]
   fourier_descriptor?: number[]
+  chord_length_mm?: number
+  tab_depth_mm?: number
+  tab_width_mm?: number
+  seam_rgb_samples?: [number, number, number][]
 }
 
 export interface StoredPiece {

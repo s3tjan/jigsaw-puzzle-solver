@@ -15,8 +15,10 @@ pub use poster::{
 pub use matcher::{
     evaluate_edge_pair_wasm, evaluate_pairwise_edge_compatibility, compute_complementary_l2_distance,
     fast_rejection_filter, compute_turn_angles, PairwiseMatchResult, EdgeMatingCandidate,
-    identify_staged_piece_wasm, solve_perimeter_1d_loop_wasm,
+    identify_staged_piece_wasm, solve_perimeter_1d_loop_wasm, inspect_piece_pair_wasm,
+    find_mutual_best_buddies_wasm, MutualBestBuddyPair,
     PieceIdentityMatch, IndexedPieceData, IndexedEdgeData, SolvedBorderPlacement, SolvedPerimeterResult,
+    DetailedPairwiseInspection, SingleSeamDetail,
 };
 
 

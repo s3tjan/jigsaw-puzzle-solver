@@ -219,10 +219,18 @@ export const PieceTray: React.FC<PieceTrayProps> = ({
             return (
               <div
                 key={piece.id}
-                className={`piece-card ${isSelected ? 'selected' : ''} ${piece.is_favorite ? 'is-favorite' : ''} ${isPlaced ? 'is-placed' : ''}`}
+                className={`piece-card ${isSelected ? 'selected' : ''} ${piece.is_favorite ? 'is-favorite' : ''} ${isPlaced ? 'is-placed' : ''} ${pairingSourcePieceId === piece.id ? 'pairing-source' : ''}`}
                 draggable={!isPlaced}
                 onDragStart={(e) => handleDragStart(e, piece)}
-                onClick={() => onSelectPiece(isSelected ? null : piece)}
+                onClick={() => {
+                  if (pairingSourcePieceId) {
+                    if (pairingSourcePieceId !== piece.id && onStartPairingWith) {
+                      onStartPairingWith(piece.id)
+                    }
+                  } else {
+                    onSelectPiece(isSelected ? null : piece)
+                  }
+                }}
               >
                 {/* Header */}
                 <div className="piece-card-header">
