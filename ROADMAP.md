@@ -112,13 +112,12 @@ The solver operates on a streamlined 3-step workflow:
 
 ## 5. Phase Specifications
 
-### Phase 6: UI Ergonomics, Lens K1 & Canvas Interaction Polish (Complete)
-* **Lens K1 Consolidation**: Moved the Lens K1 slider, sensitivity, and calibration mat download into the full-screen camera modal; eliminated the main screen footer controls.
-* **Canvas Pan vs. Click Isolation**: Enforced a drag-distance threshold ($>3\text{ px}$) on the board canvas to prevent accidental piece placement during viewport panning.
-* **Clean Piece Artwork Rendering**: Replaced raw mat thumbnails with contour-masked piece artwork (transparent background outside the contour, upright cardinal orientation, aspect-ratio preserved, zero CV markers or green contour lines).
-* **Interface Decluttering**: Removed manual mating pair verification controls, dashed seam lines, candidate badge clutter, and redundant action buttons.
+### Phase 6: Frontend Modernization: Angular Architecture Reset (Current)
+* **Architecture Pivot (ADR-003)**: Deprecate the legacy monolithic React client (`App.tsx`) and rebuild as an enterprise-grade standalone Angular application.
+* **Service Decoupling**: Encapsulate WASM memory inside `WasmService`, hardware camera loops in `CameraService`, IndexedDB storage in `StorageService`, and state in Angular Signals (`InventoryStore`, `BoardStore`).
+* **Clean Domain Features**: Isolate `WorkbenchFeature` (canvas pan/zoom, interactive heatmap overlay), `ScannerFeature` (100mm mat staging, fiducials, K1 calibration), and `PosterFeature` (reference poster upload & resident WASM pyramids).
 
-### Phase 7: Spatial Probability Density Heatmap & Candidate Engine (Current)
+### Phase 7: Spatial Probability Density Heatmap & Candidate Engine (Planned)
 
 > [!NOTE]
 > **Pivot from Automated Seam Chaining**: Pairwise 1-to-1 boundary seam interlocking alone achieves only 30–40% reliability across 124 border pieces due to die repetition, cardboard kerf/bevel wear, and greedy error accumulation. Rather than stalling on an automated 1D perimeter loop solver, the system anchors the 34×26 grid via manual physical border assembly and guides piece placement via candidate heatmaps.

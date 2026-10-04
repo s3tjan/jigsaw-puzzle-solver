@@ -1,6 +1,6 @@
 # Jigsaw Puzzle Solver
 
-A real-time physical jigsaw puzzle solver using **Rust**, **WebAssembly (WASM)**, and **React/TypeScript**. Features camera dewarping via projective homography, sub-pixel corner detection, and geometric edge classification.
+A real-time physical jigsaw puzzle solver using **Rust**, **WebAssembly (WASM)**, and **Angular / TypeScript**. Features camera dewarping via projective homography, sub-pixel corner detection, geometric edge classification, and resident 4×4 spatial probability density heatmaps.
 
 ---
 
