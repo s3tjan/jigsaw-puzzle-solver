@@ -1,6 +1,8 @@
 # Node
 /web-app/node_modules/
 /web-app/dist/
+/web-app-legacy/node_modules/
+/web-app-legacy/dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

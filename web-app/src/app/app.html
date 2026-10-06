@@ -1,0 +1,150 @@
+<!-- Industrial Operator Instrument Layout -->
+<header class="menu-bar">
+  <div class="menu-group">
+    <button
+      class="menu-btn"
+      [class.active]="activeMode() === 'WORKBENCH'"
+      (click)="setMode('WORKBENCH')"
+      title="Shortcut: W">
+      Workbench [W]
+    </button>
+    <button
+      class="menu-btn"
+      [class.active]="activeMode() === 'CALIBRATION'"
+      (click)="setMode('CALIBRATION')"
+      title="Shortcut: C">
+      Calibrate Mat [C]
+    </button>
+    <button
+      class="menu-btn"
+      [class.active]="activeMode() === 'POSTER'"
+      (click)="setMode('POSTER')"
+      title="Shortcut: P">
+      Reference Poster [P]
+    </button>
+  </div>
+  <div class="menu-group">
+    <span class="menu-title-tag">JIGSAW SOLVER OPERATOR WORKSTATION</span>
+  </div>
+</header>
+
+<main class="workspace-body">
+  <!-- Left Rail: Piece Inventory Tree & Queue -->
+  <aside class="left-rail">
+    <div class="pane-header">
+      <span>Piece Inventory</span>
+      <span class="font-mono">{{ inventoryStore.totalCount() }} PIECES</span>
+    </div>
+    <div class="pane-content" style="padding: 0;">
+      <app-piece-tree></app-piece-tree>
+    </div>
+  </aside>
+
+  <!-- Center Viewport: Interactive Workspace Canvas -->
+  <section class="center-viewport">
+    <div class="pane-header">
+      <span>
+        @switch (activeMode()) {
+          @case ('WORKBENCH') { 34×26 Physical Board View }
+          @case ('CALIBRATION') { 100mm Target Mat Staging & Homography }
+          @case ('POSTER') { Master Reference Poster Descriptor Grid }
+        }
+      </span>
+      <span class="font-mono">PAN: >3PX ISOLATED</span>
+    </div>
+    <div class="pane-content" style="padding: 0; width: 100%; height: 100%;">
+      @switch (activeMode()) {
+        @case ('WORKBENCH') {
+          <app-workbench-canvas></app-workbench-canvas>
+        }
+        @case ('CALIBRATION') {
+          <div style="display: flex; align-items: center; justify-content: center; height: 100%;">
+            <span class="empty-token">CALIBRATION MAT FEED STANDBY</span>
+          </div>
+        }
+        @case ('POSTER') {
+          <div style="display: flex; align-items: center; justify-content: center; height: 100%;">
+            <span class="empty-token">POSTER INGESTION STANDBY</span>
+          </div>
+        }
+      }
+    </div>
+  </section>
+
+  <!-- Right Inspector: Physical & CV Properties -->
+  <aside class="right-inspector">
+    <div class="pane-header">
+      <span>Inspector</span>
+      <span class="font-mono">PROPERTIES</span>
+    </div>
+    <div class="pane-content">
+      @if (inventoryStore.selectedPiece(); as piece) {
+        <table class="kv-table">
+          <tbody>
+            <tr>
+              <td class="kv-key">PIECE ID</td>
+              <td class="kv-val">#{{ piece.piece_number }}</td>
+            </tr>
+            <tr>
+              <td class="kv-key">CLASSIFICATION</td>
+              <td class="kv-val">{{ piece.classification }}</td>
+            </tr>
+            <tr>
+              <td class="kv-key">STATUS</td>
+              <td class="kv-val">{{ piece.status }}</td>
+            </tr>
+            <tr>
+              <td class="kv-key">METRIC DIMS</td>
+              <td class="kv-val num">{{ piece.metric_width_mm.toFixed(1) }} × {{ piece.metric_height_mm.toFixed(1) }} mm</td>
+            </tr>
+            <tr>
+              <td class="kv-key">POLARITY (T/H/F)</td>
+              <td class="kv-val num">{{ piece.tab_count }} / {{ piece.hole_count }} / {{ piece.flat_count }}</td>
+            </tr>
+          </tbody>
+        </table>
+      } @else {
+        <table class="kv-table">
+          <tbody>
+            <tr>
+              <td class="kv-key">SELECTED PIECE</td>
+              <td class="kv-val">—</td>
+            </tr>
+            <tr>
+              <td class="kv-key">BOARD OCCUPANCY</td>
+              <td class="kv-val num">{{ boardStore.placedCount() }} / {{ boardStore.dimensions().total_slots }}</td>
+            </tr>
+            <tr>
+              <td class="kv-key">HOMOGRAPHY RMS</td>
+              <td class="kv-val num">{{ rmsErrorMm() }} mm</td>
+            </tr>
+            <tr>
+              <td class="kv-key">SAMPLING RATE</td>
+              <td class="kv-val num">{{ fps() }} FPS</td>
+            </tr>
+          </tbody>
+        </table>
+      }
+    </div>
+  </aside>
+</main>
+
+<!-- Bottom Status Strip -->
+<footer class="status-strip">
+  <div class="status-group">
+    <div class="status-item">
+      <span class="status-indicator" [class.status-active]="wasm.isLoaded()" [class.status-error]="!wasm.isLoaded()"></span>
+      <span>WASM: {{ wasm.isLoaded() ? 'READY' : (wasm.loadError() ? 'ERROR' : 'INITIALIZING') }}</span>
+    </div>
+    <div class="status-item">
+      <span class="status-indicator status-warning"></span>
+      <span>CAMERA: {{ cameraStatus() }}</span>
+    </div>
+  </div>
+  <div class="status-group">
+    <div class="status-item">
+      <span>GRID OCCUPANCY:</span>
+      <span class="font-mono">{{ boardStore.placedCount() }} / {{ boardStore.dimensions().total_slots }} ({{ boardStore.occupancyRatio().toFixed(1) }}%)</span>
+    </div>
+  </div>
+</footer>
