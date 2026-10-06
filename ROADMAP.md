@@ -40,8 +40,20 @@ LIMIT 3;
 
 ### Pillar 2: The Physical Bridge — Continuous Entropy Reduction & Smart Trays
 Academic systems fail in the real world because the computer has no awareness of where physical objects sit in the room. The physical bridge ensures every physical user action systematically decreases system entropy:
-* **Zero-Friction Ingestion with Dynamic Binning**: As pieces drop on the camera mat (~2s per piece), WASM classifies coarse color/quadrant profiles and flashes a tray badge (e.g., 🟦 Sky, 🟩 Forest, 🟥 Barn). The user drops the piece into that labeled physical tray.
-* **The Visual Spotting HUD**: When an empty slot is queried, the UI presents a **Spotting Card** indicating the exact tray, orientation, and a **1:1 physical millimeter scale silhouette** that can be visually compared to the physical piece in seconds.
+* **Interactive Poster Tray Tuning Studio (Human-in-the-Loop CV Priors)**:
+  Rather than rigid unsupervised clustering, the user configures tray generation in the UI via intuitive computer vision priors over the $34 \times 26$ grid:
+  $$V(R, C) = \big[ \, w_{\text{color}} \cdot [L^*, a^*, b^*], \quad w_{\text{texture}} \cdot \mathbf{g}, \quad w_{\text{spatial}} \cdot [\tfrac{R}{26}, \tfrac{C}{34}] \, \big]$$
+  - **Weight Sliders**: User adjusts relative emphasis between **Color Dominance** ($w_{\text{color}}$: CIELAB dye matching), **Texture/Detail Density** ($w_{\text{texture}}$: Sobel gradients separating smooth sky from intricate foliage), and **Spatial Quadrants** ($w_{\text{spatial}}$: grouping pieces into localized board regions).
+  - **Supervised Eyedropper Centroid Seeding**: User clicks prominent landmarks on the poster (e.g., clicking the Red Barn or Cobblestone Path) to lock cluster centroid seeds, forcing constrained $k$-means to respect human semantic landmarks.
+  - **Capacity-Constrained Bounding**: Objective balances clusters to enforce maximum physical capacity per tray ($\le 180\text{--}200\text{ pieces}$), preventing a single dominant color (e.g. 500 sky pieces) from overflowing a physical container.
+  - **Live 60 FPS Grid Tinting & Volume Meter**: Re-clustering runs in $<2\text{ ms}$ in Rust WASM, dynamically tinting the poster grid and displaying estimated piece counts per tray before scanning begins.
+  - **Multi-Palette / High-Variance Fallback Tray**: Pieces spanning high-contrast transitions (e.g., sharp rooflines against sky) are automatically routed to a dedicated *Landmark/Transition Tray*, preventing misfiling.
+* **Zero-Friction Ingestion with Peripheral & Audio Guidance**:
+  As pieces drop on the camera mat (~2s continuous feed), WASM classifies the piece against the tuned poster centroids. The UI flashes a saturated full-screen peripheral color border and emits a distinct musical chord pitch (earcon) per tray. The user deposits pieces into physical trays by sound and peripheral light without looking away from the mat.
+* **The Visual Spotting HUD**:
+  When an empty slot is queried during assembly, the UI presents a **Spotting Card** indicating the exact tray, orientation, and a **1:1 physical millimeter scale silhouette** that can be visually compared to the physical piece in seconds.
+
+---
 
 ### Pillar 3: Frontier Entropy Scheduling (The Algorithm Directs the Human)
 Rather than forcing the human to guess which slot to tackle next, the engine calculates the **Information Gain** across all open frontier cells:
@@ -69,13 +81,19 @@ In academic greedy solvers, a single misassigned piece breaks all subsequent ste
         • Real-time Orthographic Dewarping & Metric Scale (96px = 25mm)
                                 |
                                 v
+        [ STAGE 0.5: POSTER ANALYSIS & DYNAMIC TRAY SYNTHESIS ]
+        • Ingest reference poster artwork (34×26 grid)
+        • Unsupervised visual clustering (k-means in CIELAB + gradient space)
+        • Generates 4–6 optimal physical trays with visual swatches & semantic labels
+                                |
+                                v
       [ STAGE 1: UPFRONT SCANNING & DYNAMIC PHYSICAL TRAY BINNING ]
         • Adaptive Otsu Binarization + 3-pass Binomial Gaussian Smoothing
         • Sub-pixel Corner Detection & 4-Edge Polarity Classification (Tab/Hole/Flat)
         • Metric Millimeter Sizing & Clean Contour-Masked Artwork Extraction
-        • Coarse Color/Quadrant Classification ➔ Suggests Physical Tray (e.g., 1 of 5 Trays)
+        • Piece CIELAB/Texture assigned to nearest Poster Visual Tray cluster
         • Audio Chime & Visual Tray Flash (Fast ~2s/piece continuous feed)
-        • 100% of pieces indexed in IndexedDB + physically pre-sorted
+        • 100% of pieces indexed in IndexedDB + physically pre-sorted into trays
                                 |
                                 v
                [ STAGE 2: PHYSICAL BORDER ANCHORING ]
@@ -104,11 +122,12 @@ In academic greedy solvers, a single misassigned piece breaks all subsequent ste
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ STEP 1: UPFRONT SCANNING WITH DYNAMIC PHYSICAL BINNING                 │
+│ STEP 0 & 1: POSTER VISUAL CLUSTERING & TRAY-BINNED INGESTION           │
+│ • Poster is analyzed to discover 4–6 dominant visual attribute clusters│
+│   (e.g., Tray 1: Azure Sky, Tray 2: Forest Moss, Tray 3: Brick Red).   │
 │ • Slide pieces one-by-one under close-up camera mat (chime every ~2s). │
 │ • Extract sub-pixel contour, edge polarities (Tab/Hole), & CIELAB art. │
-│ • UI flashes target physical tray (e.g., 🟦 Sky, 🟩 Forest, 🟥 Barn).   │
-│ • User drops piece into designated tray.                               │
+│ • UI flashes matched poster tray badge; user drops piece into that tray│
 │ • Result: 100% of pieces digitized AND physically pre-sorted.          │
 └────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -127,7 +146,7 @@ In academic greedy solvers, a single misassigned piece breaks all subsequent ste
 │ • User picks an area to assemble and taps a frontier slot on screen.   │
 │ • Polarity Bitmask Filter: Eliminates ~75% of incompatible pieces.     │
 │ • Visual Patch Retrieval: Evaluates CIELAB/Sobel against poster cell.  │
-│ • UI Spotting Card: "Look in 🟥 Barn Tray for Piece #142 (Tab-Up)".   │
+│ • UI Spotting Card: "Look in 🟥 Brick Red Tray for Piece #142 (Tab-Up)".│
 │ • User easily spots piece in small tray of ~150 pieces, snaps into     │
 │   table, and confirms in UI to advance the frontier.                   │
 └────────────────────────────────────────────────────────────────────────┘
@@ -144,9 +163,9 @@ In academic greedy solvers, a single misassigned piece breaks all subsequent ste
 | **Phase 2** | 100mm Calibration Mat & 3x3 Homography | Rust (`homography.rs`), Canvas | **DONE** |
 | **Phase 3** | Sub-pixel Contour Extraction & 4-Edge Classification | Rust (`contour.rs`), 90 Fixtures | **DONE** |
 | **Phase 4** | Zero-Lag Sampling & Audio Detection Chime | Web Audio API, Stability Consensus | **DONE** |
-| **Phase 5** | Reference Poster Ingestion & Metric Grid Setup | WASM Pyramids, CLAHE, CIELAB | **DONE** |
+| **Phase 5** | Reference Poster Ingestion, Metric Grid & Visual Clustering | WASM Pyramids, CIELAB, k-means | **DONE** |
 | **Phase 6** | Frontend Modernization: Angular Architecture Reset | Angular (Standalone, Signals, Services) | **CURRENT** |
-| **Phase 7** | Dynamic Tray Binning & Rapid Upfront Ingestion Scanner | Angular (`ScannerFeature`), Web Audio | ⏳ Planned |
+| **Phase 7** | Dynamic Poster-Derived Tray Binning & Upfront Ingestion | Angular (`ScannerFeature`), Web Audio | ⏳ Planned |
 | **Phase 8** | Frontier Constraint Query Engine (Slot ➔ Piece Retrieval) | Rust WASM (`poster.rs`, `board.rs`) | ⏳ Planned |
 | **Phase 9** | Interactive Workbench & Physical Spotting HUD | Angular (`WorkbenchFeature`), Canvas | ⏳ Planned |
 
@@ -156,14 +175,23 @@ In academic greedy solvers, a single misassigned piece breaks all subsequent ste
 
 ### Phase 6: Frontend Modernization: Angular Architecture Reset (Current)
 * **Architecture Pivot (ADR-003)**: Deprecate the legacy monolithic React client (`App.tsx`) and rebuild as an enterprise-grade standalone Angular application.
-* **Service Decoupling**: Encapsulate WASM memory inside `WasmService`, hardware camera loops in `CameraService`, IndexedDB storage in `StorageService`, and state in Angular Signals (`InventoryStore`, `BoardStore`).
-* **Clean Domain Features**: Isolate `WorkbenchFeature` (canvas pan/zoom, interactive slot query), `ScannerFeature` (100mm mat staging, fiducials, K1 calibration, tray binning), and `PosterFeature` (reference poster upload & resident WASM pyramids).
+* **Service Decoupling**: Encapsulate WASM memory inside `WasmService`, hardware camera loops in `CameraService`, Web Audio earcons in `AudioFeedbackService`, IndexedDB storage in `StorageService`, and state in Angular Signals (`InventoryStore`, `BoardStore`).
+* **Clean Domain Features**:
+  - `WorkbenchFeature`: 2D board canvas pan/zoom, interactive slot query, spotting HUD.
+  - `ScannerFeature`: 100mm mat staging, fiducials, K1 calibration, continuous rapid piece drop loop.
+  - `PosterFeature`: Reference poster upload, resident WASM pyramids, and the **Poster Tray Tuning Studio** (weight sliders, eyedropper centroid seed, capacity limits, live 60 FPS grid tinting).
 
-### Phase 7: Dynamic Tray Binning & Rapid Upfront Ingestion Scanner (Planned)
-* **Continuous Ingestion Mode**: Optimize the camera mat loop for rapid consecutive piece drops with instant audio chime confirmation.
-* **Coarse Semantic/Color Binning**: Evaluate incoming piece CIELAB color profile against 4–6 coarse poster clusters/quadrants (e.g., Sky, Vegetation, Structures, Dark Ground).
-* **Tray Assignment Display**: Flash clear color/name badge on screen (and optional distinct sound) directing the user to drop the piece into physical Tray 1–6.
-* **Complete Inventory Persistence**: Store 1,008 pieces with normalized contour vectors, 4-edge polarity tags (`0b00` Flat, `0b01` Tab, `0b10` Hole), metric dimensions, and clean artwork thumbnails in IndexedDB.
+### Phase 7: Dynamic Poster-Derived Tray Binning & Upfront Ingestion Scanner (Planned)
+* **Interactive Poster Tray Tuning Studio (`PosterFeature`)**:
+  - Implement constrained $k$-means in Rust WASM with feature weighting sliders: $w_{\text{color}}$ (CIELAB), $w_{\text{texture}}$ (Sobel gradients), and $w_{\text{spatial}}$ (board coordinates).
+  - Add **Supervised Eyedropper Centroid Seeding**: clicking landmarks on the poster locks cluster centroids.
+  - Implement **Capacity-Constrained Bounding**: enforces uniform physical tray fill ($\le 200\text{ pieces/tray}$), automatically subdividing massive regions (e.g., sky).
+  - Renders live 60 FPS colored grid overlay with real-time piece volume estimation per tray.
+  - Adds dedicated *Landmark/Transition Fallback Tray* for pieces spanning sharp visual borders.
+* **Continuous Ingestion Mode (`ScannerFeature`)**:
+  - Optimize the camera mat loop for rapid consecutive piece drops (~2s/piece) with pause/resume support across multiple sessions.
+  - **Musical Earcon Feedback**: Web Audio synthesizes a distinct chord pitch per tray, paired with full-screen peripheral color border flashes so user never needs to stare at the screen.
+* **Complete Inventory Persistence**: Store 1,008 pieces with normalized contour vectors, 4-edge polarity tags (`0b00` Flat, `0b01` Tab, `0b10` Hole), metric dimensions, assigned tray ID, and clean artwork thumbnails in IndexedDB.
 
 ### Phase 8: Frontier Constraint Query Engine (Slot ➔ Piece Retrieval) (Planned)
 The reverse query engine evaluates open target slots against the scanned piece inventory in $<2\text{ ms}$ in Rust WASM:
