@@ -9,22 +9,22 @@ import { PieceModel } from '../../core/models/piece.model';
   imports: [CommonModule],
   template: `
     <div class="filter-strip">
-      <button class="filter-btn" [class.active]="filter() === 'ALL'" (click)="setFilter('ALL')">ALL ({{ inventoryStore.totalCount() }})</button>
-      <button class="filter-btn" [class.active]="filter() === 'TRAY'" (click)="setFilter('TRAY')">TRAY ({{ inventoryStore.inTrayCount() }})</button>
-      <button class="filter-btn" [class.active]="filter() === 'PLACED'" (click)="setFilter('PLACED')">PLACED ({{ inventoryStore.placedCount() }})</button>
+      <button class="filter-btn" [class.active]="filter() === 'ALL'" (click)="setFilter('ALL')">All ({{ inventoryStore.totalCount() }})</button>
+      <button class="filter-btn" [class.active]="filter() === 'TRAY'" (click)="setFilter('TRAY')">Unplaced ({{ inventoryStore.inTrayCount() }})</button>
+      <button class="filter-btn" [class.active]="filter() === 'PLACED'" (click)="setFilter('PLACED')">Placed ({{ inventoryStore.placedCount() }})</button>
     </div>
 
     <div class="piece-list">
       @if (filteredPieces().length === 0) {
-        <div class="empty-token">NO MATCHING PIECES</div>
+        <div class="empty-token">No Pieces Yet</div>
       } @else {
         <table class="piece-table">
           <thead>
             <tr>
-              <th style="width: 28px;">ID</th>
-              <th>TYPE</th>
-              <th>EDGES (T/H/F)</th>
-              <th style="text-align: right;">STATUS</th>
+              <th style="width: 32px;">#</th>
+              <th>Type</th>
+              <th>Edges</th>
+              <th style="text-align: right;">Status</th>
             </tr>
           </thead>
           <tbody>
