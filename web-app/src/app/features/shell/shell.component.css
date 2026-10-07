@@ -1,0 +1,29 @@
+.shell-root {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+.workspace-split {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.mode-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  margin: 0;
+  border: none;
+}
+
+.placeholder-body {
+  padding: 8px;
+  color: var(--text-muted);
+}

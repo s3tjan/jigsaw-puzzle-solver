@@ -1,0 +1,35 @@
+<div class="shell-root">
+  <!-- 30px Utility Toolbar -->
+  <app-toolbar></app-toolbar>
+
+  <!-- Main Operational Split Workspace -->
+  <main class="workspace-split">
+    <!-- MODE: WORKBENCH (F3) -->
+    @if (appModeStore.activeMode() === 'WORKBENCH') {
+      <app-workbench></app-workbench>
+    }
+
+    <!-- MODE: INGESTION (F1) -->
+    @if (appModeStore.activeMode() === 'INGESTION') {
+      <div class="mode-placeholder">
+        <div class="inverted-header">CONTINUOUS MAT INGESTION (1080P FEED)</div>
+        <div class="placeholder-body font-mono">
+          [WEBRTC VIDEO STREAM: ACTIVE] | MAT FIDUCIALS: C1-C4 GROUNDED | EYE-FREE COLOR FLASH: READY
+        </div>
+      </div>
+    }
+
+    <!-- MODE: POSTER_STUDIO (F2) -->
+    @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
+      <div class="mode-placeholder">
+        <div class="inverted-header">POSTER ANALYSIS & TRAY CLUSTERING STUDIO</div>
+        <div class="placeholder-body font-mono">
+          [8 PHYSICAL TRAYS BALANCED: <= 125 PCS] | K-MEANS WEIGHTS: [COLOR: 0.45, TEXTURE: 0.35, SPATIAL: 0.20]
+        </div>
+      </div>
+    }
+  </main>
+
+  <!-- 24px Bottom Telemetry Status Strip -->
+  <app-status-bar></app-status-bar>
+</div>

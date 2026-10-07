@@ -1,0 +1,18 @@
+.frontier-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-surface);
+  width: 100%;
+}
+
+.shortcut-tag {
+  font-size: 10px;
+  font-weight: normal;
+  color: #bbbbbb;
+}
+
+.table-container {
+  flex: 1;
+  overflow-y: auto;
+}

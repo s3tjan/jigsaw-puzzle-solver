@@ -1,0 +1,56 @@
+<header class="toolbar-root border-b">
+  <!-- Mode Selector (F1-F3) -->
+  <div class="mode-cluster">
+    <button 
+      type="button" 
+      class="mode-btn" 
+      [class.active]="appModeStore.activeMode() === 'INGESTION'"
+      (click)="setMode('INGESTION')"
+      title="Shortcut: F1"
+    >
+      <span class="shortcut-hint font-mono">[F1]</span>INGESTION
+    </button>
+    <button 
+      type="button" 
+      class="mode-btn" 
+      [class.active]="appModeStore.activeMode() === 'POSTER_STUDIO'"
+      (click)="setMode('POSTER_STUDIO')"
+      title="Shortcut: F2"
+    >
+      <span class="shortcut-hint font-mono">[F2]</span>POSTER STUDIO
+    </button>
+    <button 
+      type="button" 
+      class="mode-btn" 
+      [class.active]="appModeStore.activeMode() === 'WORKBENCH'"
+      (click)="setMode('WORKBENCH')"
+      title="Shortcut: F3"
+    >
+      <span class="shortcut-hint font-mono">[F3]</span>WORKBENCH HUD
+    </button>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Functional Optics Calibration Action (OPT-03) -->
+  <button type="button" class="action-btn" title="Open K1 Distortion Calibration Modal">
+    CALIBRATE OPTICS [OPT-03]
+  </button>
+
+  <!-- Right Telemetry Readouts -->
+  <div class="telemetry-cluster">
+    <div class="telemetry-item">
+      <span class="label">SCALE:</span>
+      <span class="val font-mono">96px/25mm</span>
+    </div>
+    <div class="telemetry-item">
+      <span class="label">K1:</span>
+      <span class="val font-mono">0.000</span>
+    </div>
+    <div class="telemetry-item">
+      <span class="status-indicator">●</span>
+      <span class="label">WASM:</span>
+      <span class="val font-mono">{{ appModeStore.wasmLatencyMs() }}ms</span>
+    </div>
+  </div>
+</header>

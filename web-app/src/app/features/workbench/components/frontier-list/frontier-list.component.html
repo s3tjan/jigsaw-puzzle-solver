@@ -1,0 +1,30 @@
+<aside class="frontier-root border-r">
+  <div class="inverted-header">
+    <span>FRONTIER QUEUE ({{ boardStore.frontierCount() }})</span>
+    <span class="shortcut-tag">[TAB TO HIDE]</span>
+  </div>
+
+  <div class="table-container">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width: 50px;">SLOT</th>
+          <th style="width: 70px;">ENTROPY</th>
+          <th>POLARITIES (N-E-S-W)</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (slot of boardStore.frontierSlots(); track slot.r + '-' + slot.c) {
+          <tr 
+            [class.selected]="isSelected(slot)"
+            (click)="boardStore.selectSlot(slot)"
+          >
+            <td class="font-mono">R{{ slot.r }} C{{ slot.c }}</td>
+            <td class="font-mono text-right">{{ slot.entropy?.toFixed(2) }}</td>
+            <td class="font-mono">{{ formatPolarities(slot) }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</aside>

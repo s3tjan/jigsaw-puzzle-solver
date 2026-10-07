@@ -1,0 +1,21 @@
+<!-- Left Rail: Frontier Queue (Instantly Collapsible to prevent visual crowding) -->
+@if (!appModeStore.isLeftRailCollapsed()) {
+  <div class="rail-pane">
+    <app-frontier-list></app-frontier-list>
+  </div>
+} @else {
+  <div class="rail-collapsed-strip" (click)="appModeStore.toggleLeftRail()" title="Click or press [Tab] to expand">
+    <span class="collapsed-glyph">▶</span>
+    <span class="collapsed-label font-mono">FRONTIER</span>
+  </div>
+}
+
+<!-- Center Workspace: 34x26 Board Canvas -->
+<div class="canvas-pane">
+  <app-workbench-canvas></app-workbench-canvas>
+</div>
+
+<!-- Right Inspector: Spotting HUD -->
+<div class="inspector-pane">
+  <app-spotting-hud></app-spotting-hud>
+</div>

@@ -1,0 +1,40 @@
+.status-root {
+  height: 24px;
+  background: var(--bg-surface-secondary);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-section.highlight {
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  padding: 1px 6px;
+  border: var(--border-rule);
+}
+
+.status-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.indicator.ok {
+  color: var(--status-ok);
+  font-size: 10px;
+}
