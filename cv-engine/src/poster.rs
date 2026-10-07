@@ -1838,7 +1838,8 @@ pub fn extract_poster_features(
 
             let lab = rgb_to_cielab(mean_r, mean_g, mean_b);
             let gradient = if grad_count > 0 {
-                (grad_sum / (grad_count as f32 * 128.0)).min(1.0).max(0.0)
+                // Sobel central difference with magnitude up to ~180: normalize into [0.0, 1.0]
+                (grad_sum / (grad_count as f32 * 50.0)).min(1.0).max(0.0)
             } else {
                 0.0
             };
@@ -1879,8 +1880,10 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
                 sum_a += s.lab[1];
                 sum_b += s.lab[2];
                 sum_grad += s.gradient;
-                sum_r += s.r as f32 / 27.0;
-                sum_c += s.c as f32 / 35.0;
+                let r_norm = (s.r.saturating_sub(1)) as f32 / 25.0;
+                let c_norm = (s.c.saturating_sub(1)) as f32 / 33.0;
+                sum_r += r_norm;
+                sum_c += c_norm;
                 count += 1;
             }
         }
@@ -1906,7 +1909,9 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
 }
 
 /// Compute weighted Euclidean distance between a slot feature and a centroid:
-/// D^2 = w_color * (dE_cielab^2 / sigma_color^2) + w_texture * (d_grad)^2 + w_spatial * (dR^2 + dC^2)
+/// D^2 = w_c * norm_color_sq + w_t * d_texture_sq + w_s * d_spatial_sq
+/// Calibrated so that normalized CIELAB (dE ~ 25..35), texture gradient (0..1),
+/// and spatial distance across the normalized grid ([0..1] range) are well-proportioned.
 pub fn compute_slot_cluster_distance_sq(
     slot: &PosterSlotFeature,
     centroid: &Centroid,
@@ -1914,21 +1919,25 @@ pub fn compute_slot_cluster_distance_sq(
     w_texture: f32,
     w_spatial: f32,
 ) -> f32 {
-    let dl = (slot.lab[0] - centroid.lab[0]) / 100.0;
-    let da = (slot.lab[1] - centroid.lab[1]) / 255.0;
-    let db = (slot.lab[2] - centroid.lab[2]) / 255.0;
-    let d_cielab_sq = dl * dl + da * da + db * db;
+    let dl = slot.lab[0] - centroid.lab[0];
+    let da = slot.lab[1] - centroid.lab[1];
+    let db = slot.lab[2] - centroid.lab[2];
+    let de_cielab_sq = dl * dl + da * da + db * db;
+    // Scale CIELAB: sigma_color = 30.0 -> sigma^2 = 900.0, matching [0..1] unit space
+    let norm_color_sq = de_cielab_sq / 900.0;
 
     let d_grad = slot.gradient - centroid.gradient;
     let d_texture_sq = d_grad * d_grad;
 
-    let r_norm = slot.r as f32 / 27.0;
-    let c_norm = slot.c as f32 / 35.0;
+    // Normalize interior coordinates to [0.0, 1.0]:
+    // Interior r ranges 1..26 (span 25), c ranges 1..34 (span 33)
+    let r_norm = (slot.r.saturating_sub(1)) as f32 / 25.0;
+    let c_norm = (slot.c.saturating_sub(1)) as f32 / 33.0;
     let dr = r_norm - centroid.r_norm;
     let dc = c_norm - centroid.c_norm;
     let d_spatial_sq = dr * dr + dc * dc;
 
-    w_color * d_cielab_sq + w_texture * d_texture_sq + w_spatial * d_spatial_sq
+    w_color * norm_color_sq + w_texture * d_texture_sq + w_spatial * d_spatial_sq
 }
 
 /// TRY-02 & TRY-03: Capacity-constrained weighted K-Means clustering
@@ -1945,7 +1954,22 @@ pub fn cluster_interior_slots(
         return (Vec::new(), Vec::new(), 0, 0.0);
     }
 
-    let mut centroids = initialize_seeded_centroids(interior_slots);
+    // 1. Normalize weights so user sliders operate consistently and don't skew penalty
+    let sum_w = w_color + w_texture + w_spatial;
+    let (nw_c, nw_t, nw_s) = if sum_w > 1e-4 {
+        (w_color / sum_w, w_texture / sum_w, w_spatial / sum_w)
+    } else {
+        (0.34, 0.33, 0.33)
+    };
+
+    // 2. Initialize seeded centroids and store spatial anchor anchors
+    let initial_seeds = initialize_seeded_centroids(interior_slots);
+    let seed_anchors: Vec<(f32, f32)> = initial_seeds
+        .iter()
+        .map(|c| (c.r_norm, c.c_norm))
+        .collect();
+
+    let mut centroids = initial_seeds;
     let mut assignments: Vec<u8> = interior_slots
         .iter()
         .map(|s| get_spatial_seed_tray(s.r, s.c))
@@ -1977,20 +2001,28 @@ pub fn cluster_interior_slots(
                 let dist_sq = compute_slot_cluster_distance_sq(
                     slot,
                     &centroids[(t - 1) as usize],
-                    w_color,
-                    w_texture,
-                    w_spatial,
+                    nw_c,
+                    nw_t,
+                    nw_s,
                 );
 
                 let current_count = tray_counts[t as usize];
-                let count_for_eval = if t == current_tray { current_count.saturating_sub(1) } else { current_count };
+                let count_for_eval = if t == current_tray {
+                    current_count.saturating_sub(1)
+                } else {
+                    current_count
+                };
 
+                // Capacity penalty proportional to distance scale (normalized distances are ~0..1)
                 let mut capacity_penalty = 0.0f32;
                 if count_for_eval >= target_avg {
-                    capacity_penalty += (count_for_eval - target_avg) as f32 * 0.005;
+                    // Smooth quadratic-linear ramp above average capacity
+                    let excess = (count_for_eval - target_avg) as f32;
+                    capacity_penalty += excess * 0.04;
                 }
                 if count_for_eval >= max_capacity {
-                    capacity_penalty += 5.0; // Hard rejection barrier
+                    // Severe barrier penalty to prevent tray overflowing beyond 125
+                    capacity_penalty += 10.0;
                 }
 
                 let penalized_dist = dist_sq.sqrt() + capacity_penalty;
@@ -2011,7 +2043,7 @@ pub fn cluster_interior_slots(
             }
         }
 
-        // Recompute centroids
+        // Recompute centroids with spatial anchor retention to prevent spatial collapse
         let mut sum_l = [0.0f32; NUM_TRAYS + 1];
         let mut sum_a = [0.0f32; NUM_TRAYS + 1];
         let mut sum_b = [0.0f32; NUM_TRAYS + 1];
@@ -2027,13 +2059,24 @@ pub fn cluster_interior_slots(
             sum_a[t] += s.lab[1];
             sum_b[t] += s.lab[2];
             sum_grad[t] += s.gradient;
-            sum_r[t] += s.r as f32 / 27.0;
-            sum_c[t] += s.c as f32 / 35.0;
+            let r_norm = (s.r.saturating_sub(1)) as f32 / 25.0;
+            let c_norm = (s.c.saturating_sub(1)) as f32 / 33.0;
+            sum_r[t] += r_norm;
+            sum_c[t] += c_norm;
             counts[t] += 1;
         }
 
         for t in 1..=NUM_TRAYS {
             if counts[t] > 0 {
+                let mean_r = sum_r[t] / counts[t] as f32;
+                let mean_c = sum_c[t] / counts[t] as f32;
+                let (anchor_r, anchor_c) = seed_anchors[t - 1];
+
+                // Keep spatial center anchored to tray zone so clusters remain contiguous
+                // and do not wander across the board into disconnected confetti fragments
+                let blended_r = 0.55 * mean_r + 0.45 * anchor_r;
+                let blended_c = 0.55 * mean_c + 0.45 * anchor_c;
+
                 centroids[t - 1] = Centroid {
                     lab: [
                         sum_l[t] / counts[t] as f32,
@@ -2041,8 +2084,8 @@ pub fn cluster_interior_slots(
                         sum_b[t] / counts[t] as f32,
                     ],
                     gradient: sum_grad[t] / counts[t] as f32,
-                    r_norm: sum_r[t] / counts[t] as f32,
-                    c_norm: sum_c[t] / counts[t] as f32,
+                    r_norm: blended_r,
+                    c_norm: blended_c,
                 };
             }
         }
@@ -2065,7 +2108,7 @@ pub fn cluster_interior_slots(
             break;
         }
 
-        // Find candidate item in overflow tray with smallest delta to another available tray
+        // Find candidate item in overflow tray with smallest delta to an available neighbor tray
         let mut best_item_idx = None;
         let mut best_target_tray = 0u8;
         let mut min_transfer_cost = f32::INFINITY;
@@ -2076,9 +2119,9 @@ pub fn cluster_interior_slots(
                 let current_dist_sq = compute_slot_cluster_distance_sq(
                     slot,
                     &centroids[overflow_tray - 1],
-                    w_color,
-                    w_texture,
-                    w_spatial,
+                    nw_c,
+                    nw_t,
+                    nw_s,
                 );
 
                 for target_t in 1..=NUM_TRAYS {
@@ -2086,9 +2129,9 @@ pub fn cluster_interior_slots(
                         let target_dist_sq = compute_slot_cluster_distance_sq(
                             slot,
                             &centroids[target_t - 1],
-                            w_color,
-                            w_texture,
-                            w_spatial,
+                            nw_c,
+                            nw_t,
+                            nw_s,
                         );
                         let cost = target_dist_sq - current_dist_sq;
                         if cost < min_transfer_cost {
