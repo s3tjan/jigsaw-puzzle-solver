@@ -29,9 +29,9 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| OPT-01 | - | `web-app/src/app/core/services/camera.service.ts` | Browser preview inspection | WebRTC 1080p stream ingestion with 720p fallback in `CameraService`. | DONE |
+| OPT-01 | - | `web-app/src/app/core/services/camera.service.ts` | Browser preview inspection | WebRTC 1080p stream ingestion with 720p fallback in `CameraService`. | Planned |
 | OPT-02 | OPT-01 | `cv-engine/src/homography.rs` | `cargo test test_homography` | Detect 4 corners (C1-C4) of 100mm mat; compute 3x3 homography (<0.2mm error). | DONE |
-| OPT-03 | OPT-02 | `web-app/src/app/features/scanner/calibration-modal.component.ts` | Browser modal inspection | Full-screen calibration modal tuning K1 radial distortion; main board stays free of sliders. | DONE |
+| OPT-03 | OPT-02 | `web-app/src/app/features/scanner/calibration-modal.component.ts` | Browser modal inspection | Full-screen calibration modal tuning K1 radial distortion; main board stays free of sliders. | Planned |
 
 ### CNT: Contour & Edge Classification
 
@@ -57,7 +57,7 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| ING-01 | - | `web-app/src/app/core/services/storage.service.ts` | Browser DevTools Application tab | Reactive IndexedDB schema for pieces, contours, assigned trays, and board state. | DONE |
+| ING-01 | - | `web-app/src/app/core/services/storage.service.ts` | Browser DevTools Application tab | Reactive IndexedDB schema for pieces, contours, assigned trays, and board state. | Planned |
 | ING-02 | CNT-03, OPT-02 | `web-app/src/app/features/scanner/scanner.component.ts` | Browser mat drop test | Camera loop for sequential piece drops (~2s/pc) with stability consensus and multi-piece reject. | Planned |
 | ING-03 | ING-02, TRY-05 | `web-app/src/app/core/services/audio-feedback.service.ts` | Browser audio/visual inspection | Full-screen peripheral color flash (8 tray colors) and success chime for eyes-free sorting. | Planned |
 | ING-04 | ING-02, ING-01 | `web-app/src/app/core/state/inventory.store.ts` | Browser drawer inspection | Index all 1,008 pieces with normalized contours, polarity masks, and transparent-masked thumbs. | Planned |
@@ -76,7 +76,7 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| HUD-01 | - | `web-app/src/app/features/workbench/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport with pan/zoom and strict >3px drag threshold isolating slot clicks. | CURRENT |
+| HUD-01 | - | `web-app/src/app/features/workbench/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport with pan/zoom and strict >3px drag threshold isolating slot clicks. | Planned |
 | HUD-02 | HUD-01, RET-04 | `web-app/src/app/features/workbench/workbench.component.ts` | Browser slot click inspection | Direct slot tap triggers query engine and displays top match in dedicated spotting card. | Planned |
 | HUD-03 | HUD-02 | `web-app/src/app/features/workbench/spotting-card.component.ts` | Browser card inspection | Spotting card showing piece thumbnail, cardinal orientation arrow (e.g. Tab Up), and 8-tray color badge. | Planned |
 | HUD-04 | HUD-03, OPT-02 | `web-app/src/app/features/workbench/silhouette.component.ts` | Screen 1:1 physical calibration check | Render piece silhouette at calibrated 1:1 physical millimeter scale on screen. | Planned |
