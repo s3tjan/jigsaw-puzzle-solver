@@ -22,5 +22,7 @@ console_error_panic_hook = "0.1"
 version = "0.3"
 features = [
   "Window",
-  "Performance"
+  "Performance",
+  "console"
 ]
+

@@ -58,12 +58,12 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| TRY-01 | - | `cv-engine/src/poster.rs` | `cargo test test_poster_grid_feature_vectors` | Extract 884 interior feature vectors `V(R, C) = [L, a, b, gradient, R, C]` (34×26 interior grid) in <5ms. | Planned |
-| TRY-02 | TRY-01 | `cv-engine/src/poster.rs` | `cargo test test_weighted_kmeans_clustering` | Weighted k-means clustering with configurable `w_color`, `w_texture`, `w_spatial` for K=8 trays (<20 iters). | Planned |
-| TRY-03 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_capacity_constrained_clustering` | Capacity penalty bounding cluster sizes to <= 125 pieces per tray (~110 pcs avg). | Planned |
-| TRY-04 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_seeded_kmeans_centroids` | Seed cluster centroids from 2x4 spatial grid with optional user landmark overrides. | Planned |
-| TRY-05 | TRY-03, TRY-04 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | Studio UI with weight sliders, 8-tray color assignments, and volume meters at 60 FPS. | Planned |
-| TRY-06 | TRY-05 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | Canvas tint overlay on poster grid slots matching assigned 8 tray color badges. | Planned |
+| TRY-01 | - | `cv-engine/src/poster.rs` | `cargo test test_poster_grid_feature_vectors` | Extract 884 interior feature vectors `V(R, C) = [L, a, b, gradient, R, C]` (34×26 interior grid) in <5ms. | DONE |
+| TRY-02 | TRY-01 | `cv-engine/src/poster.rs` | `cargo test test_weighted_kmeans_clustering` | Weighted k-means clustering with configurable `w_color`, `w_texture`, `w_spatial` for K=8 trays (<20 iters). | DONE |
+| TRY-03 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_capacity_constrained_clustering` | Capacity penalty bounding cluster sizes to <= 125 pieces per tray (~110 pcs avg). | DONE |
+| TRY-04 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_seeded_kmeans_centroids` | Seed cluster centroids from 2x4 spatial grid with optional user landmark overrides. | DONE |
+| TRY-05 | TRY-03, TRY-04 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | Studio UI with weight sliders, 8-tray color assignments, and volume meters at 60 FPS. | DONE |
+| TRY-06 | TRY-05 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | Canvas tint overlay on poster grid slots matching assigned 8 tray color badges. | DONE |
 | TRY-07 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_landmark_fallback_routing` | Detect high internal-variance boundary cells bridging distinct color/spatial islands. | Planned |
 
 ### ING: Continuous Mat Ingestion & Inventory Storage

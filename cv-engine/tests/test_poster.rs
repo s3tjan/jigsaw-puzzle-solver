@@ -221,3 +221,197 @@ fn test_locate_piece_on_poster_synthetic() {
     }
 }
 
+#[test]
+fn test_poster_grid_feature_vectors() {
+    use cv_engine::poster::{extract_poster_features, POSTER_TOTAL_PIECES, POSTER_BORDER_PIECES, POSTER_INTERIOR_PIECES};
+
+    let w = 720;
+    let h = 560;
+    let mut poster_rgba = vec![128u8; (w * h * 4) as usize];
+    // Fill top half with blue, bottom half with green
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 4) as usize;
+            if y < h / 2 {
+                poster_rgba[idx] = 20;
+                poster_rgba[idx + 1] = 100;
+                poster_rgba[idx + 2] = 220;
+            } else {
+                poster_rgba[idx] = 30;
+                poster_rgba[idx + 1] = 180;
+                poster_rgba[idx + 2] = 40;
+            }
+            poster_rgba[idx + 3] = 255;
+        }
+    }
+
+    let slots = extract_poster_features(&poster_rgba, w, h);
+    assert_eq!(slots.len(), POSTER_TOTAL_PIECES as usize, "Must have exactly 1,008 total slots");
+
+    let border_count = slots.iter().filter(|s| s.is_border).count();
+    assert_eq!(border_count, POSTER_BORDER_PIECES as usize, "Must have exactly 124 border slots");
+
+    let interior_count = slots.iter().filter(|s| !s.is_border).count();
+    assert_eq!(interior_count, POSTER_INTERIOR_PIECES as usize, "Must have exactly 884 interior slots");
+
+    let corner_count = slots.iter().filter(|s| s.is_corner).count();
+    assert_eq!(corner_count, 4, "Must have exactly 4 corner pieces");
+
+    // All borders must have tray_id = 0
+    for s in slots.iter().filter(|s| s.is_border) {
+        assert_eq!(s.tray_id, 0, "Border pieces must have tray_id 0");
+    }
+
+    // All interior pieces must have tray_id in 1..=8
+    for s in slots.iter().filter(|s| !s.is_border) {
+        assert!(s.tray_id >= 1 && s.tray_id <= 8, "Interior pieces must have tray_id in 1..=8");
+    }
+}
+
+#[test]
+fn test_seeded_kmeans_centroids() {
+    use cv_engine::poster::{extract_poster_features, initialize_seeded_centroids, get_spatial_seed_tray, NUM_TRAYS};
+
+    let w = 720;
+    let h = 560;
+    let poster_rgba = vec![128u8; (w * h * 4) as usize];
+    let slots = extract_poster_features(&poster_rgba, w, h);
+    let interior_slots: Vec<_> = slots.into_iter().filter(|s| !s.is_border).collect();
+
+    // Verify 2x4 spatial grid distribution
+    let mut seed_counts = [0u32; NUM_TRAYS + 1];
+    for s in &interior_slots {
+        let seed = get_spatial_seed_tray(s.r, s.c);
+        assert!(seed >= 1 && seed <= 8);
+        seed_counts[seed as usize] += 1;
+    }
+
+    let centroids = initialize_seeded_centroids(&interior_slots);
+    assert_eq!(centroids.len(), 8, "Must generate exactly 8 seeded centroids");
+
+    // Top row seeds (1..4) should have smaller r_norm than bottom row seeds (5..8)
+    for i in 0..4 {
+        assert!(centroids[i].r_norm < centroids[i + 4].r_norm, "Top band centroids should have smaller r_norm");
+    }
+
+    // Columns should be increasing across bands
+    for row in 0..2 {
+        for col in 0..3 {
+            let left_c = centroids[row * 4 + col].c_norm;
+            let right_c = centroids[row * 4 + col + 1].c_norm;
+            assert!(left_c < right_c, "West to East centroids must have increasing c_norm");
+        }
+    }
+}
+
+#[test]
+fn test_weighted_kmeans_clustering() {
+    use cv_engine::poster::{extract_poster_features, cluster_interior_slots};
+
+    let w = 720;
+    let h = 560;
+    let mut poster_rgba = vec![100u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = ((y * w + x) * 4) as usize;
+            poster_rgba[idx] = (x * 255 / w) as u8;
+            poster_rgba[idx + 1] = (y * 255 / h) as u8;
+            poster_rgba[idx + 2] = ((x + y) * 128 / (w + h)) as u8;
+            poster_rgba[idx + 3] = 255;
+        }
+    }
+
+    let slots = extract_poster_features(&poster_rgba, w, h);
+    let interior_slots: Vec<_> = slots.into_iter().filter(|s| !s.is_border).collect();
+
+    let (assignments, centroids, iterations, inertia) = cluster_interior_slots(
+        &interior_slots,
+        0.45,
+        0.35,
+        0.20,
+        125,
+        20,
+    );
+
+    assert_eq!(assignments.len(), 884);
+    assert_eq!(centroids.len(), 8);
+    assert!(iterations <= 20, "Should converge within 20 iterations, got {}", iterations);
+    assert!(inertia >= 0.0);
+}
+
+#[test]
+fn test_capacity_constrained_clustering() {
+    use cv_engine::poster::{extract_poster_features, cluster_interior_slots, NUM_TRAYS};
+
+    // Construct a monochromatic poster where color & texture offer no variance,
+    // strongly challenging capacity bounding
+    let w = 720;
+    let h = 560;
+    let poster_rgba = vec![120u8; (w * h * 4) as usize];
+    let slots = extract_poster_features(&poster_rgba, w, h);
+    let interior_slots: Vec<_> = slots.into_iter().filter(|s| !s.is_border).collect();
+
+    let (assignments, _centroids, _iterations, _inertia) = cluster_interior_slots(
+        &interior_slots,
+        0.80, // heavy color weight
+        0.10,
+        0.10,
+        125,
+        20,
+    );
+
+    let mut tray_counts = [0u32; NUM_TRAYS + 1];
+    for &t in &assignments {
+        tray_counts[t as usize] += 1;
+    }
+
+    let mut total_interior = 0;
+    for t in 1..=NUM_TRAYS {
+        assert!(tray_counts[t] <= 125, "Tray {} has {} pieces exceeding max capacity 125", t, tray_counts[t]);
+        total_interior += tray_counts[t];
+    }
+    assert_eq!(total_interior, 884, "Total assigned pieces must equal 884 interior pieces");
+}
+
+#[test]
+fn test_tray_export_format() {
+    use cv_engine::poster::{analyze_and_cluster_poster_internal, POSTER_TOTAL_PIECES, POSTER_BORDER_PIECES, POSTER_INTERIOR_PIECES};
+
+    let w = 720;
+    let h = 560;
+    let poster_rgba = vec![150u8; (w * h * 4) as usize];
+
+    let result = analyze_and_cluster_poster_internal(
+        &poster_rgba,
+        w,
+        h,
+        0.45,
+        0.35,
+        0.20,
+        125,
+    );
+
+    assert_eq!(result.slots.len(), POSTER_TOTAL_PIECES as usize);
+    assert_eq!(result.trays.len(), 8);
+    assert_eq!(result.stats.total_pieces, POSTER_TOTAL_PIECES);
+    assert_eq!(result.stats.border_pieces, POSTER_BORDER_PIECES);
+    assert_eq!(result.stats.interior_pieces, POSTER_INTERIOR_PIECES);
+    assert!(result.stats.is_balanced);
+    assert_eq!(result.stats.overflow_count, 0);
+
+    // Verify JSON serialization format
+    let json_str = serde_json::to_string(&result).expect("Serialize to JSON");
+    assert!(json_str.contains("\"slots\""));
+    assert!(json_str.contains("\"trays\""));
+    assert!(json_str.contains("\"stats\""));
+    assert!(json_str.contains("\"is_border\""));
+    assert!(json_str.contains("\"tray_id\""));
+    assert!(json_str.contains("\"max_capacity\":125"));
+
+    // Deserialize back to ensure roundtrip fidelity
+    let parsed: cv_engine::poster::ClusteringResult = serde_json::from_str(&json_str).expect("Deserialize from JSON");
+    assert_eq!(parsed.slots.len(), 1008);
+    assert_eq!(parsed.trays.len(), 8);
+}
+
+

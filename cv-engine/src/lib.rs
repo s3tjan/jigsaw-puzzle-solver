@@ -11,6 +11,10 @@ pub use poster::{
     get_poster_grid_slots, get_slot_preview,
     init_master_poster_spatial, locate_piece_spatial, SpatialCell, SpatialSlotDescriptor,
     precompute_spatial_poster_slots, locate_piece_spatial_core,
+    PosterSlotFeature, TrayInfo, ClusteringStats, ClusteringResult, Centroid,
+    analyze_and_cluster_poster, analyze_and_cluster_poster_internal,
+    extract_poster_features, cluster_interior_slots, initialize_seeded_centroids,
+    get_spatial_seed_tray, compute_slot_cluster_distance_sq,
 };
 pub use matcher::{
     evaluate_pairwise_edge_compatibility, compute_complementary_l2_distance,

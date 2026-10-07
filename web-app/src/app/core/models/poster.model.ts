@@ -40,3 +40,10 @@ export interface ClusteringStats {
   borderPieces: number;   // 124
   interiorPieces: number; // 884
 }
+
+export interface ClusteringResult {
+  slots: PosterSlotFeature[];
+  trays: TrayInfo[];
+  stats: ClusteringStats;
+}
+

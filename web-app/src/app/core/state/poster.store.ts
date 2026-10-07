@@ -11,12 +11,14 @@ import {
   INITIAL_TRAYS,
   PosterClusteringService
 } from '../services/poster-clustering.service';
+import { WasmEngineService } from '../services/wasm-engine.service';
 
 @Injectable({
   providedIn: 'root'
 })
 export class PosterStore {
   private readonly clusteringService = inject(PosterClusteringService);
+  private readonly wasmEngine = inject(WasmEngineService);
 
   readonly rows = 28;
   readonly cols = 36;
@@ -72,7 +74,9 @@ export class PosterStore {
   }
 
   constructor() {
-    this.initDefaultPoster();
+    this.wasmEngine.initWasm().then(() => {
+      this.initDefaultPoster();
+    });
   }
 
   /**
@@ -112,20 +116,24 @@ export class PosterStore {
    * Re-runs capacity-constrained K-means clustering
    */
   recluster(): void {
-    const currentSlots = this.slots();
-    if (currentSlots.length === 0) return;
+    const canvas = this.posterCanvas();
+    if (!canvas) return;
 
     this.isAnalyzing.set(true);
-    const result = this.clusteringService.clusterSlots(currentSlots, this.weights());
-    this.slots.set(result.slots);
-    this.trays.set(result.trays);
-    this.stats.set(result.stats);
+    const result = this.clusteringService.clusterPoster(canvas, this.weights());
+    if (result) {
+      this.slots.set(result.slots);
+      this.trays.set(result.trays);
+      this.stats.set(result.stats);
+      this.syncSelectedSlot(result.slots);
+    }
     this.isAnalyzing.set(false);
+  }
 
-    // Keep selected slot in sync
+  private syncSelectedSlot(slots: PosterSlotFeature[]): void {
     const selected = this.selectedSlot();
     if (selected) {
-      const match = result.slots.find(s => s.r === selected.r && s.c === selected.c);
+      const match = slots.find(s => s.r === selected.r && s.c === selected.c);
       if (match) this.selectedSlot.set(match);
     }
   }
@@ -148,13 +156,13 @@ export class PosterStore {
 
   private extractAndCluster(canvas: HTMLCanvasElement): void {
     this.isAnalyzing.set(true);
-    const extracted = this.clusteringService.extractSlotFeatures(canvas);
-    const result = this.clusteringService.clusterSlots(extracted, this.weights());
-
-    this.slots.set(result.slots);
-    this.trays.set(result.trays);
-    this.stats.set(result.stats);
-    this.selectedSlot.set(result.slots[0] || null);
+    const result = this.clusteringService.clusterPoster(canvas, this.weights());
+    if (result) {
+      this.slots.set(result.slots);
+      this.trays.set(result.trays);
+      this.stats.set(result.stats);
+      this.selectedSlot.set(result.slots[0] || null);
+    }
     this.isAnalyzing.set(false);
   }
 }

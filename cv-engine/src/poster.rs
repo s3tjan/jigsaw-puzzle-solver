@@ -1669,3 +1669,557 @@ pub fn locate_piece_spatial(
     Err(JsValue::from_str("Master poster not initialized. Call init_master_poster_spatial first."))
 }
 
+// ---------------------------------------------------------------------------
+// TRY-01 to TRY-05: Poster Pre-Sorting & Tray Clustering
+// ---------------------------------------------------------------------------
+
+pub const POSTER_TOTAL_COLS: u32 = 36;
+pub const POSTER_TOTAL_ROWS: u32 = 28;
+pub const POSTER_TOTAL_PIECES: u32 = 1008; // 36 * 28
+pub const POSTER_BORDER_PIECES: u32 = 124; // 34*2 + 26*2 + 4
+pub const POSTER_INTERIOR_PIECES: u32 = 884; // 34 * 26
+pub const DEFAULT_MAX_CAPACITY: u32 = 125;
+pub const NUM_TRAYS: usize = 8;
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct PosterSlotFeature {
+    pub r: u32,
+    pub c: u32,
+    pub is_border: bool,
+    pub is_corner: bool,
+    pub lab: [f32; 3],
+    pub gradient: f32,
+    pub tray_id: u8, // 0 for border, 1..8 for interior trays
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct TrayInfo {
+    pub id: u8, // 1..8
+    pub name: String,
+    pub color: String,
+    pub count: u32,
+    pub max_capacity: u32, // 125
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ClusteringStats {
+    pub iterations: u32,
+    pub max_iterations: u32,
+    pub inertia: f32,
+    pub is_balanced: bool,
+    pub overflow_count: u32,
+    pub compute_time_ms: u32,
+    pub total_pieces: u32,    // 1008
+    pub border_pieces: u32,   // 124
+    pub interior_pieces: u32, // 884
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ClusteringResult {
+    pub slots: Vec<PosterSlotFeature>,
+    pub trays: Vec<TrayInfo>,
+    pub stats: ClusteringStats,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Centroid {
+    pub lab: [f32; 3],
+    pub gradient: f32,
+    pub r_norm: f32,
+    pub c_norm: f32,
+}
+
+pub fn get_default_tray_definitions(max_capacity: u32) -> Vec<TrayInfo> {
+    vec![
+        TrayInfo { id: 1, name: "MEADOW".to_string(),  color: "#15803d".to_string(), count: 0, max_capacity },
+        TrayInfo { id: 2, name: "SKY".to_string(),     color: "#0284c7".to_string(), count: 0, max_capacity },
+        TrayInfo { id: 3, name: "BRICK".to_string(),   color: "#b45309".to_string(), count: 0, max_capacity },
+        TrayInfo { id: 4, name: "STONE".to_string(),   color: "#6b7280".to_string(), count: 0, max_capacity },
+        TrayInfo { id: 5, name: "FOREST".to_string(),  color: "#166534".to_string(), count: 0, max_capacity },
+        TrayInfo { id: 6, name: "EARTH".to_string(),   color: "#7c2d12".to_string(), count: 0, max_capacity },
+        TrayInfo { id: 7, name: "CANOPY".to_string(),  color: "#0f766e".to_string(), count: 0, max_capacity },
+        TrayInfo { id: 8, name: "SHADOW".to_string(),  color: "#334155".to_string(), count: 0, max_capacity },
+    ]
+}
+
+/// TRY-04: Deterministic 2x4 spatial grid partition for interior cells (r: 1..26, c: 1..34)
+pub fn get_spatial_seed_tray(r: u32, c: u32) -> u8 {
+    let row_band = if r <= 13 { 0u8 } else { 1u8 };
+    let col_band = if c <= 9 {
+        0u8
+    } else if c <= 18 {
+        1u8
+    } else if c <= 26 {
+        2u8
+    } else {
+        3u8
+    };
+    row_band * 4 + col_band + 1
+}
+
+/// TRY-01: Extract 1,008 feature vectors from an RGBA poster buffer
+pub fn extract_poster_features(
+    poster_rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Vec<PosterSlotFeature> {
+    let mut slots = Vec::with_capacity((POSTER_TOTAL_COLS * POSTER_TOTAL_ROWS) as usize);
+    let cell_w = width as f32 / POSTER_TOTAL_COLS as f32;
+    let cell_h = height as f32 / POSTER_TOTAL_ROWS as f32;
+
+    for r in 0..POSTER_TOTAL_ROWS {
+        for c in 0..POSTER_TOTAL_COLS {
+            let is_border = r == 0 || r == POSTER_TOTAL_ROWS - 1 || c == 0 || c == POSTER_TOTAL_COLS - 1;
+            let is_corner = is_border && (
+                (r == 0 && c == 0) ||
+                (r == 0 && c == POSTER_TOTAL_COLS - 1) ||
+                (r == POSTER_TOTAL_ROWS - 1 && c == 0) ||
+                (r == POSTER_TOTAL_ROWS - 1 && c == POSTER_TOTAL_COLS - 1)
+            );
+
+            let x0 = c as f32 * cell_w;
+            let y0 = r as f32 * cell_h;
+            let x1 = (c + 1) as f32 * cell_w;
+            let y1 = (r + 1) as f32 * cell_h;
+
+            let crop_x0 = (x0 + 0.15 * cell_w).round() as u32;
+            let crop_x1 = ((x1 - 0.15 * cell_w).round() as u32).max(crop_x0 + 1).min(width);
+            let crop_y0 = (y0 + 0.15 * cell_h).round() as u32;
+            let crop_y1 = ((y1 - 0.15 * cell_h).round() as u32).max(crop_y0 + 1).min(height);
+
+            let mut sum_r = 0u64;
+            let mut sum_g = 0u64;
+            let mut sum_b = 0u64;
+            let mut pixel_count = 0u32;
+            let mut grad_sum = 0.0f32;
+            let mut grad_count = 0u32;
+
+            for y in crop_y0..crop_y1 {
+                let row_idx = (y * width) as usize;
+                for x in crop_x0..crop_x1 {
+                    let idx = (row_idx + x as usize) * 4;
+                    if idx + 3 < poster_rgba.len() {
+                        let pr = poster_rgba[idx];
+                        let pg = poster_rgba[idx + 1];
+                        let pb = poster_rgba[idx + 2];
+
+                        sum_r += pr as u64;
+                        sum_g += pg as u64;
+                        sum_b += pb as u64;
+                        pixel_count += 1;
+
+                        if x > 0 && x + 1 < width && y > 0 && y + 1 < height {
+                            let p_l = ((poster_rgba[((y * width + (x - 1)) * 4) as usize] as i32 * 299
+                                + poster_rgba[((y * width + (x - 1)) * 4 + 1) as usize] as i32 * 587
+                                + poster_rgba[((y * width + (x - 1)) * 4 + 2) as usize] as i32 * 114) / 1000) as f32;
+                            let p_r = ((poster_rgba[((y * width + (x + 1)) * 4) as usize] as i32 * 299
+                                + poster_rgba[((y * width + (x + 1)) * 4 + 1) as usize] as i32 * 587
+                                + poster_rgba[((y * width + (x + 1)) * 4 + 2) as usize] as i32 * 114) / 1000) as f32;
+                            let p_u = ((poster_rgba[(((y - 1) * width + x) * 4) as usize] as i32 * 299
+                                + poster_rgba[(((y - 1) * width + x) * 4 + 1) as usize] as i32 * 587
+                                + poster_rgba[(((y - 1) * width + x) * 4 + 2) as usize] as i32 * 114) / 1000) as f32;
+                            let p_d = ((poster_rgba[(((y + 1) * width + x) * 4) as usize] as i32 * 299
+                                + poster_rgba[(((y + 1) * width + x) * 4 + 1) as usize] as i32 * 587
+                                + poster_rgba[(((y + 1) * width + x) * 4 + 2) as usize] as i32 * 114) / 1000) as f32;
+
+                            let gx = (p_r - p_l) * 0.5;
+                            let gy = (p_d - p_u) * 0.5;
+                            let mag = (gx * gx + gy * gy).sqrt();
+                            grad_sum += mag;
+                            grad_count += 1;
+                        }
+                    }
+                }
+            }
+
+            let mean_r = if pixel_count > 0 { (sum_r / pixel_count as u64) as u8 } else { 128 };
+            let mean_g = if pixel_count > 0 { (sum_g / pixel_count as u64) as u8 } else { 128 };
+            let mean_b = if pixel_count > 0 { (sum_b / pixel_count as u64) as u8 } else { 128 };
+
+            let lab = rgb_to_cielab(mean_r, mean_g, mean_b);
+            let gradient = if grad_count > 0 {
+                (grad_sum / (grad_count as f32 * 128.0)).min(1.0).max(0.0)
+            } else {
+                0.0
+            };
+
+            let tray_id = if is_border { 0 } else { get_spatial_seed_tray(r, c) };
+
+            slots.push(PosterSlotFeature {
+                r,
+                c,
+                is_border,
+                is_corner,
+                lab,
+                gradient,
+                tray_id,
+            });
+        }
+    }
+
+    slots
+}
+
+/// TRY-04: Initialize K=8 centroids from the 2x4 spatial grid
+pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<Centroid> {
+    let mut centroids = Vec::with_capacity(NUM_TRAYS);
+
+    for tray_idx in 1..=NUM_TRAYS as u8 {
+        let mut sum_l = 0.0f32;
+        let mut sum_a = 0.0f32;
+        let mut sum_b = 0.0f32;
+        let mut sum_grad = 0.0f32;
+        let mut sum_r = 0.0f32;
+        let mut sum_c = 0.0f32;
+        let mut count = 0u32;
+
+        for s in interior_slots {
+            if get_spatial_seed_tray(s.r, s.c) == tray_idx {
+                sum_l += s.lab[0];
+                sum_a += s.lab[1];
+                sum_b += s.lab[2];
+                sum_grad += s.gradient;
+                sum_r += s.r as f32 / 27.0;
+                sum_c += s.c as f32 / 35.0;
+                count += 1;
+            }
+        }
+
+        if count > 0 {
+            centroids.push(Centroid {
+                lab: [sum_l / count as f32, sum_a / count as f32, sum_b / count as f32],
+                gradient: sum_grad / count as f32,
+                r_norm: sum_r / count as f32,
+                c_norm: sum_c / count as f32,
+            });
+        } else {
+            centroids.push(Centroid {
+                lab: [50.0, 0.0, 0.0],
+                gradient: 0.0,
+                r_norm: 0.5,
+                c_norm: 0.5,
+            });
+        }
+    }
+
+    centroids
+}
+
+/// Compute weighted Euclidean distance between a slot feature and a centroid:
+/// D^2 = w_color * (dE_cielab^2 / sigma_color^2) + w_texture * (d_grad)^2 + w_spatial * (dR^2 + dC^2)
+pub fn compute_slot_cluster_distance_sq(
+    slot: &PosterSlotFeature,
+    centroid: &Centroid,
+    w_color: f32,
+    w_texture: f32,
+    w_spatial: f32,
+) -> f32 {
+    let dl = (slot.lab[0] - centroid.lab[0]) / 100.0;
+    let da = (slot.lab[1] - centroid.lab[1]) / 255.0;
+    let db = (slot.lab[2] - centroid.lab[2]) / 255.0;
+    let d_cielab_sq = dl * dl + da * da + db * db;
+
+    let d_grad = slot.gradient - centroid.gradient;
+    let d_texture_sq = d_grad * d_grad;
+
+    let r_norm = slot.r as f32 / 27.0;
+    let c_norm = slot.c as f32 / 35.0;
+    let dr = r_norm - centroid.r_norm;
+    let dc = c_norm - centroid.c_norm;
+    let d_spatial_sq = dr * dr + dc * dc;
+
+    w_color * d_cielab_sq + w_texture * d_texture_sq + w_spatial * d_spatial_sq
+}
+
+/// TRY-02 & TRY-03: Capacity-constrained weighted K-Means clustering
+pub fn cluster_interior_slots(
+    interior_slots: &[PosterSlotFeature],
+    w_color: f32,
+    w_texture: f32,
+    w_spatial: f32,
+    max_capacity: u32,
+    max_iterations: u32,
+) -> (Vec<u8>, Vec<Centroid>, u32, f32) {
+    let n = interior_slots.len();
+    if n == 0 {
+        return (Vec::new(), Vec::new(), 0, 0.0);
+    }
+
+    let mut centroids = initialize_seeded_centroids(interior_slots);
+    let mut assignments: Vec<u8> = interior_slots
+        .iter()
+        .map(|s| get_spatial_seed_tray(s.r, s.c))
+        .collect();
+
+    let mut tray_counts = [0u32; NUM_TRAYS + 1];
+    for &t in &assignments {
+        tray_counts[t as usize] += 1;
+    }
+
+    let target_avg = (n as f32 / NUM_TRAYS as f32).round() as u32; // ~111
+    let mut total_iterations = 0;
+    let mut final_inertia = 0.0f32;
+
+    for _iter in 0..max_iterations {
+        total_iterations += 1;
+        let mut reassignments = 0;
+        final_inertia = 0.0;
+
+        for i in 0..n {
+            let slot = &interior_slots[i];
+            let current_tray = assignments[i];
+
+            let mut best_dist_penalized = f32::INFINITY;
+            let mut best_tray = current_tray;
+            let mut best_raw_dist_sq = 0.0f32;
+
+            for t in 1..=NUM_TRAYS as u8 {
+                let dist_sq = compute_slot_cluster_distance_sq(
+                    slot,
+                    &centroids[(t - 1) as usize],
+                    w_color,
+                    w_texture,
+                    w_spatial,
+                );
+
+                let current_count = tray_counts[t as usize];
+                let count_for_eval = if t == current_tray { current_count.saturating_sub(1) } else { current_count };
+
+                let mut capacity_penalty = 0.0f32;
+                if count_for_eval >= target_avg {
+                    capacity_penalty += (count_for_eval - target_avg) as f32 * 0.005;
+                }
+                if count_for_eval >= max_capacity {
+                    capacity_penalty += 5.0; // Hard rejection barrier
+                }
+
+                let penalized_dist = dist_sq.sqrt() + capacity_penalty;
+                if penalized_dist < best_dist_penalized {
+                    best_dist_penalized = penalized_dist;
+                    best_tray = t;
+                    best_raw_dist_sq = dist_sq;
+                }
+            }
+
+            final_inertia += best_raw_dist_sq;
+
+            if best_tray != current_tray {
+                tray_counts[current_tray as usize] -= 1;
+                tray_counts[best_tray as usize] += 1;
+                assignments[i] = best_tray;
+                reassignments += 1;
+            }
+        }
+
+        // Recompute centroids
+        let mut sum_l = [0.0f32; NUM_TRAYS + 1];
+        let mut sum_a = [0.0f32; NUM_TRAYS + 1];
+        let mut sum_b = [0.0f32; NUM_TRAYS + 1];
+        let mut sum_grad = [0.0f32; NUM_TRAYS + 1];
+        let mut sum_r = [0.0f32; NUM_TRAYS + 1];
+        let mut sum_c = [0.0f32; NUM_TRAYS + 1];
+        let mut counts = [0u32; NUM_TRAYS + 1];
+
+        for i in 0..n {
+            let t = assignments[i] as usize;
+            let s = &interior_slots[i];
+            sum_l[t] += s.lab[0];
+            sum_a[t] += s.lab[1];
+            sum_b[t] += s.lab[2];
+            sum_grad[t] += s.gradient;
+            sum_r[t] += s.r as f32 / 27.0;
+            sum_c[t] += s.c as f32 / 35.0;
+            counts[t] += 1;
+        }
+
+        for t in 1..=NUM_TRAYS {
+            if counts[t] > 0 {
+                centroids[t - 1] = Centroid {
+                    lab: [
+                        sum_l[t] / counts[t] as f32,
+                        sum_a[t] / counts[t] as f32,
+                        sum_b[t] / counts[t] as f32,
+                    ],
+                    gradient: sum_grad[t] / counts[t] as f32,
+                    r_norm: sum_r[t] / counts[t] as f32,
+                    c_norm: sum_c[t] / counts[t] as f32,
+                };
+            }
+        }
+
+        if reassignments < 3 {
+            break;
+        }
+    }
+
+    // TRY-03: Hard post-process capacity overflow resolution
+    loop {
+        let mut overflow_tray = 0usize;
+        for t in 1..=NUM_TRAYS {
+            if tray_counts[t] > max_capacity {
+                overflow_tray = t;
+                break;
+            }
+        }
+        if overflow_tray == 0 {
+            break;
+        }
+
+        // Find candidate item in overflow tray with smallest delta to another available tray
+        let mut best_item_idx = None;
+        let mut best_target_tray = 0u8;
+        let mut min_transfer_cost = f32::INFINITY;
+
+        for i in 0..n {
+            if assignments[i] as usize == overflow_tray {
+                let slot = &interior_slots[i];
+                let current_dist_sq = compute_slot_cluster_distance_sq(
+                    slot,
+                    &centroids[overflow_tray - 1],
+                    w_color,
+                    w_texture,
+                    w_spatial,
+                );
+
+                for target_t in 1..=NUM_TRAYS {
+                    if target_t != overflow_tray && tray_counts[target_t] < max_capacity {
+                        let target_dist_sq = compute_slot_cluster_distance_sq(
+                            slot,
+                            &centroids[target_t - 1],
+                            w_color,
+                            w_texture,
+                            w_spatial,
+                        );
+                        let cost = target_dist_sq - current_dist_sq;
+                        if cost < min_transfer_cost {
+                            min_transfer_cost = cost;
+                            best_item_idx = Some(i);
+                            best_target_tray = target_t as u8;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(idx) = best_item_idx {
+            tray_counts[overflow_tray] -= 1;
+            tray_counts[best_target_tray as usize] += 1;
+            assignments[idx] = best_target_tray;
+        } else {
+            break; // No available transfer targets
+        }
+    }
+
+    (assignments, centroids, total_iterations, final_inertia / n as f32)
+}
+
+/// Full analysis and clustering pipeline
+pub fn analyze_and_cluster_poster_internal(
+    poster_rgba: &[u8],
+    width: u32,
+    height: u32,
+    w_color: f32,
+    w_texture: f32,
+    w_spatial: f32,
+    max_capacity: u32,
+) -> ClusteringResult {
+    let mut slots = extract_poster_features(poster_rgba, width, height);
+    let interior_slots: Vec<PosterSlotFeature> = slots.iter().filter(|s| !s.is_border).cloned().collect();
+
+    let (assignments, _centroids, iterations, inertia) = cluster_interior_slots(
+        &interior_slots,
+        w_color,
+        w_texture,
+        w_spatial,
+        max_capacity,
+        20,
+    );
+
+    let mut interior_idx = 0;
+    for s in &mut slots {
+        if s.is_border {
+            s.tray_id = 0;
+        } else {
+            s.tray_id = assignments[interior_idx];
+            interior_idx += 1;
+        }
+    }
+
+    let mut tray_counts = [0u32; NUM_TRAYS + 1];
+    for s in &slots {
+        if !s.is_border {
+            tray_counts[s.tray_id as usize] += 1;
+        }
+    }
+
+    let mut default_trays = get_default_tray_definitions(max_capacity);
+    let mut overflow_count = 0u32;
+    for tray in &mut default_trays {
+        let count = tray_counts[tray.id as usize];
+        tray.count = count;
+        if count > max_capacity {
+            overflow_count += 1;
+        }
+    }
+
+    let stats = ClusteringStats {
+        iterations,
+        max_iterations: 20,
+        inertia,
+        is_balanced: overflow_count == 0,
+        overflow_count,
+        compute_time_ms: 0,
+        total_pieces: POSTER_TOTAL_PIECES,
+        border_pieces: POSTER_BORDER_PIECES,
+        interior_pieces: POSTER_INTERIOR_PIECES,
+    };
+
+    ClusteringResult {
+        slots,
+        trays: default_trays,
+        stats,
+    }
+}
+
+/// TRY-05: WASM entrypoint
+#[wasm_bindgen]
+pub fn analyze_and_cluster_poster(
+    poster_rgba: &[u8],
+    width: u32,
+    height: u32,
+    w_color: f32,
+    w_texture: f32,
+    w_spatial: f32,
+    max_capacity: u32,
+) -> Result<JsValue, JsValue> {
+    if poster_rgba.len() < (width * height * 4) as usize {
+        return Err(JsValue::from_str("Invalid poster_rgba buffer length"));
+    }
+
+    let start_ms = web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or(0.0);
+
+    let mut result = analyze_and_cluster_poster_internal(
+        poster_rgba,
+        width,
+        height,
+        w_color,
+        w_texture,
+        w_spatial,
+        max_capacity,
+    );
+
+    let end_ms = web_sys::window()
+        .and_then(|w| w.performance())
+        .map(|p| p.now())
+        .unwrap_or(start_ms);
+
+    result.stats.compute_time_ms = (end_ms - start_ms).max(0.0).round() as u32;
+
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+
