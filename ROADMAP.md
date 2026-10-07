@@ -24,7 +24,7 @@ A cyber-physical system for solving a 1,008-piece jigsaw puzzle (36 × 28 total 
 
 ### Prior Art Differentiation
 - Forward vs. Reverse Paradigm: Academic solvers evaluate P(slot | random piece), failing on low-entropy regions (sky/foliage) and identical die-twin cuts. We invert to P(candidate | frontier slot), enforcing deterministic physical boundary conditions.
-- Cyber-Physical Search Friction: Existing systems ignore physical piece retrieval in the room. By deriving capacity-constrained physical trays (8 trays, <= 125 pcs) from poster analysis and using peripheral cues during continuous ingestion, physical search time is reduced from minutes in a 1,000-piece pile to seconds in a single-layer tray.
+- Cyber-Physical Search Friction: Existing systems ignore physical piece retrieval in the room. By deriving capacity-constrained physical trays (8 trays, <= 125 pcs) from poster analysis and using peripheral cues during continuous ingestion, physical search time is reduced from minutes in a 1,008-piece pile to seconds in a single-layer tray.
 
 ---
 
