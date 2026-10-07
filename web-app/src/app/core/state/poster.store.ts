@@ -58,6 +58,7 @@ export class PosterStore {
   readonly hoveredSlot = signal<PosterSlotFeature | null>(null);
   readonly soloTrayId = signal<TrayId | null>(null);
   readonly viewMode = signal<PosterViewMode>('TINT');
+  readonly showGrid = signal<boolean>(true);
   readonly isAnalyzing = signal<boolean>(false);
 
   // Computed tray lookup
@@ -144,6 +145,14 @@ export class PosterStore {
 
   setViewMode(mode: PosterViewMode): void {
     this.viewMode.set(mode);
+  }
+
+  toggleGrid(): void {
+    this.showGrid.update(g => !g);
+  }
+
+  setShowGrid(show: boolean): void {
+    this.showGrid.set(show);
   }
 
   selectSlot(slot: PosterSlotFeature | null): void {

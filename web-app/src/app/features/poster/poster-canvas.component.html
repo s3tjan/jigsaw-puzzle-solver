@@ -6,16 +6,25 @@
       <span class="header-meta font-mono">124 BORDER + 884 INTERIOR (8 TRAYS)</span>
     </div>
 
-    <!-- View Mode Switches -->
+    <!-- View Mode Switches & Display Controls -->
     <div class="mode-toggles">
       <button
         type="button"
         class="toggle-btn"
         [class.active]="posterStore.viewMode() === 'TINT'"
         (click)="setViewMode('TINT')"
-        title="Show Color-Coded Tray Tint Overlays"
+        title="Show Color-Coded Tray Tint Overlays on Artwork"
       >
         TINT OVERLAY
+      </button>
+      <button
+        type="button"
+        class="toggle-btn"
+        [class.active]="posterStore.viewMode() === 'TRAYS'"
+        (click)="setViewMode('TRAYS')"
+        title="Show Prominent Tray Partition Map with Subdued Artwork"
+      >
+        RAW TRAYS
       </button>
       <button
         type="button"
@@ -34,6 +43,15 @@
         title="Show Sobel Gradient Texture Density"
       >
         GRADIENT
+      </button>
+      <button
+        type="button"
+        class="toggle-btn"
+        [class.active]="posterStore.showGrid()"
+        (click)="toggleGrid()"
+        title="Toggle Piece Grid Lines (36x28)"
+      >
+        GRID: {{ posterStore.showGrid() ? 'ON' : 'OFF' }}
       </button>
       <button
         type="button"

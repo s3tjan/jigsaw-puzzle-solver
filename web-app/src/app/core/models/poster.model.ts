@@ -28,7 +28,7 @@ export interface PosterSlotFeature {
   isCorner: boolean;  // 4 corners
 }
 
-export type PosterViewMode = 'TINT' | 'RAW' | 'GRADIENT';
+export type PosterViewMode = 'TINT' | 'TRAYS' | 'RAW' | 'GRADIENT';
 
 export interface ClusteringStats {
   iterations: number;

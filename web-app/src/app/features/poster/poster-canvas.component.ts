@@ -39,15 +39,20 @@ export class PosterCanvasComponent implements AfterViewInit, OnDestroy {
   private resizeObserver?: ResizeObserver;
 
   constructor() {
-    // Re-render when slots, view mode, or solo tray change
+    // Re-render when slots, view mode, grid, or solo tray change
     effect(() => {
       this.posterStore.slots();
       this.posterStore.soloTrayId();
       this.posterStore.viewMode();
+      this.posterStore.showGrid();
       this.posterStore.selectedSlot();
       this.posterStore.hoveredSlot();
       this.render();
     });
+  }
+
+  toggleGrid(): void {
+    this.posterStore.toggleGrid();
   }
 
   ngAfterViewInit(): void {
@@ -230,12 +235,20 @@ export class PosterCanvasComponent implements AfterViewInit, OnDestroy {
     if (mode === 'GRADIENT') {
       ctx.fillStyle = '#111111';
       ctx.fillRect(0, 0, pw, ph);
+    } else if (mode === 'TRAYS') {
+      // Background poster is heavily muted/subdued watermark so tray boundaries dominate
+      ctx.save();
+      ctx.globalAlpha = 0.15;
+      ctx.drawImage(sourceCanvas, 0, 0);
+      ctx.restore();
     } else {
       ctx.drawImage(sourceCanvas, 0, 0);
     }
 
     // 3. Draw Slot Tints & Grid Lines
     const slots = this.posterStore.slots();
+    const showGrid = this.posterStore.showGrid();
+
     for (const slot of slots) {
       const sx = slot.c * slotW;
       const sy = slot.r * slotH;
@@ -249,6 +262,32 @@ export class PosterCanvasComponent implements AfterViewInit, OnDestroy {
         ctx.fillStyle = `rgb(${intensity}, ${intensity}, ${intensity})`;
         ctx.globalAlpha = 1.0;
         ctx.fillRect(sx, sy, slotW, slotH);
+      } else if (mode === 'TRAYS') {
+        // Raw Tray map view: poster is muted, trays are prominent and clear
+        if (slot.isBorder) {
+          ctx.fillStyle = '#4b5563';
+          ctx.globalAlpha = 0.85;
+          ctx.fillRect(sx, sy, slotW, slotH);
+        } else {
+          const tray = slot.trayId > 0 ? trayMap.get(slot.trayId as TrayId) : null;
+          const color = tray ? tray.color : '#6b7280';
+
+          if (soloTray !== null) {
+            if (isSoloMatch) {
+              ctx.fillStyle = color;
+              ctx.globalAlpha = 0.90;
+              ctx.fillRect(sx, sy, slotW, slotH);
+            } else {
+              ctx.fillStyle = '#e5e7eb';
+              ctx.globalAlpha = 0.60;
+              ctx.fillRect(sx, sy, slotW, slotH);
+            }
+          } else {
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.85;
+            ctx.fillRect(sx, sy, slotW, slotH);
+          }
+        }
       } else if (mode === 'TINT') {
         if (slot.isBorder) {
           // Pre-anchored border piece (124 pieces)
@@ -281,12 +320,14 @@ export class PosterCanvasComponent implements AfterViewInit, OnDestroy {
 
       ctx.globalAlpha = 1.0;
 
-      // 4. Grid Rules (1px solid boundaries)
-      ctx.strokeStyle = '#d4d4d4';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(sx, sy, slotW, slotH);
+      // 4. Grid Rules (1px solid boundaries, toggleable)
+      if (showGrid) {
+        ctx.strokeStyle = mode === 'TRAYS' ? 'rgba(255, 255, 255, 0.45)' : '#d4d4d4';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx, sy, slotW, slotH);
+      }
 
-      // 5. Selected or Hovered Slot Accent
+      // 5. Selected or Hovered Slot Accent (always visible)
       if (isSelected) {
         ctx.strokeStyle = '#111111';
         ctx.lineWidth = 2;
