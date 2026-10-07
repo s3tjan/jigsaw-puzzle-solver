@@ -101,7 +101,7 @@ button:hover {
   background-color: var(--bg-surface-hover);
 }
 
-button:focus-visible {
+button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 1px solid var(--text-primary);
   outline-offset: -1px;
 }

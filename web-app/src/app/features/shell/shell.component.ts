@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { AppModeStore } from '../../core/state/app-mode.store';
 import { ToolbarComponent } from './components/toolbar/toolbar.component';
 import { StatusBarComponent } from './components/status-bar/status-bar.component';
+import { CommandPaletteComponent } from './components/command-palette/command-palette.component';
 import { WorkbenchComponent } from '../workbench/workbench.component';
 
 @Component({
@@ -12,6 +13,7 @@ import { WorkbenchComponent } from '../workbench/workbench.component';
     CommonModule,
     ToolbarComponent,
     StatusBarComponent,
+    CommandPaletteComponent,
     WorkbenchComponent
   ],
   templateUrl: './shell.component.html',

@@ -1,10 +1,11 @@
 <header class="toolbar-root border-b">
   <!-- Mode Selector (Alt+1 - Alt+3) -->
-  <div class="mode-cluster">
+  <div class="mode-cluster" role="group" aria-label="Operational Mode Selection">
     <button 
       type="button" 
       class="mode-btn" 
       [class.active]="appModeStore.activeMode() === 'INGESTION'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'INGESTION'"
       (click)="setMode('INGESTION')"
       title="Shortcut: Alt+1"
     >
@@ -14,6 +15,7 @@
       type="button" 
       class="mode-btn" 
       [class.active]="appModeStore.activeMode() === 'POSTER_STUDIO'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'POSTER_STUDIO'"
       (click)="setMode('POSTER_STUDIO')"
       title="Shortcut: Alt+2"
     >
@@ -23,6 +25,7 @@
       type="button" 
       class="mode-btn" 
       [class.active]="appModeStore.activeMode() === 'WORKBENCH'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'WORKBENCH'"
       (click)="setMode('WORKBENCH')"
       title="Shortcut: Alt+3"
     >
@@ -31,6 +34,16 @@
   </div>
 
   <div class="divider"></div>
+
+  <!-- Command Palette Discovery Trigger (Ctrl+K) -->
+  <button 
+    type="button" 
+    class="action-btn" 
+    (click)="openCommandPalette()"
+    title="Open Command Palette (Ctrl+K)"
+  >
+    <span class="shortcut-hint font-mono">[Ctrl+K]</span>COMMANDS
+  </button>
 
   <!-- Functional Optics Calibration Action (OPT-03) -->
   <button type="button" class="action-btn" title="Open K1 Distortion Calibration Modal">
@@ -41,16 +54,16 @@
   <div class="telemetry-cluster">
     <div class="telemetry-item">
       <span class="label">SCALE:</span>
-      <span class="val font-mono">96px/25mm</span>
+      <span class="val font-mono tabular-nums">96px/25mm</span>
     </div>
     <div class="telemetry-item">
       <span class="label">K1:</span>
-      <span class="val font-mono">0.000</span>
+      <span class="val font-mono tabular-nums">0.000</span>
     </div>
     <div class="telemetry-item">
       <span class="status-indicator">●</span>
       <span class="label">WASM:</span>
-      <span class="val font-mono">{{ appModeStore.wasmLatencyMs() }}ms</span>
+      <span class="val font-mono tabular-nums">{{ appModeStore.wasmLatencyMs() }}ms</span>
     </div>
   </div>
 </header>

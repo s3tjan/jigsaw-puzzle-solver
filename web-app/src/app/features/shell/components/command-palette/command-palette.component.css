@@ -1,0 +1,121 @@
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: transparent;
+}
+
+.palette-panel {
+  position: absolute;
+  top: 31px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 580px;
+  background: var(--bg-surface);
+  border: var(--border-rule-dark);
+}
+
+.palette-search-row {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--bg-surface);
+  border-bottom: var(--border-rule);
+  gap: 8px;
+}
+
+.search-glyph {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.palette-input {
+  flex: 1;
+  height: 28px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+  padding: 0;
+}
+
+.palette-input::placeholder {
+  color: var(--text-muted);
+}
+
+.escape-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.palette-list {
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-surface);
+}
+
+.palette-row {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  border-bottom: var(--border-rule);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.palette-row:last-child {
+  border-bottom: none;
+}
+
+.palette-row:hover,
+.palette-row.active {
+  background: var(--bg-inverted);
+  color: var(--text-inverted);
+}
+
+.row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.category-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  width: 65px;
+}
+
+.palette-row.active .category-badge,
+.palette-row:hover .category-badge {
+  color: #a3a3a3;
+}
+
+.cmd-label {
+  font-weight: 500;
+}
+
+.shortcut-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.palette-row.active .shortcut-tag,
+.palette-row:hover .shortcut-tag {
+  color: #a3a3a3;
+}
+
+.empty-state {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+}

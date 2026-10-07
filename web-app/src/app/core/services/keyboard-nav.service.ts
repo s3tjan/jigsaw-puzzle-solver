@@ -9,11 +9,28 @@ export class KeyboardNavService {
 
   init(): void {
     window.addEventListener('keydown', (event: KeyboardEvent) => {
+      // Global Command Palette toggle: Ctrl+K or Cmd+K
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        this.appModeStore.toggleCommandPalette();
+        return;
+      }
+
+      // Close transient UI on Escape
+      if (event.key === 'Escape') {
+        if (this.appModeStore.isCommandPaletteOpen()) {
+          event.preventDefault();
+          this.appModeStore.closeCommandPalette();
+          return;
+        }
+      }
+
       // Don't intercept when user is typing into input fields
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes((event.target as HTMLElement)?.tagName)) {
         return;
       }
 
+      // Mode switching via Alt+1, Alt+2, Alt+3
       if (event.altKey) {
         switch (event.code) {
           case 'Digit1':
@@ -33,13 +50,24 @@ export class KeyboardNavService {
             event.preventDefault();
             this.appModeStore.setMode('WORKBENCH');
             return;
+
+          case 'KeyB':
+            if (this.appModeStore.activeMode() === 'WORKBENCH') {
+              event.preventDefault();
+              this.appModeStore.toggleLeftRail();
+              return;
+            }
+            break;
         }
       }
 
-      // Visual anti-crowding toggle in Workbench HUD: [Tab]
-      if (event.key === 'Tab' && this.appModeStore.activeMode() === 'WORKBENCH') {
-        event.preventDefault();
-        this.appModeStore.toggleLeftRail();
+      // Single-key shortcut 'B' for workbench rail toggle (when not typing in inputs)
+      if (event.key.toLowerCase() === 'b' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (this.appModeStore.activeMode() === 'WORKBENCH') {
+          event.preventDefault();
+          this.appModeStore.toggleLeftRail();
+          return;
+        }
       }
     });
   }

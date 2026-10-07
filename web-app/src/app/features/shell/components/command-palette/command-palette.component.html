@@ -1,0 +1,41 @@
+<div class="palette-backdrop" (click)="close()">
+  <div class="palette-panel" (click)="$event.stopPropagation()">
+    <div class="palette-search-row">
+      <span class="search-glyph font-mono">></span>
+      <input
+        #searchInput
+        type="text"
+        class="palette-input"
+        placeholder="TYPE COMMAND OR SEARCH..."
+        [ngModel]="query()"
+        (ngModelChange)="query.set($event); selectedIndex.set(0)"
+        (keydown)="onKeyDown($event)"
+      />
+      <span class="escape-hint font-mono">[ESC TO CLOSE]</span>
+    </div>
+
+    @if (filteredCommands().length > 0) {
+      <div class="palette-list" role="listbox">
+        @for (cmd of filteredCommands(); track cmd.id; let idx = $index) {
+          <div
+            class="palette-row"
+            role="option"
+            [class.active]="selectedIndex() === idx"
+            (mouseenter)="selectedIndex.set(idx)"
+            (click)="execute(cmd)"
+          >
+            <div class="row-left">
+              <span class="category-badge">{{ cmd.category }}</span>
+              <span class="cmd-label">{{ cmd.label }}</span>
+            </div>
+            <span class="shortcut-tag font-mono">{{ cmd.shortcut }}</span>
+          </div>
+        }
+      </div>
+    } @else {
+      <div class="empty-state font-mono">
+        NO MATCHING COMMANDS
+      </div>
+    }
+  </div>
+</div>

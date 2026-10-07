@@ -24,6 +24,25 @@
 }
 
 .placeholder-body {
-  padding: 8px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.telemetry-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.telemetry-row .label {
   color: var(--text-muted);
+  font-weight: 500;
+  width: 160px;
+}
+
+.telemetry-row .val {
+  color: var(--text-primary);
 }

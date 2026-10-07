@@ -34,7 +34,16 @@
   color: var(--text-muted);
 }
 
+.shortcut {
+  color: var(--text-muted);
+}
+
+.status-title {
+  font-weight: 600;
+}
+
 .indicator.ok {
   color: var(--status-ok);
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1;
 }

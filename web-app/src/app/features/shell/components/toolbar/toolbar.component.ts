@@ -16,4 +16,8 @@ export class ToolbarComponent {
   setMode(mode: AppMode): void {
     this.appModeStore.setMode(mode);
   }
+
+  openCommandPalette(): void {
+    this.appModeStore.openCommandPalette();
+  }
 }

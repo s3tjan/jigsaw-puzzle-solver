@@ -30,6 +30,10 @@
   margin-right: 4px;
 }
 
+.mode-btn.active .shortcut-hint {
+  color: #a3a3a3;
+}
+
 .action-btn {
   background: var(--bg-surface-secondary);
   border: var(--border-rule);
@@ -60,5 +64,6 @@
 
 .status-indicator {
   color: var(--status-ok);
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1;
 }

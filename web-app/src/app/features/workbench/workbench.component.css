@@ -30,14 +30,14 @@
 }
 
 .collapsed-glyph {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 
 .collapsed-label {
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.1em;
   color: var(--text-muted);
 }

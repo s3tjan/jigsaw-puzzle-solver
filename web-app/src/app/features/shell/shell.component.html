@@ -2,6 +2,11 @@
   <!-- 30px Utility Toolbar -->
   <app-toolbar></app-toolbar>
 
+  <!-- Transient Command Palette (Section 6.5) -->
+  @if (appModeStore.isCommandPaletteOpen()) {
+    <app-command-palette></app-command-palette>
+  }
+
   <!-- Main Operational Split Workspace -->
   <main class="workspace-split">
     <!-- MODE: WORKBENCH (Alt+3) -->
@@ -12,9 +17,23 @@
     <!-- MODE: INGESTION (Alt+1) -->
     @if (appModeStore.activeMode() === 'INGESTION') {
       <div class="mode-placeholder">
-        <div class="inverted-header">CONTINUOUS MAT INGESTION (1080P FEED)</div>
-        <div class="placeholder-body font-mono">
-          [WEBRTC VIDEO STREAM: ACTIVE] | MAT FIDUCIALS: C1-C4 GROUNDED | EYE-FREE COLOR FLASH: READY
+        <div class="inverted-header">
+          <span>CONTINUOUS MAT INGESTION (1080P FEED)</span>
+          <span class="font-mono">[TASK ING-02]</span>
+        </div>
+        <div class="placeholder-body">
+          <div class="telemetry-row">
+            <span class="label">STREAM:</span>
+            <span class="val font-mono">WEBRTC 1080P ACTIVE</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="label">FIDUCIALS:</span>
+            <span class="val font-mono">C1-C4 GROUNDED</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="label">PERIPHERAL FEEDBACK:</span>
+            <span class="val font-mono">EYES-FREE COLOR FLASH READY</span>
+          </div>
         </div>
       </div>
     }
@@ -22,9 +41,19 @@
     <!-- MODE: POSTER_STUDIO (Alt+2) -->
     @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
       <div class="mode-placeholder">
-        <div class="inverted-header">POSTER ANALYSIS & TRAY CLUSTERING STUDIO</div>
-        <div class="placeholder-body font-mono">
-          [8 PHYSICAL TRAYS BALANCED: <= 125 PCS] | K-MEANS WEIGHTS: [COLOR: 0.45, TEXTURE: 0.35, SPATIAL: 0.20]
+        <div class="inverted-header">
+          <span>POSTER ANALYSIS & TRAY CLUSTERING STUDIO</span>
+          <span class="font-mono">[TASK TRY-05]</span>
+        </div>
+        <div class="placeholder-body">
+          <div class="telemetry-row">
+            <span class="label">CONTAINERS:</span>
+            <span class="val font-mono tabular-nums">8 TRAYS (&le; 125 PCS/TRAY)</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="label">K-MEANS WEIGHTS:</span>
+            <span class="val font-mono tabular-nums">[COLOR: 0.45, TEXTURE: 0.35, SPATIAL: 0.20]</span>
+          </div>
         </div>
       </div>
     }

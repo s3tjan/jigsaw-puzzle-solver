@@ -13,6 +13,10 @@ export class AppModeStore {
   private readonly _isLeftRailCollapsed = signal<boolean>(false);
   readonly isLeftRailCollapsed = this._isLeftRailCollapsed.asReadonly();
 
+  // Command palette state (Section 6.5 opaque transient UI)
+  private readonly _isCommandPaletteOpen = signal<boolean>(false);
+  readonly isCommandPaletteOpen = this._isCommandPaletteOpen.asReadonly();
+
   // Telemetry signals
   readonly fps = signal<number>(60);
   readonly wasmMemoryMb = signal<number>(4.2);
@@ -29,5 +33,17 @@ export class AppModeStore {
 
   setLeftRailCollapsed(collapsed: boolean): void {
     this._isLeftRailCollapsed.set(collapsed);
+  }
+
+  openCommandPalette(): void {
+    this._isCommandPaletteOpen.set(true);
+  }
+
+  closeCommandPalette(): void {
+    this._isCommandPaletteOpen.set(false);
+  }
+
+  toggleCommandPalette(): void {
+    this._isCommandPaletteOpen.update(open => !open);
   }
 }
