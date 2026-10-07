@@ -5,6 +5,7 @@ import { ToolbarComponent } from './components/toolbar/toolbar.component';
 import { StatusBarComponent } from './components/status-bar/status-bar.component';
 import { CommandPaletteComponent } from './components/command-palette/command-palette.component';
 import { WorkbenchComponent } from '../workbench/workbench.component';
+import { TrayStudioComponent } from '../poster/tray-studio.component';
 
 @Component({
   selector: 'app-shell',
@@ -14,7 +15,8 @@ import { WorkbenchComponent } from '../workbench/workbench.component';
     ToolbarComponent,
     StatusBarComponent,
     CommandPaletteComponent,
-    WorkbenchComponent
+    WorkbenchComponent,
+    TrayStudioComponent
   ],
   templateUrl: './shell.component.html',
   styleUrl: './shell.component.css'

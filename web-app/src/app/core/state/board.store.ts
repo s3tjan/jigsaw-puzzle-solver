@@ -5,9 +5,11 @@ import { BoardSlot, CandidatePiece } from '../models/operator.model';
   providedIn: 'root'
 })
 export class BoardStore {
-  readonly rows = 26;
-  readonly cols = 34;
-  readonly totalSlots = 26 * 34; // 884 slots
+  readonly rows = 28;
+  readonly cols = 36;
+  readonly totalSlots = 28 * 36; // 1,008 total slots
+  readonly borderSlotsCount = 124; // 4 corners + 34 top + 34 bottom + 26 left + 26 right
+  readonly interiorSlotsCount = 884; // 34 interior cols * 26 interior rows
 
   // Frontier queue
   private readonly _frontierSlots = signal<BoardSlot[]>([

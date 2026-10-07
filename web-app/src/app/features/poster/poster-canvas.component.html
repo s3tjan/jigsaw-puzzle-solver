@@ -1,0 +1,101 @@
+<div class="canvas-root">
+  <!-- Viewport Header Toolbar -->
+  <div class="viewport-header border-b">
+    <div class="header-left">
+      <span class="header-title">POSTER REFERENCE (36×28 GRID / 1,008 SLOTS)</span>
+      <span class="header-meta font-mono">124 BORDER + 884 INTERIOR (8 TRAYS)</span>
+    </div>
+
+    <!-- View Mode Switches -->
+    <div class="mode-toggles">
+      <button
+        type="button"
+        class="toggle-btn"
+        [class.active]="posterStore.viewMode() === 'TINT'"
+        (click)="setViewMode('TINT')"
+        title="Show Color-Coded Tray Tint Overlays"
+      >
+        TINT OVERLAY
+      </button>
+      <button
+        type="button"
+        class="toggle-btn"
+        [class.active]="posterStore.viewMode() === 'RAW'"
+        (click)="setViewMode('RAW')"
+        title="Show Raw Reference Poster Artwork"
+      >
+        RAW POSTER
+      </button>
+      <button
+        type="button"
+        class="toggle-btn"
+        [class.active]="posterStore.viewMode() === 'GRADIENT'"
+        (click)="setViewMode('GRADIENT')"
+        title="Show Sobel Gradient Texture Density"
+      >
+        GRADIENT
+      </button>
+      <button
+        type="button"
+        class="toggle-btn reset-btn"
+        (click)="resetView()"
+        title="Center and Fit Viewport"
+      >
+        FIT VIEW [0]
+      </button>
+    </div>
+  </div>
+
+  <!-- Interactive 2D Canvas Viewport -->
+  <div
+    #viewportRef
+    class="canvas-viewport"
+    (wheel)="onWheel($event)"
+    (mousedown)="onMouseDown($event)"
+    (mousemove)="onMouseMove($event)"
+    (mouseup)="onMouseUp($event)"
+    (mouseleave)="onMouseLeave()"
+  >
+    <canvas #canvasRef class="board-canvas"></canvas>
+  </div>
+
+  <!-- Bottom Telemetry HUD Strip for Current Slot -->
+  <div class="canvas-telemetry border-t">
+    @if (posterStore.hoveredSlot() || posterStore.selectedSlot(); as activeSlot) {
+      <div class="telemetry-group">
+        <span class="meta-label">COORDS:</span>
+        <span class="meta-val font-mono tabular-nums">R{{ activeSlot.r }} C{{ activeSlot.c }}</span>
+      </div>
+      <div class="telemetry-group">
+        <span class="meta-label">CIELAB:</span>
+        <span class="meta-val font-mono tabular-nums">
+          L:{{ activeSlot.lab[0].toFixed(1) }} a:{{ activeSlot.lab[1].toFixed(1) }} b:{{ activeSlot.lab[2].toFixed(1) }}
+        </span>
+      </div>
+      <div class="telemetry-group">
+        <span class="meta-label">SOBEL GRAD:</span>
+        <span class="meta-val font-mono tabular-nums">{{ (activeSlot.gradient * 100).toFixed(1) }}%</span>
+      </div>
+      <div class="telemetry-group">
+        <span class="meta-label">ASSIGNED TRAY:</span>
+        @if (activeSlot.isBorder) {
+          <span class="tray-chip" style="background-color: #6b7280;"></span>
+          <span class="meta-val font-mono">BORDER ANCHOR [124 PIECES]</span>
+        } @else {
+          <span class="tray-chip" [style.background-color]="posterStore.getTray(activeSlot.trayId)?.color"></span>
+          <span class="meta-val font-mono">TRAY-0{{ activeSlot.trayId }} [{{ posterStore.getTray(activeSlot.trayId)?.name }}]</span>
+        }
+      </div>
+      <div class="telemetry-group">
+        <span class="meta-label">TYPE:</span>
+        <span class="meta-val font-mono">
+          {{ activeSlot.isCorner ? 'CORNER' : activeSlot.isBorder ? 'BORDER' : 'INTERIOR' }}
+        </span>
+      </div>
+    } @else {
+      <div class="telemetry-group">
+        <span class="meta-label">HOVER OVER SLOTS TO INSPECT 6D FEATURE VECTOR [L*, a*, b*, GRAD, R, C]</span>
+      </div>
+    }
+  </div>
+</div>

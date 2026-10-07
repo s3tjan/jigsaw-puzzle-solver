@@ -1,6 +1,19 @@
 # Jigsaw Puzzle Solver: Technical Architecture & Task Matrix
 
-A cyber-physical system for solving a 1,008-piece jigsaw puzzle (34 x 26 grid) using Rust WASM (`cv-engine`) and Angular (`web-app`).
+A cyber-physical system for solving a 1,008-piece jigsaw puzzle (36 × 28 total grid, 34 × 26 interior grid) using Rust WASM (`cv-engine`) and Angular (`web-app`).
+
+### Board Geometry & Piece Breakdown
+- **Total Puzzle Pieces**: 1,008 pieces (36 columns × 28 rows)
+- **Perimeter (Border Pieces)**: 124 pieces
+  * Corners: 4 pieces `[(0, 0), (0, 35), (27, 0), (27, 35)]`
+  * Top border: 34 pieces (Cols 1..34, Row 0, excluding corners)
+  * Bottom border: 34 pieces (Cols 1..34, Row 27, excluding corners)
+  * Left border: 26 pieces (Rows 1..26, Col 0, excluding corners)
+  * Right border: 26 pieces (Rows 1..26, Col 35, excluding corners)
+  * Total perimeter = 4 + 34 + 34 + 26 + 26 = 124 border pieces
+- **Interior Pieces**: 884 pieces (34 columns × 26 rows, Cols 1..34, Rows 1..26)
+  * Pre-sorted into 8 balanced physical trays (~110 pieces each, capacity capped at <= 125 pieces: 884 / 8 = 110.5 avg)
+- **Total**: 124 border + 884 interior = 1,008 pieces
 
 ### Core Operating Model
 1. Reverse Retrieval: The user anchors the 124 border pieces, selects an empty frontier slot `(R, C)`, and queries matching pieces from inventory.
@@ -45,7 +58,7 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| TRY-01 | - | `cv-engine/src/poster.rs` | `cargo test test_poster_grid_feature_vectors` | Extract 884 feature vectors `V(R, C) = [L, a, b, gradient, R, C]` in <5ms. | Planned |
+| TRY-01 | - | `cv-engine/src/poster.rs` | `cargo test test_poster_grid_feature_vectors` | Extract 884 interior feature vectors `V(R, C) = [L, a, b, gradient, R, C]` (34×26 interior grid) in <5ms. | Planned |
 | TRY-02 | TRY-01 | `cv-engine/src/poster.rs` | `cargo test test_weighted_kmeans_clustering` | Weighted k-means clustering with configurable `w_color`, `w_texture`, `w_spatial` for K=8 trays (<20 iters). | Planned |
 | TRY-03 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_capacity_constrained_clustering` | Capacity penalty bounding cluster sizes to <= 125 pieces per tray (~110 pcs avg). | Planned |
 | TRY-04 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_seeded_kmeans_centroids` | Seed cluster centroids from 2x4 spatial grid with optional user landmark overrides. | Planned |
@@ -76,7 +89,7 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| HUD-01 | - | `web-app/src/app/features/workbench/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport with pan/zoom and strict >3px drag threshold isolating slot clicks. | Planned |
+| HUD-01 | - | `web-app/src/app/features/workbench/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport (36×28 full grid / 1,008 slots) with pan/zoom and strict >3px drag threshold isolating slot clicks. | Planned |
 | HUD-02 | HUD-01, RET-04 | `web-app/src/app/features/workbench/workbench.component.ts` | Browser slot click inspection | Direct slot tap triggers query engine and displays top match in dedicated spotting card. | Planned |
 | HUD-03 | HUD-02 | `web-app/src/app/features/workbench/spotting-card.component.ts` | Browser card inspection | Spotting card showing piece thumbnail, cardinal orientation arrow (e.g. Tab Up), and 8-tray color badge. | Planned |
 | HUD-04 | HUD-03, OPT-02 | `web-app/src/app/features/workbench/silhouette.component.ts` | Screen 1:1 physical calibration check | Render piece silhouette at calibrated 1:1 physical millimeter scale on screen. | Planned |

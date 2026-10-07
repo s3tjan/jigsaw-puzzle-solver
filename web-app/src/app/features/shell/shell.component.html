@@ -38,24 +38,9 @@
       </div>
     }
 
-    <!-- MODE: POSTER_STUDIO (Alt+2) -->
+    <!-- MODE: POSTER_STUDIO (Alt+2 / Task TRY-05 & TRY-06) -->
     @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
-      <div class="mode-placeholder">
-        <div class="inverted-header">
-          <span>POSTER ANALYSIS & TRAY CLUSTERING STUDIO</span>
-          <span class="font-mono">[TASK TRY-05]</span>
-        </div>
-        <div class="placeholder-body">
-          <div class="telemetry-row">
-            <span class="label">CONTAINERS:</span>
-            <span class="val font-mono tabular-nums">8 TRAYS (&le; 125 PCS/TRAY)</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="label">K-MEANS WEIGHTS:</span>
-            <span class="val font-mono tabular-nums">[COLOR: 0.45, TEXTURE: 0.35, SPATIAL: 0.20]</span>
-          </div>
-        </div>
-      </div>
+      <app-tray-studio></app-tray-studio>
     }
   </main>
 

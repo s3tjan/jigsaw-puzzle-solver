@@ -24,9 +24,9 @@ export class WorkbenchCanvasComponent implements AfterViewInit {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Fixed physical grid dimensions
-    const cols = 34;
-    const rows = 26;
+    // Fixed physical grid dimensions (36x28 = 1008 total slots)
+    const cols = this.boardStore.cols;
+    const rows = this.boardStore.rows;
     const cellSize = 22; // 22px per physical piece slot
     canvas.width = cols * cellSize;
     canvas.height = rows * cellSize;

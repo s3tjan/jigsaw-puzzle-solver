@@ -1,0 +1,179 @@
+<div class="studio-root">
+  <!-- Left Control Rail (TRY-05) -->
+  <aside class="control-rail border-r">
+    <!-- Ingestion Controls Section -->
+    <div class="inverted-header">
+      <span>POSTER INGESTION [TRY-01]</span>
+      <span class="font-mono">[36×28 / 1,008]</span>
+    </div>
+    <div class="rail-section border-b">
+      <div class="action-row">
+        <button type="button" class="rail-btn active" (click)="triggerFileUpload()">
+          UPLOAD POSTER [IMG]
+        </button>
+        <button type="button" class="rail-btn" (click)="resetToCalibration()">
+          RESET CALIBRATION
+        </button>
+      </div>
+      <input #fileInput type="file" accept="image/*" class="hidden-file-input" (change)="onFileSelected($event)" />
+    </div>
+
+    <!-- Dynamic Clustering Weights (TRY-02 & TRY-05) -->
+    <div class="inverted-header">
+      <span>CLUSTERING WEIGHTS [TRY-02]</span>
+      <span class="font-mono">K=8</span>
+    </div>
+    <div class="rail-section border-b">
+      <div class="slider-group">
+        <div class="slider-header">
+          <span class="slider-label">W_COLOR (CIELAB)</span>
+          <span class="slider-val font-mono tabular-nums">{{ posterStore.weights().wColor.toFixed(2) }}</span>
+        </div>
+        <input
+          type="range"
+          min="0.0"
+          max="1.0"
+          step="0.05"
+          [value]="posterStore.weights().wColor"
+          (input)="onWeightChange('wColor', $event)"
+          class="industrial-slider"
+        />
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-header">
+          <span class="slider-label">W_TEXTURE (SOBEL GRAD)</span>
+          <span class="slider-val font-mono tabular-nums">{{ posterStore.weights().wTexture.toFixed(2) }}</span>
+        </div>
+        <input
+          type="range"
+          min="0.0"
+          max="1.0"
+          step="0.05"
+          [value]="posterStore.weights().wTexture"
+          (input)="onWeightChange('wTexture', $event)"
+          class="industrial-slider"
+        />
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-header">
+          <span class="slider-label">W_SPATIAL (R, C COORDS)</span>
+          <span class="slider-val font-mono tabular-nums">{{ posterStore.weights().wSpatial.toFixed(2) }}</span>
+        </div>
+        <input
+          type="range"
+          min="0.0"
+          max="1.0"
+          step="0.05"
+          [value]="posterStore.weights().wSpatial"
+          (input)="onWeightChange('wSpatial', $event)"
+          class="industrial-slider"
+        />
+      </div>
+
+      <!-- Action & Convergence Telemetry -->
+      <div class="cluster-action-row">
+        <button type="button" class="rail-btn recluster-btn" (click)="recluster()">
+          RE-CLUSTER [R]
+        </button>
+      </div>
+
+      <div class="telemetry-grid font-mono">
+        <div class="telem-item">
+          <span class="telem-label">ITERS:</span>
+          <span class="telem-val tabular-nums">{{ posterStore.stats().iterations }}/{{ posterStore.stats().maxIterations }}</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">INERTIA:</span>
+          <span class="telem-val tabular-nums">{{ posterStore.stats().inertia.toFixed(3) }}</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">LATENCY:</span>
+          <span class="telem-val tabular-nums">{{ posterStore.stats().computeTimeMs }}ms</span>
+        </div>
+        <div class="telem-item">
+          <span class="telem-label">OVERFLOW:</span>
+          <span class="telem-val tabular-nums" [class.error]="posterStore.stats().overflowCount > 0">
+            {{ posterStore.stats().overflowCount }} TRAYS
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 8 Physical Containers Volume Meters (TRY-03 & TRY-05) -->
+    <div class="inverted-header">
+      <span>8 PHYSICAL TRAYS (&le; 125 PCS CAP)</span>
+      <span class="font-mono">884 INTERIOR</span>
+    </div>
+    <div class="tray-list-pane">
+      @for (tray of posterStore.trays(); track tray.id) {
+        <div
+          class="tray-row"
+          [class.solo-active]="posterStore.soloTrayId() === tray.id"
+          (click)="toggleSolo(tray.id)"
+          title="Click to solo highlight on canvas"
+        >
+          <div class="tray-info-header">
+            <div class="tray-title-left">
+              <span class="tray-chip" [style.background-color]="tray.color"></span>
+              <span class="tray-name">TRAY 0{{ tray.id }} [{{ tray.name }}]</span>
+            </div>
+            <div class="tray-count font-mono tabular-nums">
+              <span [class.warn]="tray.count > 118" [class.error]="tray.count > tray.maxCapacity">
+                {{ tray.count }}
+              </span>
+              <span class="tray-limit">/ {{ tray.maxCapacity }}</span>
+            </div>
+          </div>
+
+          <!-- Capacity Volume Gauge Bar -->
+          <div class="gauge-track">
+            <div
+              class="gauge-fill"
+              [style.width.%]="(tray.count / tray.maxCapacity) * 100"
+              [class.fill-warn]="tray.count > 118"
+              [class.fill-error]="tray.count > tray.maxCapacity"
+            ></div>
+            <!-- Target average anchor line (110.5 pcs ~ 88.4%) -->
+            <div class="target-marker" style="left: 88.4%;" title="Target Avg: 110 pcs"></div>
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Selected Slot Inspector Footer -->
+    @if (posterStore.selectedSlot(); as slot) {
+      <div class="inverted-header">
+        <span>SLOT INSPECTION: R{{ slot.r }} C{{ slot.c }}</span>
+      </div>
+      <div class="inspector-summary border-t font-mono">
+        <div class="inspector-line">
+          <span class="k">COORDINATES:</span>
+          <span class="v tabular-nums">R{{ slot.r }} C{{ slot.c }}</span>
+        </div>
+        <div class="inspector-line">
+          <span class="k">CIELAB:</span>
+          <span class="v tabular-nums">L:{{ slot.lab[0].toFixed(1) }} a:{{ slot.lab[1].toFixed(1) }} b:{{ slot.lab[2].toFixed(1) }}</span>
+        </div>
+        <div class="inspector-line">
+          <span class="k">SOBEL GRAD:</span>
+          <span class="v tabular-nums">{{ (slot.gradient * 100).toFixed(1) }}%</span>
+        </div>
+        <div class="inspector-line">
+          <span class="k">ASSIGNED TRAY:</span>
+          @if (slot.isBorder) {
+            <span class="v">BORDER ANCHOR [124 PIECES]</span>
+          } @else {
+            <span class="v">TRAY 0{{ slot.trayId }} [{{ posterStore.getTray(slot.trayId)?.name }}]</span>
+          }
+        </div>
+      </div>
+    }
+  </aside>
+
+  <!-- Center Workspace: Interactive Canvas Viewport (TRY-06) -->
+  <main class="canvas-workspace">
+    <app-poster-canvas></app-poster-canvas>
+  </main>
+</div>

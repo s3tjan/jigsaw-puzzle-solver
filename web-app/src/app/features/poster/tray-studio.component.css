@@ -1,0 +1,264 @@
+:host {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.studio-root {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+.control-rail {
+  width: 320px;
+  height: 100%;
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.rail-section {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-surface);
+}
+
+.action-row {
+  display: flex;
+  gap: 6px;
+}
+
+.rail-btn {
+  flex: 1;
+  height: 26px;
+  font-size: 11px;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.slider-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.slider-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.slider-val {
+  color: var(--text-primary);
+}
+
+.industrial-slider {
+  width: 100%;
+  height: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg-surface-secondary);
+  border: var(--border-rule);
+  outline: none;
+  padding: 0;
+}
+
+.industrial-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--bg-inverted);
+  border: none;
+  cursor: pointer;
+}
+
+.industrial-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--bg-inverted);
+  border: none;
+  cursor: pointer;
+}
+
+.cluster-action-row {
+  display: flex;
+  margin-top: 4px;
+}
+
+.recluster-btn {
+  width: 100%;
+  background: var(--bg-surface-secondary);
+  border: var(--border-rule);
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  background: var(--bg-surface-secondary);
+  border: var(--border-rule);
+  padding: 4px 6px;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.telem-item {
+  display: flex;
+  justify-content: space-between;
+}
+
+.telem-label {
+  color: var(--text-muted);
+}
+
+.telem-val {
+  color: var(--text-primary);
+}
+
+.telem-val.error {
+  color: var(--status-error);
+  font-weight: 600;
+}
+
+.tray-list-pane {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+}
+
+.tray-row {
+  padding: 6px 8px;
+  border-bottom: var(--border-rule);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tray-row:hover {
+  background: var(--bg-surface-hover);
+}
+
+.tray-row.solo-active {
+  background: #ececec;
+  border-left: 3px solid var(--text-primary);
+}
+
+.tray-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.tray-title-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tray-chip {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+.tray-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tray-count {
+  font-size: 11px;
+}
+
+.tray-count .warn {
+  color: var(--status-warning);
+  font-weight: 600;
+}
+
+.tray-count .error {
+  color: var(--status-error);
+  font-weight: 600;
+}
+
+.tray-limit {
+  color: var(--text-muted);
+}
+
+.gauge-track {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-surface-secondary);
+  border: var(--border-rule);
+  position: relative;
+  overflow: hidden;
+}
+
+.gauge-fill {
+  height: 100%;
+  background: var(--text-primary);
+}
+
+.gauge-fill.fill-warn {
+  background: var(--status-warning);
+}
+
+.gauge-fill.fill-error {
+  background: var(--status-error);
+}
+
+.target-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #000000;
+  opacity: 0.6;
+}
+
+.inspector-summary {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-surface);
+  font-size: 11px;
+}
+
+.inspector-line {
+  display: flex;
+  justify-content: space-between;
+}
+
+.inspector-line .k {
+  color: var(--text-muted);
+}
+
+.inspector-line .v {
+  color: var(--text-primary);
+}
+
+.canvas-workspace {
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}

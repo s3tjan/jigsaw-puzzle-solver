@@ -60,6 +60,15 @@ export class CommandPaletteComponent implements AfterViewInit {
       }
     },
     {
+      id: 'poster-recluster',
+      label: 'RE-CLUSTER POSTER PHYSICAL TRAYS (K=8)',
+      category: 'POSTER',
+      shortcut: 'R',
+      action: () => {
+        this.setMode('POSTER_STUDIO');
+      }
+    },
+    {
       id: 'calibrate-optics',
       label: 'CALIBRATE OPTICS (K1 DISTORTION)',
       category: 'OPTICS',
