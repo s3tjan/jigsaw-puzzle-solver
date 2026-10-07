@@ -17,6 +17,7 @@ interface RustSlotFeature {
   is_corner: boolean;
   lab: [number, number, number];
   gradient: number;
+  color_std?: number;
   tray_id: number;
 }
 
@@ -116,6 +117,7 @@ export class WasmEngineService {
       lab: s.lab,
       rgb: this.labToRgb(s.lab),
       gradient: s.gradient,
+      colorStd: s.color_std ?? 0.0,
       trayId: s.tray_id as TrayId | 0
     }));
 

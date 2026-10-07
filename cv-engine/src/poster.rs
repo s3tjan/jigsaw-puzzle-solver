@@ -1689,6 +1689,7 @@ pub struct PosterSlotFeature {
     pub is_corner: bool,
     pub lab: [f32; 3],
     pub gradient: f32,
+    pub color_std: f32, // Rotation-invariant standard deviation of color in [0.0, 1.0]
     pub tray_id: u8, // 0 for border, 1..8 for interior trays
 }
 
@@ -1725,6 +1726,7 @@ pub struct ClusteringResult {
 pub struct Centroid {
     pub lab: [f32; 3],
     pub gradient: f32,
+    pub color_std: f32,
     pub r_norm: f32,
     pub c_norm: f32,
 }
@@ -1790,6 +1792,9 @@ pub fn extract_poster_features(
             let mut sum_r = 0u64;
             let mut sum_g = 0u64;
             let mut sum_b = 0u64;
+            let mut sum_sq_r = 0u64;
+            let mut sum_sq_g = 0u64;
+            let mut sum_sq_b = 0u64;
             let mut pixel_count = 0u32;
             let mut grad_sum = 0.0f32;
             let mut grad_count = 0u32;
@@ -1806,6 +1811,9 @@ pub fn extract_poster_features(
                         sum_r += pr as u64;
                         sum_g += pg as u64;
                         sum_b += pb as u64;
+                        sum_sq_r += (pr as u64) * (pr as u64);
+                        sum_sq_g += (pg as u64) * (pg as u64);
+                        sum_sq_b += (pb as u64) * (pb as u64);
                         pixel_count += 1;
 
                         if x > 0 && x + 1 < width && y > 0 && y + 1 < height {
@@ -1836,6 +1844,20 @@ pub fn extract_poster_features(
             let mean_g = if pixel_count > 0 { (sum_g / pixel_count as u64) as u8 } else { 128 };
             let mean_b = if pixel_count > 0 { (sum_b / pixel_count as u64) as u8 } else { 128 };
 
+            // Rotation-invariant core color standard deviation (variance across RGB channels):
+            // Solid/smooth sky pieces have color_std near 0.0, textured/patterned foliage pieces have high std
+            let color_std = if pixel_count > 1 {
+                let n_f = pixel_count as f64;
+                let var_r = (sum_sq_r as f64 / n_f) - (sum_r as f64 / n_f).powi(2);
+                let var_g = (sum_sq_g as f64 / n_f) - (sum_g as f64 / n_f).powi(2);
+                let var_b = (sum_sq_b as f64 / n_f) - (sum_b as f64 / n_f).powi(2);
+                let mean_var = ((var_r.max(0.0) + var_g.max(0.0) + var_b.max(0.0)) / 3.0).sqrt();
+                // Normalize by 64.0 into [0.0, 1.0]
+                ((mean_var as f32) / 64.0).min(1.0)
+            } else {
+                0.0
+            };
+
             let lab = rgb_to_cielab(mean_r, mean_g, mean_b);
             let gradient = if grad_count > 0 {
                 // Sobel central difference with magnitude up to ~180: normalize into [0.0, 1.0]
@@ -1853,6 +1875,7 @@ pub fn extract_poster_features(
                 is_corner,
                 lab,
                 gradient,
+                color_std,
                 tray_id,
             });
         }
@@ -1870,6 +1893,7 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
         let mut sum_a = 0.0f32;
         let mut sum_b = 0.0f32;
         let mut sum_grad = 0.0f32;
+        let mut sum_std = 0.0f32;
         let mut sum_r = 0.0f32;
         let mut sum_c = 0.0f32;
         let mut count = 0u32;
@@ -1880,6 +1904,7 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
                 sum_a += s.lab[1];
                 sum_b += s.lab[2];
                 sum_grad += s.gradient;
+                sum_std += s.color_std;
                 let r_norm = (s.r.saturating_sub(1)) as f32 / 25.0;
                 let c_norm = (s.c.saturating_sub(1)) as f32 / 33.0;
                 sum_r += r_norm;
@@ -1892,6 +1917,7 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
             centroids.push(Centroid {
                 lab: [sum_l / count as f32, sum_a / count as f32, sum_b / count as f32],
                 gradient: sum_grad / count as f32,
+                color_std: sum_std / count as f32,
                 r_norm: sum_r / count as f32,
                 c_norm: sum_c / count as f32,
             });
@@ -1899,6 +1925,7 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
             centroids.push(Centroid {
                 lab: [50.0, 0.0, 0.0],
                 gradient: 0.0,
+                color_std: 0.0,
                 r_norm: 0.5,
                 c_norm: 0.5,
             });
@@ -1910,8 +1937,10 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
 
 /// Compute weighted Euclidean distance between a slot feature and a centroid:
 /// D^2 = w_c * norm_color_sq + w_t * d_texture_sq + w_s * d_spatial_sq
-/// Calibrated so that normalized CIELAB (dE ~ 25..35), texture gradient (0..1),
-/// and spatial distance across the normalized grid ([0..1] range) are well-proportioned.
+/// Robust physical calibration:
+/// - Luminance (dL) is damped by 0.40 to protect against room lighting & lamp shadows
+/// - Texture includes both Sobel gradient energy and rotation-invariant color_std (variance)
+/// - Spatial distance uses normalized [0..1] coordinates
 pub fn compute_slot_cluster_distance_sq(
     slot: &PosterSlotFeature,
     centroid: &Centroid,
@@ -1919,18 +1948,22 @@ pub fn compute_slot_cluster_distance_sq(
     w_texture: f32,
     w_spatial: f32,
 ) -> f32 {
-    let dl = slot.lab[0] - centroid.lab[0];
+    // 1. Physically-robust color distance:
+    // Dampen L* by 0.40 (60% reduction) so lighting intensity drift doesn't hijack clustering,
+    // while chromaticity channels (a*, b*) retain full fidelity.
+    let dl = (slot.lab[0] - centroid.lab[0]) * 0.40;
     let da = slot.lab[1] - centroid.lab[1];
     let db = slot.lab[2] - centroid.lab[2];
     let de_cielab_sq = dl * dl + da * da + db * db;
-    // Scale CIELAB: sigma_color = 30.0 -> sigma^2 = 900.0, matching [0..1] unit space
     let norm_color_sq = de_cielab_sq / 900.0;
 
+    // 2. Rotation-invariant texture & entropy distance:
+    // Combines Sobel gradient step with internal color standard deviation (separates flat sky from textured foliage)
     let d_grad = slot.gradient - centroid.gradient;
-    let d_texture_sq = d_grad * d_grad;
+    let d_std = slot.color_std - centroid.color_std;
+    let d_texture_sq = 0.55 * (d_grad * d_grad) + 0.45 * (d_std * d_std);
 
-    // Normalize interior coordinates to [0.0, 1.0]:
-    // Interior r ranges 1..26 (span 25), c ranges 1..34 (span 33)
+    // 3. Spatial coordinates normalized across interior grid span
     let r_norm = (slot.r.saturating_sub(1)) as f32 / 25.0;
     let c_norm = (slot.c.saturating_sub(1)) as f32 / 33.0;
     let dr = r_norm - centroid.r_norm;
@@ -2048,6 +2081,7 @@ pub fn cluster_interior_slots(
         let mut sum_a = [0.0f32; NUM_TRAYS + 1];
         let mut sum_b = [0.0f32; NUM_TRAYS + 1];
         let mut sum_grad = [0.0f32; NUM_TRAYS + 1];
+        let mut sum_std = [0.0f32; NUM_TRAYS + 1];
         let mut sum_r = [0.0f32; NUM_TRAYS + 1];
         let mut sum_c = [0.0f32; NUM_TRAYS + 1];
         let mut counts = [0u32; NUM_TRAYS + 1];
@@ -2059,6 +2093,7 @@ pub fn cluster_interior_slots(
             sum_a[t] += s.lab[1];
             sum_b[t] += s.lab[2];
             sum_grad[t] += s.gradient;
+            sum_std[t] += s.color_std;
             let r_norm = (s.r.saturating_sub(1)) as f32 / 25.0;
             let c_norm = (s.c.saturating_sub(1)) as f32 / 33.0;
             sum_r[t] += r_norm;
@@ -2084,6 +2119,7 @@ pub fn cluster_interior_slots(
                         sum_b[t] / counts[t] as f32,
                     ],
                     gradient: sum_grad[t] / counts[t] as f32,
+                    color_std: sum_std[t] / counts[t] as f32,
                     r_norm: blended_r,
                     c_norm: blended_c,
                 };

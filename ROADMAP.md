@@ -65,6 +65,15 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 | TRY-05 | TRY-03, TRY-04 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | Studio UI with weight sliders, 8-tray color assignments, and volume meters at 60 FPS. | DONE |
 | TRY-06 | TRY-05 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | Canvas tint overlay on poster grid slots matching assigned 8 tray color badges. | DONE |
 | TRY-07 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_landmark_fallback_routing` | Detect high internal-variance boundary cells bridging distinct color/spatial islands. | Planned |
+| TRY-08 | TRY-05 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | (Future UX) Capacity Balance slider: interpolate between loose natural boundaries (cap <= 125) and strict uniform trays (equal ~110 pcs). | Backlog |
+| TRY-09 | TRY-06 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | (Future UX) Texture Heatmap ViewMode: visualize rotation-invariant core color variance (color_std) and Sobel energy. | Backlog |
+
+#### Future Candidate UX Knobs for Tray Studio (Reference)
+1. **Capacity Strictness Slider (`balance_strictness: 0.0 .. 1.0`)**:
+   - `0.0 (Loose)`: Allows trays to expand up to the hard ceiling of 125 pieces to respect color/feature boundaries.
+   - `1.0 (Strict)`: Applies steep progressive penalties above the target average (~110 pieces) to enforce near-identical tray counts.
+2. **Texture / Entropy Overlay (`PosterViewMode: 'TEXTURE'`)**:
+   - Renders a monochrome/heatmap overlay representing the fused rotation-invariant texture score `sqrt(0.55 * grad^2 + 0.45 * color_std^2)`, allowing the user to visually inspect why pieces are categorized as flat vs. patterned.
 
 ### ING: Continuous Mat Ingestion & Inventory Storage
 

@@ -22,6 +22,7 @@ export interface PosterSlotFeature {
   rgb: [number, number, number];
   lab: [number, number, number];
   gradient: number; // Normalized 0.0 .. 1.0 Sobel magnitude
+  colorStd?: number; // Normalized 0.0 .. 1.0 core color variance
   trayId: TrayId | 0; // 1..8 for interior pieces, 0 for perimeter border pieces
   isBorder: boolean;  // 124 perimeter slots
   isCorner: boolean;  // 4 corners
