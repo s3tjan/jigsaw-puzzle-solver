@@ -13,6 +13,12 @@ import {
 } from '../services/poster-clustering.service';
 import { WasmEngineService } from '../services/wasm-engine.service';
 
+export const DEFAULT_CLUSTERING_WEIGHTS: ClusteringWeights = {
+  wColor: 0.45,
+  wTexture: 0.35,
+  wSpatial: 0.20
+};
+
 @Injectable({
   providedIn: 'root'
 })
@@ -34,11 +40,7 @@ export class PosterStore {
   readonly trays = signal<TrayInfo[]>(INITIAL_TRAYS);
 
   // Clustering weights
-  readonly weights = signal<ClusteringWeights>({
-    wColor: 0.45,
-    wTexture: 0.35,
-    wSpatial: 0.20
-  });
+  readonly weights = signal<ClusteringWeights>({ ...DEFAULT_CLUSTERING_WEIGHTS });
 
   // Telemetry stats
   readonly stats = signal<ClusteringStats>({
@@ -81,9 +83,10 @@ export class PosterStore {
   }
 
   /**
-   * Initializes default calibrated high-contrast puzzle poster artwork
+   * Initializes default calibrated high-contrast puzzle poster artwork and weights
    */
   initDefaultPoster(): void {
+    this.weights.set({ ...DEFAULT_CLUSTERING_WEIGHTS });
     const canvas = this.clusteringService.generateSyntheticPosterCanvas();
     this.posterCanvas.set(canvas);
     this.extractAndCluster(canvas);
