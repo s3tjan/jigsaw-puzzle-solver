@@ -42,10 +42,6 @@ export class TrayStudioComponent {
     this.posterStore.setWeight(key, val);
   }
 
-  recluster(): void {
-    this.posterStore.recluster();
-  }
-
   toggleSolo(trayId: TrayId): void {
     this.posterStore.setSoloTray(trayId);
   }

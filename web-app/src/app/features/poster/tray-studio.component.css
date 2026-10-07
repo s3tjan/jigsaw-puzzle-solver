@@ -96,17 +96,6 @@
   cursor: pointer;
 }
 
-.cluster-action-row {
-  display: flex;
-  margin-top: 4px;
-}
-
-.recluster-btn {
-  width: 100%;
-  background: var(--bg-surface-secondary);
-  border: var(--border-rule);
-}
-
 .telemetry-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

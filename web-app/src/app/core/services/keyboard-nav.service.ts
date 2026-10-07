@@ -1,13 +1,11 @@
 import { Injectable, inject } from '@angular/core';
 import { AppModeStore } from '../state/app-mode.store';
-import { PosterStore } from '../state/poster.store';
 
 @Injectable({
   providedIn: 'root'
 })
 export class KeyboardNavService {
   private readonly appModeStore = inject(AppModeStore);
-  private readonly posterStore = inject(PosterStore);
 
   init(): void {
     window.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -68,15 +66,6 @@ export class KeyboardNavService {
         if (this.appModeStore.activeMode() === 'WORKBENCH') {
           event.preventDefault();
           this.appModeStore.toggleLeftRail();
-          return;
-        }
-      }
-
-      // Single-key shortcut 'R' for poster re-clustering in POSTER_STUDIO mode
-      if (event.key.toLowerCase() === 'r' && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        if (this.appModeStore.activeMode() === 'POSTER_STUDIO') {
-          event.preventDefault();
-          this.posterStore.recluster();
           return;
         }
       }

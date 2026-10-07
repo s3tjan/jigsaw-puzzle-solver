@@ -9,6 +9,17 @@
     <span class="val">{{ appModeStore.activeMode() }}</span>
   </div>
 
+  @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
+    <div class="status-section">
+      <span class="muted">POSTER:</span>
+      @if (posterStore.isAnalyzing()) {
+        <span class="val font-mono">WASM COMPUTING...</span>
+      } @else {
+        <span class="val font-mono">8 TRAYS &middot; {{ posterStore.stats().computeTimeMs }}ms</span>
+      }
+    </div>
+  }
+
   <div class="status-section">
     <span class="muted">FRONTIER:</span>
     <span class="val font-mono tabular-nums">{{ boardStore.frontierCount() }}</span>

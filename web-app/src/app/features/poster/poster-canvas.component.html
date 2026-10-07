@@ -80,10 +80,10 @@
         <span class="meta-label">ASSIGNED TRAY:</span>
         @if (activeSlot.isBorder) {
           <span class="tray-chip" style="background-color: #6b7280;"></span>
-          <span class="meta-val font-mono">BORDER ANCHOR [124 PIECES]</span>
+          <span class="meta-val font-mono">PERIMETER BORDER [124 PCS]</span>
         } @else {
           <span class="tray-chip" [style.background-color]="posterStore.getTray(activeSlot.trayId)?.color"></span>
-          <span class="meta-val font-mono">TRAY-0{{ activeSlot.trayId }} [{{ posterStore.getTray(activeSlot.trayId)?.name }}]</span>
+          <span class="meta-val font-mono">TRAY {{ activeSlot.trayId }} &middot; {{ posterStore.getTray(activeSlot.trayId)?.name }}</span>
         }
       </div>
       <div class="telemetry-group">
@@ -94,7 +94,7 @@
       </div>
     } @else {
       <div class="telemetry-group">
-        <span class="meta-label">HOVER OVER SLOTS TO INSPECT 6D FEATURE VECTOR [L*, a*, b*, GRAD, R, C]</span>
+        <span class="meta-label">HOVER OVER A SLOT TO INSPECT COLOR & TRAY ASSIGNMENT</span>
       </div>
     }
   </div>
