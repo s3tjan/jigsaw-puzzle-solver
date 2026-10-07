@@ -1938,7 +1938,9 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
 /// Compute weighted Euclidean distance between a slot feature and a centroid:
 /// D^2 = w_c * norm_color_sq + w_t * d_texture_sq + w_s * d_spatial_sq
 /// Robust physical calibration:
-/// - Luminance (dL) is damped by 0.40 to protect against room lighting & lamp shadows
+/// - Luminance (dL) is dynamically scaled (luminance_scale):
+///   * High-chroma colorful artworks use ~0.40 damping to protect against camera glare
+///   * Achromatic/metallic/monochrome scenes (e.g. cars/drawings) restore full 1.0 sensitivity
 /// - Texture includes both Sobel gradient energy and rotation-invariant color_std (variance)
 /// - Spatial distance uses normalized [0..1] coordinates
 pub fn compute_slot_cluster_distance_sq(
@@ -1947,28 +1949,29 @@ pub fn compute_slot_cluster_distance_sq(
     w_color: f32,
     w_texture: f32,
     w_spatial: f32,
+    luminance_scale: f32,
 ) -> f32 {
-    // 1. Physically-robust color distance:
-    // Dampen L* by 0.40 (60% reduction) so lighting intensity drift doesn't hijack clustering,
-    // while chromaticity channels (a*, b*) retain full fidelity.
-    let dl = (slot.lab[0] - centroid.lab[0]) * 0.40;
+    let dl = (slot.lab[0] - centroid.lab[0]) * luminance_scale;
     let da = slot.lab[1] - centroid.lab[1];
     let db = slot.lab[2] - centroid.lab[2];
     let de_cielab_sq = dl * dl + da * da + db * db;
     let norm_color_sq = de_cielab_sq / 900.0;
 
-    // 2. Rotation-invariant texture & entropy distance:
-    // Combines Sobel gradient step with internal color standard deviation (separates flat sky from textured foliage)
+    // Rotation-invariant texture & entropy distance
     let d_grad = slot.gradient - centroid.gradient;
     let d_std = slot.color_std - centroid.color_std;
     let d_texture_sq = 0.55 * (d_grad * d_grad) + 0.45 * (d_std * d_std);
 
-    // 3. Spatial coordinates normalized across interior grid span
+    // Spatial coordinates normalized across interior grid span
     let r_norm = (slot.r.saturating_sub(1)) as f32 / 25.0;
     let c_norm = (slot.c.saturating_sub(1)) as f32 / 33.0;
     let dr = r_norm - centroid.r_norm;
     let dc = c_norm - centroid.c_norm;
-    let d_spatial_sq = dr * dr + dc * dc;
+    // Calibrated spatial scaling:
+    // Without scaling, 1 slot step is (1/33)^2 ~ 0.0009 while moderate color delta is ~0.15 (160x larger).
+    // Multiplying normalized coordinate distance by 12.0 balances spatial compactness with color grouping,
+    // keeping trays as cohesive geographic regions while adapting boundaries to features.
+    let d_spatial_sq = (dr * dr + dc * dc) * 12.0;
 
     w_color * norm_color_sq + w_texture * d_texture_sq + w_spatial * d_spatial_sq
 }
@@ -1995,7 +1998,24 @@ pub fn cluster_interior_slots(
         (0.34, 0.33, 0.33)
     };
 
-    // 2. Initialize seeded centroids and store spatial anchor anchors
+    // 2. Measure overall image chroma saturation:
+    // When an image is richly saturated (mean chroma > 12), damp luminance to 0.45 for physical glare invariance.
+    // When an image is largely achromatic/metallic/grayscale (mean chroma < 7), scale luminance up to 0.95
+    // so brightness boundaries (white studio sky vs silver car body vs black tires) create strong natural clusters.
+    let mean_chroma: f32 = interior_slots
+        .iter()
+        .map(|s| (s.lab[1] * s.lab[1] + s.lab[2] * s.lab[2]).sqrt())
+        .sum::<f32>()
+        / n as f32;
+    let luminance_scale = if mean_chroma >= 14.0 {
+        0.45
+    } else if mean_chroma <= 5.0 {
+        0.95
+    } else {
+        0.95 - ((mean_chroma - 5.0) / 9.0) * 0.50
+    };
+
+    // 3. Initialize seeded centroids and store spatial anchor anchors
     let initial_seeds = initialize_seeded_centroids(interior_slots);
     let seed_anchors: Vec<(f32, f32)> = initial_seeds
         .iter()
@@ -2037,6 +2057,7 @@ pub fn cluster_interior_slots(
                     nw_c,
                     nw_t,
                     nw_s,
+                    luminance_scale,
                 );
 
                 let current_count = tray_counts[t as usize];
@@ -2049,9 +2070,9 @@ pub fn cluster_interior_slots(
                 // Capacity penalty proportional to distance scale (normalized distances are ~0..1)
                 let mut capacity_penalty = 0.0f32;
                 if count_for_eval >= target_avg {
-                    // Smooth quadratic-linear ramp above average capacity
+                    // Smooth quadratic ramp above average capacity
                     let excess = (count_for_eval - target_avg) as f32;
-                    capacity_penalty += excess * 0.04;
+                    capacity_penalty += excess * 0.035;
                 }
                 if count_for_eval >= max_capacity {
                     // Severe barrier penalty to prevent tray overflowing beyond 125
@@ -2107,8 +2128,7 @@ pub fn cluster_interior_slots(
                 let mean_c = sum_c[t] / counts[t] as f32;
                 let (anchor_r, anchor_c) = seed_anchors[t - 1];
 
-                // Keep spatial center anchored to tray zone so clusters remain contiguous
-                // and do not wander across the board into disconnected confetti fragments
+                // Retain spatial anchoring to prevent disconnected confetti fragmentation
                 let blended_r = 0.55 * mean_r + 0.45 * anchor_r;
                 let blended_c = 0.55 * mean_c + 0.45 * anchor_c;
 
@@ -2131,7 +2151,13 @@ pub fn cluster_interior_slots(
         }
     }
 
-    // TRY-03: Hard post-process capacity overflow resolution
+    // TRY-03: Hard post-process capacity overflow resolution with spatial adjacency preference
+    // Build slot spatial lookup table (row, col) -> index for 4-neighbor adjacency checking
+    let mut grid_idx = [[None; POSTER_TOTAL_COLS as usize]; POSTER_TOTAL_ROWS as usize];
+    for (idx, s) in interior_slots.iter().enumerate() {
+        grid_idx[s.r as usize][s.c as usize] = Some(idx);
+    }
+
     loop {
         let mut overflow_tray = 0usize;
         for t in 1..=NUM_TRAYS {
@@ -2144,7 +2170,9 @@ pub fn cluster_interior_slots(
             break;
         }
 
-        // Find candidate item in overflow tray with smallest delta to an available neighbor tray
+        // Find candidate item in overflow tray:
+        // Prioritize pieces on the boundary that actually border the candidate target tray!
+        // This completely eliminates confetti transfers across isolated interior regions.
         let mut best_item_idx = None;
         let mut best_target_tray = 0u8;
         let mut min_transfer_cost = f32::INFINITY;
@@ -2158,7 +2186,18 @@ pub fn cluster_interior_slots(
                     nw_c,
                     nw_t,
                     nw_s,
+                    luminance_scale,
                 );
+
+                // Check 4-connected spatial neighbors
+                let r = slot.r as usize;
+                let c = slot.c as usize;
+                let neighbors = [
+                    if r > 0 { grid_idx[r - 1][c] } else { None },
+                    if r + 1 < POSTER_TOTAL_ROWS as usize { grid_idx[r + 1][c] } else { None },
+                    if c > 0 { grid_idx[r][c - 1] } else { None },
+                    if c + 1 < POSTER_TOTAL_COLS as usize { grid_idx[r][c + 1] } else { None },
+                ];
 
                 for target_t in 1..=NUM_TRAYS {
                     if target_t != overflow_tray && tray_counts[target_t] < max_capacity {
@@ -2168,8 +2207,18 @@ pub fn cluster_interior_slots(
                             nw_c,
                             nw_t,
                             nw_s,
+                            luminance_scale,
                         );
-                        let cost = target_dist_sq - current_dist_sq;
+
+                        // Is this piece physically touching target_t?
+                        let touches_target = neighbors.iter().any(|&nb| {
+                            nb.map(|idx| assignments[idx] as usize == target_t).unwrap_or(false)
+                        });
+
+                        // Strongly prefer boundary pieces bordering the target tray
+                        let adjacency_bonus = if touches_target { 0.0 } else { 0.50 };
+                        let cost = (target_dist_sq - current_dist_sq) + adjacency_bonus;
+
                         if cost < min_transfer_cost {
                             min_transfer_cost = cost;
                             best_item_idx = Some(i);
