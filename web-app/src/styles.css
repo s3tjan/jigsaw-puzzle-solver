@@ -1,0 +1,182 @@
+/* ==========================================================================
+   INDUSTRIAL OPERATOR INSTRUMENT DESIGN SYSTEM
+   Strict adherence to .agents/rules/senior-frontend.md:
+   - Universal font size 12px (11px for status/hints)
+   - Strict 1px solid boundaries (#d4d4d4)
+   - Zero rounded corners (rounded-none across all elements)
+   - Zero transitions (instant state changes)
+   - Zero drop shadows, gradients, or blur overlays
+   - Viewport-fit (h-screen overflow-hidden)
+   ========================================================================== */
+
+:root {
+  /* Surfaces & Canvas */
+  --bg-app: #f5f5f5;
+  --bg-surface: #ffffff;
+  --bg-surface-secondary: #e5e5e5;
+  --bg-surface-hover: #ececec;
+  --bg-surface-active: #dfdfdf;
+  --bg-inverted: #111111;
+  --text-inverted: #f5f5f5;
+
+  /* Typography */
+  --text-primary: #111111;
+  --text-muted: #525252;
+  --text-disabled: #888888;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Rules & Boundaries */
+  --border-rule: 1px solid #d4d4d4;
+  --border-rule-dark: 1px solid #111111;
+  --border-rule-dashed: 1px dashed #d4d4d4;
+
+  /* Operational Status Colors (Exclusively for operational state) */
+  --status-ok: #15803d;
+  --status-warning: #b45309;
+  --status-error: #b91c1c;
+  --status-offline: #6b7280;
+}
+
+/* Base Reset & Strict Constraints */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border-radius: 0 !important;
+  transition: none !important;
+  box-shadow: none !important;
+}
+
+html, body {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.33;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+}
+
+/* Strict Typography */
+.font-mono, .tabular-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Universal 1px rule boundaries */
+.border-b { border-bottom: var(--border-rule); }
+.border-t { border-top: var(--border-rule); }
+.border-l { border-left: var(--border-rule); }
+.border-r { border-right: var(--border-rule); }
+.border-all { border: var(--border-rule); }
+
+/* Common UI Patterns */
+button, input, select {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  border: var(--border-rule);
+  background: var(--bg-surface);
+  height: 28px;
+  padding: 0 8px;
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+button:hover {
+  background-color: var(--bg-surface-hover);
+}
+
+button:focus-visible {
+  outline: 1px solid var(--text-primary);
+  outline-offset: -1px;
+}
+
+button.active, button[aria-pressed="true"] {
+  background-color: var(--bg-inverted);
+  color: var(--text-inverted);
+  border-color: var(--bg-inverted);
+}
+
+button:disabled {
+  color: var(--text-disabled);
+  border: var(--border-rule-dashed);
+  cursor: not-allowed;
+  background: var(--bg-surface-secondary);
+}
+
+/* Inverted Header Bar */
+.inverted-header {
+  background-color: var(--bg-inverted);
+  color: var(--text-inverted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Monospace Numbers & Tables */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.data-table th {
+  background: var(--bg-surface-secondary);
+  border-bottom: var(--border-rule);
+  border-right: var(--border-rule);
+  padding: 4px 6px;
+  text-align: left;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  height: 24px;
+}
+
+.data-table td {
+  border-bottom: var(--border-rule);
+  border-right: var(--border-rule);
+  padding: 3px 6px;
+  height: 26px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.data-table tr:hover td {
+  background: var(--bg-surface-hover);
+}
+
+.data-table tr.selected td {
+  background: var(--bg-inverted);
+  color: var(--text-inverted);
+}
+
+.text-right {
+  text-align: right;
+}
+
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
