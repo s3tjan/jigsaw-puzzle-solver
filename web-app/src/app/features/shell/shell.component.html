@@ -4,12 +4,12 @@
 
   <!-- Main Operational Split Workspace -->
   <main class="workspace-split">
-    <!-- MODE: WORKBENCH (F3) -->
+    <!-- MODE: WORKBENCH (Alt+3) -->
     @if (appModeStore.activeMode() === 'WORKBENCH') {
       <app-workbench></app-workbench>
     }
 
-    <!-- MODE: INGESTION (F1) -->
+    <!-- MODE: INGESTION (Alt+1) -->
     @if (appModeStore.activeMode() === 'INGESTION') {
       <div class="mode-placeholder">
         <div class="inverted-header">CONTINUOUS MAT INGESTION (1080P FEED)</div>
@@ -19,7 +19,7 @@
       </div>
     }
 
-    <!-- MODE: POSTER_STUDIO (F2) -->
+    <!-- MODE: POSTER_STUDIO (Alt+2) -->
     @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
       <div class="mode-placeholder">
         <div class="inverted-header">POSTER ANALYSIS & TRAY CLUSTERING STUDIO</div>

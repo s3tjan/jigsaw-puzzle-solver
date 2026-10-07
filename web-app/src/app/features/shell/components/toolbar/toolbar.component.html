@@ -1,32 +1,32 @@
 <header class="toolbar-root border-b">
-  <!-- Mode Selector (F1-F3) -->
+  <!-- Mode Selector (Alt+1 - Alt+3) -->
   <div class="mode-cluster">
     <button 
       type="button" 
       class="mode-btn" 
       [class.active]="appModeStore.activeMode() === 'INGESTION'"
       (click)="setMode('INGESTION')"
-      title="Shortcut: F1"
+      title="Shortcut: Alt+1"
     >
-      <span class="shortcut-hint font-mono">[F1]</span>INGESTION
+      <span class="shortcut-hint font-mono">[Alt+1]</span>INGESTION
     </button>
     <button 
       type="button" 
       class="mode-btn" 
       [class.active]="appModeStore.activeMode() === 'POSTER_STUDIO'"
       (click)="setMode('POSTER_STUDIO')"
-      title="Shortcut: F2"
+      title="Shortcut: Alt+2"
     >
-      <span class="shortcut-hint font-mono">[F2]</span>POSTER STUDIO
+      <span class="shortcut-hint font-mono">[Alt+2]</span>POSTER STUDIO
     </button>
     <button 
       type="button" 
       class="mode-btn" 
       [class.active]="appModeStore.activeMode() === 'WORKBENCH'"
       (click)="setMode('WORKBENCH')"
-      title="Shortcut: F3"
+      title="Shortcut: Alt+3"
     >
-      <span class="shortcut-hint font-mono">[F3]</span>WORKBENCH HUD
+      <span class="shortcut-hint font-mono">[Alt+3]</span>WORKBENCH HUD
     </button>
   </div>
 

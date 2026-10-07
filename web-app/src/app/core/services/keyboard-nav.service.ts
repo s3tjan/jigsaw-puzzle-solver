@@ -14,37 +14,32 @@ export class KeyboardNavService {
         return;
       }
 
-      switch (event.key) {
-        case 'F1':
-          event.preventDefault();
-          this.appModeStore.setMode('INGESTION');
-          break;
-
-        case 'F2':
-          event.preventDefault();
-          this.appModeStore.setMode('POSTER_STUDIO');
-          break;
-
-        case 'F3':
-          event.preventDefault();
-          this.appModeStore.setMode('WORKBENCH');
-          break;
-
-        // Visual anti-crowding toggle in Workbench HUD: [Tab] or [b]/[B]
-        case 'Tab':
-          if (this.appModeStore.activeMode() === 'WORKBENCH') {
+      if (event.altKey) {
+        switch (event.code) {
+          case 'Digit1':
+          case 'Key1':
             event.preventDefault();
-            this.appModeStore.toggleLeftRail();
-          }
-          break;
+            this.appModeStore.setMode('INGESTION');
+            return;
 
-        case 'b':
-        case 'B':
-          if (this.appModeStore.activeMode() === 'WORKBENCH') {
+          case 'Digit2':
+          case 'Key2':
             event.preventDefault();
-            this.appModeStore.toggleLeftRail();
-          }
-          break;
+            this.appModeStore.setMode('POSTER_STUDIO');
+            return;
+
+          case 'Digit3':
+          case 'Key3':
+            event.preventDefault();
+            this.appModeStore.setMode('WORKBENCH');
+            return;
+        }
+      }
+
+      // Visual anti-crowding toggle in Workbench HUD: [Tab]
+      if (event.key === 'Tab' && this.appModeStore.activeMode() === 'WORKBENCH') {
+        event.preventDefault();
+        this.appModeStore.toggleLeftRail();
       }
     });
   }
