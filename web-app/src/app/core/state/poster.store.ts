@@ -32,6 +32,15 @@ export class PosterStore {
   readonly borderPieces = 124;  // 4 corners + 34 top + 34 bottom + 26 left + 26 right
   readonly interiorPieces = 884; // 34 interior cols * 26 interior rows
 
+  // Dimension label helper e.g. "36×28"
+  readonly dimensionLabel = `${this.cols}×${this.rows}`;
+
+  // Warning threshold for tray fullness (e.g. 95% capacity)
+  readonly trayWarnCapacity = 118;
+
+  // Target fill marker percentage for visual gauges (~110.5 pcs / 125 cap)
+  readonly targetFillPercent = 88.4;
+
   // Master poster canvas source (synthetic or uploaded)
   readonly posterCanvas = signal<HTMLCanvasElement | null>(null);
 

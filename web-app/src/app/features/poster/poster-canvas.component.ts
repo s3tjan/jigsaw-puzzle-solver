@@ -5,11 +5,19 @@ import {
   AfterViewInit,
   OnDestroy,
   inject,
-  effect
+  effect,
+  HostListener
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { PosterStore } from '../../core/state/poster.store';
 import { PosterSlotFeature, PosterViewMode, TrayId } from '../../core/models/poster.model';
+
+export interface ViewModeConfig {
+  id: PosterViewMode;
+  label: string;
+  hint: string;
+  shortcut: string;
+}
 
 @Component({
   selector: 'app-poster-canvas',
@@ -20,6 +28,13 @@ import { PosterSlotFeature, PosterViewMode, TrayId } from '../../core/models/pos
 })
 export class PosterCanvasComponent implements AfterViewInit, OnDestroy {
   readonly posterStore = inject(PosterStore);
+
+  readonly viewModes: readonly ViewModeConfig[] = [
+    { id: 'TINT', label: 'TINT', hint: 'Color overlays on artwork [1]', shortcut: '1' },
+    { id: 'TRAYS', label: 'TRAYS', hint: 'Tray partitions with subdued artwork [2]', shortcut: '2' },
+    { id: 'RAW', label: 'RAW', hint: 'Reference poster artwork [3]', shortcut: '3' },
+    { id: 'GRADIENT', label: 'GRADIENT', hint: 'Gradient edge density [4]', shortcut: '4' }
+  ];
 
   @ViewChild('viewportRef') private readonly viewportRef!: ElementRef<HTMLDivElement>;
   @ViewChild('canvasRef') private readonly canvasRef!: ElementRef<HTMLCanvasElement>;
@@ -53,6 +68,27 @@ export class PosterCanvasComponent implements AfterViewInit, OnDestroy {
 
   toggleGrid(): void {
     this.posterStore.toggleGrid();
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  handleKeyDown(event: KeyboardEvent): void {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+
+    if (event.key === '1') {
+      this.setViewMode('TINT');
+    } else if (event.key === '2') {
+      this.setViewMode('TRAYS');
+    } else if (event.key === '3') {
+      this.setViewMode('RAW');
+    } else if (event.key === '4') {
+      this.setViewMode('GRADIENT');
+    } else if (event.key === 'g' || event.key === 'G') {
+      this.toggleGrid();
+    } else if (event.key === '0') {
+      this.resetView();
+    }
   }
 
   ngAfterViewInit(): void {

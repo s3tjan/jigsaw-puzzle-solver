@@ -4,7 +4,7 @@
     <!-- Source Controls Section -->
     <div class="inverted-header">
       <span>POSTER SOURCE</span>
-      <span class="font-mono">36×28</span>
+      <span class="font-mono">{{ posterStore.dimensionLabel }}</span>
     </div>
     <div class="rail-section border-b">
       <div class="action-row">
@@ -23,32 +23,23 @@
       <span>WEIGHT TUNING</span>
     </div>
     <div class="rail-section border-b">
-      <div class="slider-group">
-        <div class="slider-header">
-          <span class="slider-label">COLOR (CIELAB)</span>
-          <span class="slider-val font-mono tabular-nums">{{ posterStore.weights().wColor.toFixed(2) }}</span>
+      @for (cfg of weightConfigs; track cfg.key) {
+        <div class="slider-group">
+          <div class="slider-header">
+            <span class="slider-label">{{ cfg.label }}</span>
+            <span class="slider-val font-mono tabular-nums">{{ posterStore.weights()[cfg.key].toFixed(2) }}</span>
+          </div>
+          <input
+            type="range"
+            min="0.0"
+            max="1.0"
+            step="0.05"
+            [value]="posterStore.weights()[cfg.key]"
+            (input)="onWeightChange(cfg.key, $event)"
+            class="industrial-slider"
+          />
         </div>
-        <input type="range" min="0.0" max="1.0" step="0.05" [value]="posterStore.weights().wColor"
-          (input)="onWeightChange('wColor', $event)" class="industrial-slider" />
-      </div>
-
-      <div class="slider-group">
-        <div class="slider-header">
-          <span class="slider-label">TEXTURE (GRADIENT)</span>
-          <span class="slider-val font-mono tabular-nums">{{ posterStore.weights().wTexture.toFixed(2) }}</span>
-        </div>
-        <input type="range" min="0.0" max="1.0" step="0.05" [value]="posterStore.weights().wTexture"
-          (input)="onWeightChange('wTexture', $event)" class="industrial-slider" />
-      </div>
-
-      <div class="slider-group">
-        <div class="slider-header">
-          <span class="slider-label">POSITION (GRID)</span>
-          <span class="slider-val font-mono tabular-nums">{{ posterStore.weights().wSpatial.toFixed(2) }}</span>
-        </div>
-        <input type="range" min="0.0" max="1.0" step="0.05" [value]="posterStore.weights().wSpatial"
-          (input)="onWeightChange('wSpatial', $event)" class="industrial-slider" />
-      </div>
+      }
 
       <div class="telemetry-grid font-mono">
         <div class="telem-item">
@@ -75,7 +66,7 @@
     <!-- 8 Physical Containers Volume Meters -->
     <div class="inverted-header">
       <span>SORTING TRAYS</span>
-      <span class="font-mono">8 TRAYS</span>
+      <span class="font-mono">{{ posterStore.trays().length }} TRAYS</span>
     </div>
     <div class="tray-list-pane">
       @for (tray of posterStore.trays(); track tray.id) {
@@ -87,7 +78,10 @@
             <span class="tray-name">0{{ tray.id }} &middot; {{ tray.name }}</span>
           </div>
           <div class="tray-count font-mono tabular-nums">
-            <span [class.warn]="tray.count > 118" [class.error]="tray.count > tray.maxCapacity">
+            <span
+              [class.warn]="tray.count > posterStore.trayWarnCapacity"
+              [class.error]="tray.count > tray.maxCapacity"
+            >
               {{ tray.count }}
             </span>
             <span class="tray-limit">/ {{ tray.maxCapacity }}</span>
@@ -97,9 +91,14 @@
         <!-- Capacity Volume Gauge Bar -->
         <div class="gauge-track">
           <div class="gauge-fill" [style.width.%]="(tray.count / tray.maxCapacity) * 100"
-            [class.fill-warn]="tray.count > 118" [class.fill-error]="tray.count > tray.maxCapacity"></div>
-          <!-- Target average anchor line (110.5 pcs ~ 88.4%) -->
-          <div class="target-marker" style="left: 88.4%;" title="Target Avg: 110 pcs"></div>
+            [class.fill-warn]="tray.count > posterStore.trayWarnCapacity"
+            [class.fill-error]="tray.count > tray.maxCapacity"></div>
+          <!-- Target average anchor line (~110 pcs) -->
+          <div
+            class="target-marker"
+            [style.left.%]="posterStore.targetFillPercent"
+            [title]="'Target Avg: ' + tray.targetAvg + ' pcs'"
+          ></div>
         </div>
       </div>
       }

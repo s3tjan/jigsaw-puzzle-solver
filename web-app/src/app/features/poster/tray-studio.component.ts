@@ -3,7 +3,12 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { PosterStore } from '../../core/state/poster.store';
 import { PosterCanvasComponent } from './poster-canvas.component';
-import { TrayId, TrayInfo } from '../../core/models/poster.model';
+import { ClusteringWeights, TrayId } from '../../core/models/poster.model';
+
+export interface WeightConfig {
+  key: keyof ClusteringWeights;
+  label: string;
+}
 
 @Component({
   selector: 'app-tray-studio',
@@ -14,6 +19,12 @@ import { TrayId, TrayInfo } from '../../core/models/poster.model';
 })
 export class TrayStudioComponent {
   readonly posterStore = inject(PosterStore);
+
+  readonly weightConfigs: readonly WeightConfig[] = [
+    { key: 'wColor', label: 'COLOR (CIELAB)' },
+    { key: 'wTexture', label: 'TEXTURE (GRADIENT)' },
+    { key: 'wSpatial', label: 'POSITION (GRID)' }
+  ];
 
   @ViewChild('fileInput') private readonly fileInput!: ElementRef<HTMLInputElement>;
 
@@ -37,7 +48,7 @@ export class TrayStudioComponent {
     reader.readAsDataURL(file);
   }
 
-  onWeightChange(key: 'wColor' | 'wTexture' | 'wSpatial', event: Event): void {
+  onWeightChange(key: keyof ClusteringWeights, event: Event): void {
     const val = parseFloat((event.target as HTMLInputElement).value);
     this.posterStore.setWeight(key, val);
   }

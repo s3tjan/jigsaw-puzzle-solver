@@ -3,61 +3,37 @@
   <div class="viewport-header border-b">
     <div class="header-left">
       <span class="header-title">POSTER REFERENCE</span>
-      <span class="header-meta font-mono">36×28 &middot; 1,008 SLOTS</span>
+      <span class="header-meta font-mono">{{ posterStore.dimensionLabel }} &middot; {{ posterStore.totalSlots }} SLOTS</span>
     </div>
 
     <!-- View Mode Switches & Display Controls -->
     <div class="mode-toggles">
-      <button
-        type="button"
-        class="toggle-btn"
-        [class.active]="posterStore.viewMode() === 'TINT'"
-        (click)="setViewMode('TINT')"
-        title="Color overlays on artwork"
-      >
-        TINT
-      </button>
-      <button
-        type="button"
-        class="toggle-btn"
-        [class.active]="posterStore.viewMode() === 'TRAYS'"
-        (click)="setViewMode('TRAYS')"
-        title="Tray partitions with subdued artwork"
-      >
-        TRAYS
-      </button>
-      <button
-        type="button"
-        class="toggle-btn"
-        [class.active]="posterStore.viewMode() === 'RAW'"
-        (click)="setViewMode('RAW')"
-        title="Reference poster artwork"
-      >
-        RAW
-      </button>
-      <button
-        type="button"
-        class="toggle-btn"
-        [class.active]="posterStore.viewMode() === 'GRADIENT'"
-        (click)="setViewMode('GRADIENT')"
-        title="Gradient edge density"
-      >
-        GRADIENT
-      </button>
+      @for (mode of viewModes; track mode.id) {
+        <button
+          type="button"
+          class="toggle-btn"
+          [class.active]="posterStore.viewMode() === mode.id"
+          (click)="setViewMode(mode.id)"
+          [title]="mode.hint"
+        >
+          {{ mode.label }} [{{ mode.shortcut }}]
+        </button>
+      }
+
       <button
         type="button"
         class="toggle-btn"
         [class.active]="posterStore.showGrid()"
         (click)="toggleGrid()"
-        title="Toggle piece grid lines"
+        title="Toggle piece grid lines [G]"
       >
-        GRID: {{ posterStore.showGrid() ? 'ON' : 'OFF' }}
+        GRID: {{ posterStore.showGrid() ? 'ON' : 'OFF' }} [G]
       </button>
       <button
         type="button"
         class="toggle-btn reset-btn"
         (click)="resetView()"
-        title="Center and fit viewport"
+        title="Center and fit viewport [0]"
       >
         FIT [0]
       </button>
@@ -97,7 +73,7 @@
       <div class="telemetry-group">
         <span class="meta-label">TRAY:</span>
         @if (activeSlot.isBorder) {
-          <span class="tray-chip" style="background-color: #6b7280;"></span>
+          <span class="tray-chip border-chip"></span>
           <span class="meta-val font-mono">BORDER</span>
         } @else {
           <span class="tray-chip" [style.background-color]="posterStore.getTray(activeSlot.trayId)?.color"></span>

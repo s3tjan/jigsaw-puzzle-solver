@@ -8,7 +8,7 @@
 }
 
 .viewport-header {
-  height: 28px;
+  height: 30px;
   background: var(--bg-surface-secondary);
   display: flex;
   align-items: center;
@@ -41,8 +41,8 @@
 }
 
 .toggle-btn {
-  height: 22px;
-  padding: 0 6px;
+  height: 24px;
+  padding: 0 8px;
   font-size: 11px;
   background: var(--bg-surface);
   border: var(--border-rule);
@@ -106,4 +106,8 @@
   height: 10px;
   display: inline-block;
   border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.tray-chip.border-chip {
+  background-color: var(--status-offline);
 }
