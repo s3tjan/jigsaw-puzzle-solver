@@ -1,0 +1,133 @@
+<div class="scanner-root">
+  <!-- Peripheral Flash Overlay for Eyes-Free Sorting (ING-03) -->
+  @if (activeFlashColor(); as color) {
+    <div class="peripheral-flash" [style.background-color]="color">
+      <div class="flash-banner font-mono">
+        <span class="flash-text">{{ flashMessage() }}</span>
+      </div>
+    </div>
+  }
+
+  <!-- Left Control & Ingestion Queue Rail (Collapsible with Alt+B) -->
+  @if (!appModeStore.isLeftRailCollapsed()) {
+    <aside class="scanner-rail border-r">
+      <div class="inverted-header">
+        <span>CONTINUOUS MAT INGESTION</span>
+        <span class="font-mono">1080P FEED</span>
+      </div>
+
+    <!-- Camera Source Selection -->
+    <div class="rail-section border-b">
+      <div class="section-title">CAMERA SOURCE</div>
+      <div class="source-info font-mono">
+        <span class="label">STATUS:</span>
+        <span class="val" [class.ok]="cameraService.isStreaming()" [class.error]="!cameraService.isStreaming()">
+          {{ cameraService.isStreaming() ? 'ONLINE' : 'OFFLINE' }}
+        </span>
+      </div>
+      <div class="source-info font-mono">
+        <span class="label">RES:</span>
+        <span class="val">{{ cameraService.activeResolution().width }}×{{ cameraService.activeResolution().height }}</span>
+      </div>
+
+      <div class="action-row">
+        <button type="button" class="rail-btn active" (click)="triggerScan()" [disabled]="!cameraService.isStreaming() || isProcessing()">
+          SCAN DROP [SPACE]
+        </button>
+        <button type="button" class="rail-btn" (click)="retryCamera()">
+          RECONNECT
+        </button>
+      </div>
+    </div>
+
+    <!-- Latest Piece Telemetry -->
+    <div class="inverted-header">
+      <span>LAST INGESTED PIECE</span>
+    </div>
+    <div class="rail-section border-b">
+      @if (lastPiece(); as piece) {
+        <table class="data-table">
+          <tbody>
+            <tr>
+              <td class="prop-key">PIECE ID</td>
+              <td class="prop-val font-mono">#{{ piece.id }}</td>
+            </tr>
+            <tr>
+              <td class="prop-key">ASSIGNED TRAY</td>
+              <td class="prop-val font-mono">
+                <span class="tray-chip" [style.background-color]="posterStore.getTray(piece.trayId)?.color"></span>
+                0{{ piece.trayId }} &middot; {{ posterStore.getTray(piece.trayId)?.name }}
+              </td>
+            </tr>
+            <tr>
+              <td class="prop-key">TAB WIDTH</td>
+              <td class="prop-val font-mono">{{ piece.tabWidthMm.toFixed(2) }} MM</td>
+            </tr>
+            <tr>
+              <td class="prop-key">POLARITY</td>
+              <td class="prop-val font-mono">{{ piece.polarities.join('-') }}</td>
+            </tr>
+          </tbody>
+        </table>
+      } @else {
+        <div class="empty-state font-mono">
+          NO PIECES INGESTED
+        </div>
+      }
+    </div>
+
+    <!-- Sorting Trays Volume Breakdown -->
+    <div class="inverted-header">
+      <span>SORTING TRAYS FILL</span>
+      <span class="font-mono">8 TRAYS</span>
+    </div>
+    <div class="tray-mini-list">
+      @for (tray of inventoryStore.trays(); track tray.id) {
+        <div class="tray-mini-row border-b">
+          <div class="tray-mini-header">
+            <span class="tray-chip" [style.background-color]="posterStore.getTray(tray.id)?.color"></span>
+            <span class="tray-mini-name">0{{ tray.id }} &middot; {{ tray.name }}</span>
+            <span class="tray-mini-count font-mono tabular-nums">{{ tray.count }}/{{ tray.maxCapacity }}</span>
+          </div>
+          <div class="gauge-track">
+            <div class="gauge-fill" [style.width.%]="(tray.count / tray.maxCapacity) * 100"></div>
+          </div>
+        </div>
+      }
+    </div>
+  </aside>
+} @else {
+  <div class="rail-collapsed-strip" (click)="appModeStore.toggleLeftRail()" title="Click or press [Alt+B] to expand">
+    <span class="collapsed-glyph">▶</span>
+    <span class="collapsed-label font-mono">INGESTION</span>
+  </div>
+}
+
+  <!-- Center Viewport: Camera Video Stream on 100mm Fiducial Mat -->
+  <main class="viewport-main">
+    <div class="viewport-header border-b">
+      <span class="header-title">100MM FIDUCIAL CALIBRATION MAT</span>
+      <span class="header-meta font-mono">ORTHOGRAPHIC 96PX / 25MM</span>
+    </div>
+
+    <div class="video-container">
+      <video #videoRef autoplay playsinline muted class="camera-stream"></video>
+
+      <!-- Fiducial Overlay Target Box (C1-C4 ground truth) -->
+      <div class="mat-overlay">
+        <div class="corner-reticle tl">C1</div>
+        <div class="corner-reticle tr">C2</div>
+        <div class="corner-reticle br">C3</div>
+        <div class="corner-reticle bl">C4</div>
+        <div class="crosshair-center">+</div>
+      </div>
+
+      @if (!cameraService.isStreaming()) {
+        <div class="camera-offline font-mono">
+          <span>NO CAMERA FEED DETECTED</span>
+          <button type="button" class="rail-btn" (click)="retryCamera()">CONNECT CAMERA</button>
+        </div>
+      }
+    </div>
+  </main>
+</div>

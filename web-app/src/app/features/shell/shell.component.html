@@ -16,26 +16,7 @@
 
     <!-- MODE: INGESTION (Alt+1) -->
     @if (appModeStore.activeMode() === 'INGESTION') {
-      <div class="mode-placeholder">
-        <div class="inverted-header">
-          <span>CONTINUOUS MAT INGESTION</span>
-          <span class="font-mono">1080P FEED</span>
-        </div>
-        <div class="placeholder-body">
-          <div class="telemetry-row">
-            <span class="label">STREAM:</span>
-            <span class="val font-mono">WEBRTC 1080P ACTIVE</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="label">FIDUCIALS:</span>
-            <span class="val font-mono">C1-C4 GROUNDED</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="label">PERIPHERAL FEEDBACK:</span>
-            <span class="val font-mono">EYES-FREE COLOR FLASH READY</span>
-          </div>
-        </div>
-      </div>
+      <app-ingestion-scanner></app-ingestion-scanner>
     }
 
     <!-- MODE: POSTER_STUDIO (Alt+2 / Task TRY-05 & TRY-06) -->

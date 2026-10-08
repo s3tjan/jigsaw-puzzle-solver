@@ -6,6 +6,7 @@ import { StatusBarComponent } from './components/status-bar/status-bar.component
 import { CommandPaletteComponent } from './components/command-palette/command-palette.component';
 import { WorkbenchComponent } from '../workbench/workbench.component';
 import { TrayStudioComponent } from '../poster/tray-studio.component';
+import { IngestionScannerComponent } from '../scanner/ingestion-scanner.component';
 
 @Component({
   selector: 'app-shell',
@@ -16,7 +17,8 @@ import { TrayStudioComponent } from '../poster/tray-studio.component';
     StatusBarComponent,
     CommandPaletteComponent,
     WorkbenchComponent,
-    TrayStudioComponent
+    TrayStudioComponent,
+    IngestionScannerComponent
   ],
   templateUrl: './shell.component.html',
   styleUrl: './shell.component.css'
