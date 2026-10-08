@@ -22,48 +22,15 @@
   height: 28px;
   padding: 0 8px;
   font-size: 12px;
+  white-space: nowrap;
 }
 
-.shortcut-hint {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-right: 4px;
-}
-
-.mode-btn.active .shortcut-hint {
-  color: var(--text-disabled);
+.mode-btn.active {
+  background: var(--bg-inverted);
+  color: var(--text-inverted);
 }
 
 .action-btn {
   background: var(--bg-surface-secondary);
   border: var(--border-rule);
-}
-
-.telemetry-cluster {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 12px;
-}
-
-.telemetry-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.label {
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.val {
-  color: var(--text-primary);
-}
-
-.status-indicator {
-  color: var(--status-ok);
-  font-size: 12px;
-  line-height: 1;
 }

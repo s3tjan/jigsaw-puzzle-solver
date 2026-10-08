@@ -3,7 +3,6 @@
   <div class="viewport-header border-b">
     <div class="header-left">
       <span class="header-title">POSTER REFERENCE</span>
-      <span class="header-meta font-mono">{{ posterStore.dimensionLabel }} &middot; {{ posterStore.totalSlots }} SLOTS</span>
     </div>
 
     <!-- View Mode Switches & Display Controls -->
@@ -51,45 +50,5 @@
     (mouseleave)="onMouseLeave()"
   >
     <canvas #canvasRef class="board-canvas"></canvas>
-  </div>
-
-  <!-- Bottom Telemetry HUD Strip for Current Slot -->
-  <div class="canvas-telemetry border-t">
-    @if (posterStore.hoveredSlot() || posterStore.selectedSlot(); as activeSlot) {
-      <div class="telemetry-group">
-        <span class="meta-label">SLOT:</span>
-        <span class="meta-val font-mono tabular-nums">R{{ activeSlot.r }} C{{ activeSlot.c }}</span>
-      </div>
-      <div class="telemetry-group">
-        <span class="meta-label">CIELAB:</span>
-        <span class="meta-val font-mono tabular-nums">
-          {{ activeSlot.lab[0].toFixed(1) }}, {{ activeSlot.lab[1].toFixed(1) }}, {{ activeSlot.lab[2].toFixed(1) }}
-        </span>
-      </div>
-      <div class="telemetry-group">
-        <span class="meta-label">GRAD:</span>
-        <span class="meta-val font-mono tabular-nums">{{ (activeSlot.gradient * 100).toFixed(1) }}%</span>
-      </div>
-      <div class="telemetry-group">
-        <span class="meta-label">TRAY:</span>
-        @if (activeSlot.isBorder) {
-          <span class="tray-chip border-chip"></span>
-          <span class="meta-val font-mono">BORDER</span>
-        } @else {
-          <span class="tray-chip" [style.background-color]="posterStore.getTray(activeSlot.trayId)?.color"></span>
-          <span class="meta-val font-mono">0{{ activeSlot.trayId }} &middot; {{ posterStore.getTray(activeSlot.trayId)?.name }}</span>
-        }
-      </div>
-      <div class="telemetry-group">
-        <span class="meta-label">TYPE:</span>
-        <span class="meta-val font-mono">
-          {{ activeSlot.isCorner ? 'CORNER' : activeSlot.isBorder ? 'BORDER' : 'INTERIOR' }}
-        </span>
-      </div>
-    } @else {
-      <div class="telemetry-group">
-        <span class="meta-label font-mono">NO SLOT SELECTED</span>
-      </div>
-    }
   </div>
 </div>

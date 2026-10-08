@@ -7,12 +7,16 @@
   gap: 16px;
   font-size: 11px;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .status-section {
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .status-section.highlight {
@@ -46,4 +50,15 @@
   color: var(--status-ok);
   font-size: 12px;
   line-height: 1;
+}
+
+.tray-chip {
+  width: 9px;
+  height: 9px;
+  display: inline-block;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.tray-chip.border-chip {
+  background-color: var(--status-offline);
 }

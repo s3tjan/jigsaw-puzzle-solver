@@ -9,7 +9,7 @@
       (click)="setMode('INGESTION')"
       title="Shortcut: Alt+1"
     >
-      <span class="shortcut-hint font-mono">[Alt+1]</span>INGESTION
+      INGESTION [Alt+1]
     </button>
     <button 
       type="button" 
@@ -19,7 +19,7 @@
       (click)="setMode('POSTER_STUDIO')"
       title="Shortcut: Alt+2"
     >
-      <span class="shortcut-hint font-mono">[Alt+2]</span>POSTER STUDIO
+      POSTER STUDIO [Alt+2]
     </button>
     <button 
       type="button" 
@@ -29,7 +29,7 @@
       (click)="setMode('WORKBENCH')"
       title="Shortcut: Alt+3"
     >
-      <span class="shortcut-hint font-mono">[Alt+3]</span>WORKBENCH HUD
+      WORKBENCH [Alt+3]
     </button>
   </div>
 
@@ -42,28 +42,6 @@
     (click)="openCommandPalette()"
     title="Open Command Palette (Ctrl+K)"
   >
-    <span class="shortcut-hint font-mono">[Ctrl+K]</span>COMMANDS
+    COMMANDS [Ctrl+K]
   </button>
-
-  <!-- Functional Optics Calibration Action -->
-  <button type="button" class="action-btn" title="Open K1 Distortion Calibration Modal">
-    CALIBRATE OPTICS
-  </button>
-
-  <!-- Right Telemetry Readouts -->
-  <div class="telemetry-cluster">
-    <div class="telemetry-item">
-      <span class="label">SCALE:</span>
-      <span class="val font-mono tabular-nums">96px/25mm</span>
-    </div>
-    <div class="telemetry-item">
-      <span class="label">K1:</span>
-      <span class="val font-mono tabular-nums">0.000</span>
-    </div>
-    <div class="telemetry-item">
-      <span class="status-indicator">●</span>
-      <span class="label">WASM:</span>
-      <span class="val font-mono tabular-nums">{{ appModeStore.wasmLatencyMs() }}ms</span>
-    </div>
-  </div>
 </header>

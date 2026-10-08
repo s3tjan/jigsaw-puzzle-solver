@@ -1,4 +1,5 @@
 <footer class="status-root border-t">
+  <!-- Global System Readiness & Active Mode -->
   <div class="status-section">
     <span class="indicator ok">●</span>
     <span class="status-title">SYS: READY</span>
@@ -6,55 +7,101 @@
 
   <div class="status-section">
     <span class="muted">MODE:</span>
-    <span class="val">{{ appModeStore.activeMode() }}</span>
+    <span class="val font-mono">{{ appModeStore.activeMode() }}</span>
   </div>
 
+  <!-- VIEW-SPECIFIC TELEMETRY: POSTER_STUDIO -->
   @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
     <div class="status-section">
-      <span class="muted">POSTER:</span>
+      <span class="muted">GRID:</span>
+      <span class="val font-mono">{{ posterStore.dimensionLabel }} &middot; {{ posterStore.totalSlots }} SLOTS</span>
+    </div>
+
+    <div class="status-section">
+      <span class="muted">SORTING:</span>
       @if (posterStore.isAnalyzing()) {
         <span class="val font-mono">WASM COMPUTING...</span>
       } @else {
-        <span class="val font-mono">8 TRAYS &middot; {{ posterStore.stats().computeTimeMs }}ms</span>
+        <span class="val font-mono">{{ posterStore.trays().length }} TRAYS &middot; {{ posterStore.stats().computeTimeMs }}ms</span>
       }
+    </div>
+
+    <!-- Active Slot Telemetry HUD -->
+    @if (posterStore.hoveredSlot() || posterStore.selectedSlot(); as activeSlot) {
+      <div class="status-section">
+        <span class="muted">SLOT:</span>
+        <span class="val font-mono tabular-nums">R{{ activeSlot.r }} C{{ activeSlot.c }}</span>
+      </div>
+      <div class="status-section">
+        <span class="muted">CIELAB:</span>
+        <span class="val font-mono tabular-nums">
+          {{ activeSlot.lab[0].toFixed(1) }}, {{ activeSlot.lab[1].toFixed(1) }}, {{ activeSlot.lab[2].toFixed(1) }}
+        </span>
+      </div>
+      <div class="status-section">
+        <span class="muted">GRAD:</span>
+        <span class="val font-mono tabular-nums">{{ (activeSlot.gradient * 100).toFixed(1) }}%</span>
+      </div>
+      <div class="status-section">
+        <span class="muted">TRAY:</span>
+        @if (activeSlot.isBorder) {
+          <span class="tray-chip border-chip"></span>
+          <span class="val font-mono">BORDER</span>
+        } @else {
+          <span class="tray-chip" [style.background-color]="posterStore.getTray(activeSlot.trayId)?.color"></span>
+          <span class="val font-mono">0{{ activeSlot.trayId }} &middot; {{ posterStore.getTray(activeSlot.trayId)?.name }}</span>
+        }
+      </div>
+      <div class="status-section">
+        <span class="muted">TYPE:</span>
+        <span class="val font-mono">
+          {{ activeSlot.isCorner ? 'CORNER' : activeSlot.isBorder ? 'BORDER' : 'INTERIOR' }}
+        </span>
+      </div>
+    }
+  }
+
+  <!-- VIEW-SPECIFIC TELEMETRY: WORKBENCH -->
+  @if (appModeStore.activeMode() === 'WORKBENCH') {
+    <div class="status-section">
+      <span class="muted">FRONTIER:</span>
+      <span class="val font-mono tabular-nums">{{ boardStore.frontierCount() }}</span>
+      <span class="unit">SLOTS</span>
+    </div>
+
+    <div class="status-section">
+      <span class="muted">PLACED:</span>
+      <span class="val font-mono tabular-nums">{{ boardStore.placedCount() }} / {{ boardStore.totalSlots }}</span>
     </div>
   }
 
-  <div class="status-section">
-    <span class="muted">FRONTIER:</span>
-    <span class="val font-mono tabular-nums">{{ boardStore.frontierCount() }}</span>
-    <span class="unit">SLOTS</span>
-  </div>
+  <!-- VIEW-SPECIFIC TELEMETRY: INGESTION -->
+  @if (appModeStore.activeMode() === 'INGESTION') {
+    <div class="status-section">
+      <span class="muted">INGESTED:</span>
+      <span class="val font-mono tabular-nums">{{ inventoryStore.totalIngested() }} / {{ inventoryStore.targetTotal }}</span>
+    </div>
+    <div class="status-section">
+      <span class="muted">FEED:</span>
+      <span class="val font-mono">1080P ACTIVE</span>
+    </div>
+  }
 
-  <div class="status-section">
-    <span class="muted">PLACED:</span>
-    <span class="val font-mono tabular-nums">{{ boardStore.placedCount() }} / {{ boardStore.totalSlots }}</span>
-  </div>
-
-  <div class="status-section">
-    <span class="muted">INGESTED:</span>
-    <span class="val font-mono tabular-nums">{{ inventoryStore.totalIngested() }} / {{ inventoryStore.targetTotal }}</span>
-  </div>
-
-  <!-- Right side shortcuts & system telemetry -->
+  <!-- Right side system status & active mode shortcuts -->
   <div class="status-right">
+    <div class="status-section">
+      <span class="muted">WASM:</span>
+      <span class="val font-mono tabular-nums">{{ appModeStore.wasmLatencyMs() }}ms</span>
+    </div>
+    <div class="status-section">
+      <span class="muted">FPS:</span>
+      <span class="val font-mono tabular-nums">{{ appModeStore.fps() }}</span>
+    </div>
     @if (appModeStore.activeMode() === 'WORKBENCH') {
       <div class="status-section highlight">
         <span>RAIL: {{ appModeStore.isLeftRailCollapsed() ? 'COLLAPSED' : 'EXPANDED' }}</span>
         <span class="shortcut font-mono">[Alt+B]</span>
       </div>
     }
-    <div class="status-section">
-      <span class="shortcut font-mono">[Ctrl+K]</span>
-      <span>PALETTE</span>
-    </div>
-    <div class="status-section">
-      <span class="muted">MEM:</span>
-      <span class="val font-mono tabular-nums">{{ appModeStore.wasmMemoryMb() }} MB</span>
-    </div>
-    <div class="status-section">
-      <span class="muted">FPS:</span>
-      <span class="val font-mono tabular-nums">{{ appModeStore.fps() }}</span>
-    </div>
   </div>
 </footer>
