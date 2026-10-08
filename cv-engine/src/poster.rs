@@ -2150,13 +2150,157 @@ pub fn cluster_interior_slots(
         }
     }
 
-    // TRY-03: Hard post-process capacity overflow resolution with spatial adjacency preference
     // Build slot spatial lookup table (row, col) -> index for 4-neighbor adjacency checking
     let mut grid_idx = [[None; POSTER_TOTAL_COLS as usize]; POSTER_TOTAL_ROWS as usize];
     for (idx, s) in interior_slots.iter().enumerate() {
         grid_idx[s.r as usize][s.c as usize] = Some(idx);
     }
 
+    // Pass 1: Neighbor Majority Smoothing (Iterated Conditional Modes)
+    // Smooths out single-slot jitter along boundaries if a slot is surrounded by a different tray
+    for _smooth_pass in 0..2 {
+        for i in 0..n {
+            let slot = &interior_slots[i];
+            let current_tray = assignments[i];
+            let r = slot.r as usize;
+            let c = slot.c as usize;
+
+            let neighbors = [
+                if r > 0 { grid_idx[r - 1][c] } else { None },
+                if r + 1 < POSTER_TOTAL_ROWS as usize { grid_idx[r + 1][c] } else { None },
+                if c > 0 { grid_idx[r][c - 1] } else { None },
+                if c + 1 < POSTER_TOTAL_COLS as usize { grid_idx[r][c + 1] } else { None },
+            ];
+
+            let mut neighbor_tray_counts = [0u8; NUM_TRAYS + 1];
+            let mut valid_neighbors = 0;
+            for &nb in &neighbors {
+                if let Some(idx) = nb {
+                    neighbor_tray_counts[assignments[idx] as usize] += 1;
+                    valid_neighbors += 1;
+                }
+            }
+
+            // If 3 or more of 4 neighbors belong to another tray and that tray has room, adopt it
+            if valid_neighbors >= 3 {
+                for t in 1..=NUM_TRAYS {
+                    if (t as u8) != current_tray && neighbor_tray_counts[t] >= 3 && tray_counts[t] < max_capacity {
+                        tray_counts[current_tray as usize] -= 1;
+                        tray_counts[t] += 1;
+                        assignments[i] = t as u8;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Pass 2: Connected Components Flood-Fill (Orphan Component Absorption)
+    // Discovers any disconnected islands of each tray. Small islands (< 8 slots) are absorbed
+    // into the bordering neighbor tray with the lowest feature cost.
+    for _cc_pass in 0..3 {
+        let mut visited = vec![false; n];
+        let mut reassignments_cc = 0;
+
+        for i in 0..n {
+            if visited[i] {
+                continue;
+            }
+
+            let tray = assignments[i];
+            let mut component = Vec::new();
+            let mut queue = std::collections::VecDeque::new();
+
+            visited[i] = true;
+            queue.push_back(i);
+
+            while let Some(curr) = queue.pop_front() {
+                component.push(curr);
+                let cr = interior_slots[curr].r as usize;
+                let cc = interior_slots[curr].c as usize;
+
+                let neighbors = [
+                    if cr > 0 { grid_idx[cr - 1][cc] } else { None },
+                    if cr + 1 < POSTER_TOTAL_ROWS as usize { grid_idx[cr + 1][cc] } else { None },
+                    if cc > 0 { grid_idx[cr][cc - 1] } else { None },
+                    if cc + 1 < POSTER_TOTAL_COLS as usize { grid_idx[cr][cc + 1] } else { None },
+                ];
+
+                for &nb in &neighbors {
+                    if let Some(n_idx) = nb {
+                        if !visited[n_idx] && assignments[n_idx] == tray {
+                            visited[n_idx] = true;
+                            queue.push_back(n_idx);
+                        }
+                    }
+                }
+            }
+
+            // If this island is small (< 8 slots) and not the entire tray, it's an orphan!
+            if component.len() < 8 && component.len() < tray_counts[tray as usize] as usize {
+                // Find all border trays touching this orphan component
+                let mut touching_trays = [0u32; NUM_TRAYS + 1];
+                for &idx in &component {
+                    let cr = interior_slots[idx].r as usize;
+                    let cc = interior_slots[idx].c as usize;
+                    let neighbors = [
+                        if cr > 0 { grid_idx[cr - 1][cc] } else { None },
+                        if cr + 1 < POSTER_TOTAL_ROWS as usize { grid_idx[cr + 1][cc] } else { None },
+                        if cc > 0 { grid_idx[cr][cc - 1] } else { None },
+                        if cc + 1 < POSTER_TOTAL_COLS as usize { grid_idx[cr][cc + 1] } else { None },
+                    ];
+                    for &nb in &neighbors {
+                        if let Some(n_idx) = nb {
+                            let nb_tray = assignments[n_idx];
+                            if nb_tray != tray {
+                                touching_trays[nb_tray as usize] += 1;
+                            }
+                        }
+                    }
+                }
+
+                // Pick the candidate touching tray with lowest distance and available capacity
+                let mut best_target_tray = 0u8;
+                let mut best_target_cost = f32::INFINITY;
+
+                for t in 1..=NUM_TRAYS {
+                    if touching_trays[t] > 0 && tray_counts[t] + (component.len() as u32) <= max_capacity {
+                        let mut sum_cost = 0.0f32;
+                        for &idx in &component {
+                            sum_cost += compute_slot_cluster_distance_sq(
+                                &interior_slots[idx],
+                                &centroids[t - 1],
+                                nw_c,
+                                nw_t,
+                                nw_s,
+                                luminance_scale,
+                            );
+                        }
+                        if sum_cost < best_target_cost {
+                            best_target_cost = sum_cost;
+                            best_target_tray = t as u8;
+                        }
+                    }
+                }
+
+                if best_target_tray > 0 {
+                    let comp_len = component.len() as u32;
+                    tray_counts[tray as usize] -= comp_len;
+                    tray_counts[best_target_tray as usize] += comp_len;
+                    for &idx in &component {
+                        assignments[idx] = best_target_tray;
+                    }
+                    reassignments_cc += 1;
+                }
+            }
+        }
+
+        if reassignments_cc == 0 {
+            break;
+        }
+    }
+
+    // TRY-03: Hard post-process capacity overflow resolution with spatial adjacency preference
     loop {
         let mut overflow_tray = 0usize;
         for t in 1..=NUM_TRAYS {
@@ -2171,7 +2315,6 @@ pub fn cluster_interior_slots(
 
         // Find candidate item in overflow tray:
         // Prioritize pieces on the boundary that actually border the candidate target tray!
-        // This completely eliminates confetti transfers across isolated interior regions.
         let mut best_item_idx = None;
         let mut best_target_tray = 0u8;
         let mut min_transfer_cost = f32::INFINITY;
@@ -2188,7 +2331,6 @@ pub fn cluster_interior_slots(
                     luminance_scale,
                 );
 
-                // Check 4-connected spatial neighbors
                 let r = slot.r as usize;
                 let c = slot.c as usize;
                 let neighbors = [
@@ -2209,14 +2351,13 @@ pub fn cluster_interior_slots(
                             luminance_scale,
                         );
 
-                        // Is this piece physically touching target_t?
                         let touches_target = neighbors.iter().any(|&nb| {
                             nb.map(|idx| assignments[idx] as usize == target_t).unwrap_or(false)
                         });
 
-                        // Strongly prefer boundary pieces bordering the target tray
-                        let adjacency_bonus = if touches_target { 0.0 } else { 0.50 };
-                        let cost = (target_dist_sq - current_dist_sq) + adjacency_bonus;
+                        // Strictly require boundary pieces bordering the target tray
+                        let adjacency_penalty = if touches_target { 0.0 } else { 2.0 };
+                        let cost = (target_dist_sq - current_dist_sq) + adjacency_penalty;
 
                         if cost < min_transfer_cost {
                             min_transfer_cost = cost;
