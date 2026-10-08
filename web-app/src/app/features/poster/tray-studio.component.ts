@@ -5,6 +5,8 @@ import { PosterStore } from '../../core/state/poster.store';
 import { PosterCanvasComponent } from './poster-canvas.component';
 import { ClusteringWeights, TrayId } from '../../core/models/poster.model';
 
+import { AppModeStore } from '../../core/state/app-mode.store';
+
 export interface WeightConfig {
   key: keyof ClusteringWeights;
   label: string;
@@ -19,6 +21,7 @@ export interface WeightConfig {
 })
 export class TrayStudioComponent {
   readonly posterStore = inject(PosterStore);
+  readonly appModeStore = inject(AppModeStore);
 
   readonly weightConfigs: readonly WeightConfig[] = [
     { key: 'wColor', label: 'COLOR (CIELAB)' },

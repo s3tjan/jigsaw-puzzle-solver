@@ -8,7 +8,7 @@
 }
 
 .viewport-header {
-  height: 30px;
+  height: 34px;
   background: var(--bg-surface-secondary);
   display: flex;
   align-items: center;
@@ -41,9 +41,9 @@
 }
 
 .toggle-btn {
-  height: 24px;
+  height: 28px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: 12px;
   background: var(--bg-surface);
   border: var(--border-rule);
 }

@@ -23,6 +23,37 @@
   overflow-y: auto;
 }
 
+.rail-collapsed-strip {
+  width: 22px;
+  height: 100%;
+  background: var(--bg-surface-secondary);
+  border-right: var(--border-rule);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+  cursor: pointer;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.rail-collapsed-strip:hover {
+  background: var(--bg-surface-hover);
+}
+
+.collapsed-glyph {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.collapsed-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
 .rail-section {
   padding: 8px;
   display: flex;
@@ -230,7 +261,7 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #000000;
+  background: var(--text-primary);
   opacity: 0.6;
 }
 

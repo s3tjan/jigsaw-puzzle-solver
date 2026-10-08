@@ -1,5 +1,5 @@
 .toolbar-root {
-  height: 30px;
+  height: 32px;
   background: var(--bg-surface);
   display: flex;
   align-items: center;
@@ -10,7 +10,7 @@
 .divider {
   width: 1px;
   height: 18px;
-  background: #d4d4d4;
+  background: var(--border-rule-dark);
 }
 
 .mode-cluster {
@@ -19,7 +19,7 @@
 }
 
 .mode-btn, .action-btn {
-  height: 24px;
+  height: 28px;
   padding: 0 8px;
   font-size: 12px;
 }
@@ -31,7 +31,7 @@
 }
 
 .mode-btn.active .shortcut-hint {
-  color: #a3a3a3;
+  color: var(--text-disabled);
 }
 
 .action-btn {

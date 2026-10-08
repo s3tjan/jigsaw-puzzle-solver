@@ -93,7 +93,7 @@
 
 .palette-row.active .category-badge,
 .palette-row:hover .category-badge {
-  color: #a3a3a3;
+  color: var(--text-disabled);
 }
 
 .cmd-label {
@@ -107,7 +107,7 @@
 
 .palette-row.active .shortcut-tag,
 .palette-row:hover .shortcut-tag {
-  color: #a3a3a3;
+  color: var(--text-disabled);
 }
 
 .empty-state {

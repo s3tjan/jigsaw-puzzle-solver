@@ -1,22 +1,23 @@
 <div class="studio-root">
-  <!-- Left Control Rail -->
-  <aside class="control-rail border-r">
-    <!-- Source Controls Section -->
-    <div class="inverted-header">
-      <span>POSTER SOURCE</span>
-      <span class="font-mono">{{ posterStore.dimensionLabel }}</span>
-    </div>
-    <div class="rail-section border-b">
-      <div class="action-row">
-        <button type="button" class="rail-btn active" (click)="triggerFileUpload()">
-          UPLOAD IMAGE
-        </button>
-        <button type="button" class="rail-btn" (click)="resetToCalibration()">
-          RESET DEFAULTS
-        </button>
+  <!-- Left Control Rail (Collapsible with Alt+B) -->
+  @if (!appModeStore.isLeftRailCollapsed()) {
+    <aside class="control-rail border-r">
+      <!-- Source Controls Section -->
+      <div class="inverted-header">
+        <span>POSTER SOURCE</span>
+        <span class="font-mono">{{ posterStore.dimensionLabel }}</span>
       </div>
-      <input #fileInput type="file" accept="image/*" class="hidden-file-input" (change)="onFileSelected($event)" />
-    </div>
+      <div class="rail-section border-b">
+        <div class="action-row">
+          <button type="button" class="rail-btn active" (click)="triggerFileUpload()">
+            UPLOAD IMAGE
+          </button>
+          <button type="button" class="rail-btn" (click)="resetToCalibration()">
+            RESET DEFAULTS
+          </button>
+        </div>
+        <input #fileInput type="file" accept="image/*" class="hidden-file-input" (change)="onFileSelected($event)" />
+      </div>
 
     <!-- Dynamic Clustering Weights -->
     <div class="inverted-header">
@@ -104,6 +105,12 @@
       }
     </div>
   </aside>
+} @else {
+  <div class="rail-collapsed-strip" (click)="appModeStore.toggleLeftRail()" title="Click or press [Alt+B] to expand">
+    <span class="collapsed-glyph">▶</span>
+    <span class="collapsed-label font-mono">CONTROLS</span>
+  </div>
+}
 
   <!-- Center Workspace: Interactive Canvas Viewport -->
   <main class="canvas-workspace">
