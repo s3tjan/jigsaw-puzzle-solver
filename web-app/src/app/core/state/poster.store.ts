@@ -2,6 +2,7 @@ import { Injectable, signal, computed, inject } from '@angular/core';
 import {
   ClusteringStats,
   ClusteringWeights,
+  PUZZLE_GRID,
   PosterSlotFeature,
   PosterViewMode,
   TrayId,
@@ -26,11 +27,11 @@ export class PosterStore {
   private readonly clusteringService = inject(PosterClusteringService);
   private readonly wasmEngine = inject(WasmEngineService);
 
-  readonly rows = 28;
-  readonly cols = 36;
-  readonly totalSlots = 28 * 36; // 1,008 total slots
-  readonly borderPieces = 124;  // 4 corners + 34 top + 34 bottom + 26 left + 26 right
-  readonly interiorPieces = 884; // 34 interior cols * 26 interior rows
+  readonly rows = PUZZLE_GRID.rows;
+  readonly cols = PUZZLE_GRID.cols;
+  readonly totalSlots = PUZZLE_GRID.totalSlots;
+  readonly borderPieces = PUZZLE_GRID.borderPieces;
+  readonly interiorPieces = PUZZLE_GRID.interiorPieces;
 
   // Dimension label helper e.g. "36×28"
   readonly dimensionLabel = `${this.cols}×${this.rows}`;
@@ -161,10 +162,6 @@ export class PosterStore {
 
   toggleGrid(): void {
     this.showGrid.update(g => !g);
-  }
-
-  setShowGrid(show: boolean): void {
-    this.showGrid.set(show);
   }
 
   selectSlot(slot: PosterSlotFeature | null): void {

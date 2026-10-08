@@ -1,15 +1,16 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { BoardSlot, CandidatePiece } from '../models/operator.model';
+import { PUZZLE_GRID } from '../models/poster.model';
 
 @Injectable({
   providedIn: 'root'
 })
 export class BoardStore {
-  readonly rows = 28;
-  readonly cols = 36;
-  readonly totalSlots = 28 * 36; // 1,008 total slots
-  readonly borderSlotsCount = 124; // 4 corners + 34 top + 34 bottom + 26 left + 26 right
-  readonly interiorSlotsCount = 884; // 34 interior cols * 26 interior rows
+  readonly rows = PUZZLE_GRID.rows;
+  readonly cols = PUZZLE_GRID.cols;
+  readonly totalSlots = PUZZLE_GRID.totalSlots;
+  readonly borderSlotsCount = PUZZLE_GRID.borderPieces;
+  readonly interiorSlotsCount = PUZZLE_GRID.interiorPieces;
 
   // Frontier queue
   private readonly _frontierSlots = signal<BoardSlot[]>([

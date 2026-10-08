@@ -1,5 +1,13 @@
 export type TrayId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
+export const PUZZLE_GRID = {
+  rows: 28,
+  cols: 36,
+  totalSlots: 1008,   // 28 * 36
+  borderPieces: 124,  // 4 corners + 34 top + 34 bottom + 26 left + 26 right
+  interiorPieces: 884 // 34 interior cols * 26 interior rows
+} as const;
+
 export interface TrayInfo {
   id: TrayId;
   name: string;

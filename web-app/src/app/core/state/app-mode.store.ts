@@ -31,10 +31,6 @@ export class AppModeStore {
     this._isLeftRailCollapsed.update(collapsed => !collapsed);
   }
 
-  setLeftRailCollapsed(collapsed: boolean): void {
-    this._isLeftRailCollapsed.set(collapsed);
-  }
-
   openCommandPalette(): void {
     this._isCommandPaletteOpen.set(true);
   }

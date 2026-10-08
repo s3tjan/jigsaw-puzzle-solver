@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import {
   ClusteringResult,
   ClusteringWeights,
+  PUZZLE_GRID,
   TrayInfo
 } from '../models/poster.model';
 import { WasmEngineService } from './wasm-engine.service';
@@ -23,11 +24,8 @@ export const INITIAL_TRAYS: TrayInfo[] = [
 export class PosterClusteringService {
   private readonly wasmEngine = inject(WasmEngineService);
 
-  readonly rows = 28; // Total rows: 0..27 (2 border rows + 26 interior rows)
-  readonly cols = 36; // Total cols: 0..35 (2 border cols + 34 interior cols)
-  readonly totalSlots = 28 * 36; // 1,008 total slots
-  readonly borderPieces = 124;  // 4 corners + 34 top + 34 bottom + 26 left + 26 right
-  readonly interiorPieces = 884; // 34 interior cols * 26 interior rows
+  readonly rows = PUZZLE_GRID.rows;
+  readonly cols = PUZZLE_GRID.cols;
 
   /**
    * Primary entry point: Extracts features and clusters the poster canvas.
