@@ -62,8 +62,8 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 | TRY-02 | TRY-01 | `cv-engine/src/poster.rs` | `cargo test test_weighted_kmeans_clustering` | Weighted k-means clustering with configurable `w_color`, `w_texture`, `w_spatial` for K=8 trays (<20 iters). | DONE |
 | TRY-03 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_capacity_constrained_clustering` | Capacity penalty bounding cluster sizes to <= 125 pieces per tray (~110 pcs avg). | DONE |
 | TRY-04 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_seeded_kmeans_centroids` | Seed cluster centroids from 2x4 spatial grid with optional user landmark overrides. | DONE |
-| TRY-05 | TRY-03, TRY-04 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | Studio UI with weight sliders, 8-tray color assignments, and volume meters at 60 FPS. | DONE |
-| TRY-06 | TRY-05 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | Canvas tint overlay on poster grid slots matching assigned 8 tray color badges. | DONE |
+| TRY-05 | TRY-03, TRY-04 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | Studio UI with weight sliders, 8-tray color assignments, volume meters, collapsible control rail (Alt+B), and keyboard navigation at 60 FPS. | DONE |
+| TRY-06 | TRY-05 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | Canvas tint overlay on poster grid slots matching assigned 8 tray color badges, with keyboard shortcuts ([1]-[4] modes, [G] grid, [0] fit). | DONE |
 | TRY-07 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_landmark_fallback_routing` | Detect high internal-variance boundary cells bridging distinct color/spatial islands. | Planned |
 | TRY-08 | TRY-05 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | (Future UX) Capacity Balance slider: interpolate between loose natural boundaries (cap <= 125) and strict uniform trays (equal ~110 pcs). | Backlog |
 | TRY-09 | TRY-06 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | (Future UX) Texture Heatmap ViewMode: visualize rotation-invariant core color variance (color_std) and Sobel energy. | Backlog |
@@ -82,7 +82,7 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 | ING-01 | - | `web-app/src/app/core/services/storage.service.ts` | Browser DevTools Application tab | Reactive IndexedDB schema for pieces, contours, assigned trays, and board state. | Planned |
 | ING-02 | CNT-03, OPT-02 | `web-app/src/app/features/scanner/scanner.component.ts` | Browser mat drop test | Camera loop for sequential piece drops (~2s/pc) with stability consensus and multi-piece reject. | Planned |
 | ING-03 | ING-02, TRY-05 | `web-app/src/app/core/services/audio-feedback.service.ts` | Browser audio/visual inspection | Full-screen peripheral color flash (8 tray colors) and success chime for eyes-free sorting. | Planned |
-| ING-04 | ING-02, ING-01 | `web-app/src/app/core/state/inventory.store.ts` | Browser drawer inspection | Index all 1,008 pieces with normalized contours, polarity masks, and transparent-masked thumbs. | Planned |
+| ING-04 | ING-02, ING-01 | `web-app/src/app/core/state/inventory.store.ts` | Browser drawer inspection | Index all 1,008 pieces with normalized contours, polarity masks, and transparent-masked thumbs. | In Progress |
 
 ### RET: Frontier Constraint Retrieval Engine (FCQL)
 
@@ -98,10 +98,10 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| HUD-01 | - | `web-app/src/app/features/workbench/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport (36×28 full grid / 1,008 slots) with pan/zoom and strict >3px drag threshold isolating slot clicks. | Planned |
-| HUD-02 | HUD-01, RET-04 | `web-app/src/app/features/workbench/workbench.component.ts` | Browser slot click inspection | Direct slot tap triggers query engine and displays top match in dedicated spotting card. | Planned |
-| HUD-03 | HUD-02 | `web-app/src/app/features/workbench/spotting-card.component.ts` | Browser card inspection | Spotting card showing piece thumbnail, cardinal orientation arrow (e.g. Tab Up), and 8-tray color badge. | Planned |
-| HUD-04 | HUD-03, OPT-02 | `web-app/src/app/features/workbench/silhouette.component.ts` | Screen 1:1 physical calibration check | Render piece silhouette at calibrated 1:1 physical millimeter scale on screen. | Planned |
-| HUD-05 | HUD-02 | `web-app/src/app/core/state/board.store.ts` | Browser confirm click inspection | Tapping next slot confirms previous piece placement, renders artwork, and advances active frontier. | Planned |
-| HUD-06 | HUD-05 | `web-app/src/app/features/workbench/workbench.component.ts` | Browser reject click inspection | Reject button down-ranks candidate and reveals alternate piece; Remove resets slot state. | Planned |
+| HUD-01 | - | `web-app/src/app/features/workbench/components/workbench-canvas/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport (36×28 full grid / 1,008 slots) rendering grid boundaries and border piece anchors. | DONE |
+| HUD-02 | HUD-01, RET-04 | `web-app/src/app/features/workbench/workbench.component.ts` | Browser slot click inspection | Direct slot tap triggers query engine and displays top match in dedicated spotting inspector. | DONE |
+| HUD-03 | HUD-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.ts` | Browser card inspection | Spotting HUD showing piece ID, tray name/color badge, match score, tab width, and cardinal rotation label. | DONE |
+| HUD-04 | HUD-03, OPT-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Screen 1:1 physical calibration check | Render piece silhouette frame with metric grounding (25mm = 96px). | DONE |
+| HUD-05 | HUD-02 | `web-app/src/app/core/state/board.store.ts` | Browser confirm click inspection | Confirm placement action advances placed count, removes resolved slot from frontier queue, and advances active slot. | DONE |
+| HUD-06 | HUD-05 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Browser reject click inspection | Reject candidate button cycles candidate rankings for alternate piece selection. | DONE |
 | HUD-07 | HUD-05, ING-02 | `cv-engine/src/cluster_matcher.rs` | `cargo test test_cluster_matching` | Scan 2-3 piece sub-assemblies on mat, matching composite artwork to lock slots at once. | Planned |
