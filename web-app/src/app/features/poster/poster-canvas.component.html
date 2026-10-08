@@ -2,8 +2,8 @@
   <!-- Viewport Header Toolbar -->
   <div class="viewport-header border-b">
     <div class="header-left">
-      <span class="header-title">POSTER REFERENCE (36×28 GRID / 1,008 SLOTS)</span>
-      <span class="header-meta font-mono">124 BORDER + 884 INTERIOR (8 TRAYS)</span>
+      <span class="header-title">POSTER REFERENCE</span>
+      <span class="header-meta font-mono">36×28 &middot; 1,008 SLOTS</span>
     </div>
 
     <!-- View Mode Switches & Display Controls -->
@@ -13,34 +13,34 @@
         class="toggle-btn"
         [class.active]="posterStore.viewMode() === 'TINT'"
         (click)="setViewMode('TINT')"
-        title="Show Color-Coded Tray Tint Overlays on Artwork"
+        title="Color overlays on artwork"
       >
-        TINT OVERLAY
+        TINT
       </button>
       <button
         type="button"
         class="toggle-btn"
         [class.active]="posterStore.viewMode() === 'TRAYS'"
         (click)="setViewMode('TRAYS')"
-        title="Show Prominent Tray Partition Map with Subdued Artwork"
+        title="Tray partitions with subdued artwork"
       >
-        RAW TRAYS
+        TRAYS
       </button>
       <button
         type="button"
         class="toggle-btn"
         [class.active]="posterStore.viewMode() === 'RAW'"
         (click)="setViewMode('RAW')"
-        title="Show Raw Reference Poster Artwork"
+        title="Reference poster artwork"
       >
-        RAW POSTER
+        RAW
       </button>
       <button
         type="button"
         class="toggle-btn"
         [class.active]="posterStore.viewMode() === 'GRADIENT'"
         (click)="setViewMode('GRADIENT')"
-        title="Show Sobel Gradient Texture Density"
+        title="Gradient edge density"
       >
         GRADIENT
       </button>
@@ -49,7 +49,7 @@
         class="toggle-btn"
         [class.active]="posterStore.showGrid()"
         (click)="toggleGrid()"
-        title="Toggle Piece Grid Lines (36x28)"
+        title="Toggle piece grid lines"
       >
         GRID: {{ posterStore.showGrid() ? 'ON' : 'OFF' }}
       </button>
@@ -57,9 +57,9 @@
         type="button"
         class="toggle-btn reset-btn"
         (click)="resetView()"
-        title="Center and Fit Viewport"
+        title="Center and fit viewport"
       >
-        FIT VIEW [0]
+        FIT [0]
       </button>
     </div>
   </div>
@@ -81,27 +81,27 @@
   <div class="canvas-telemetry border-t">
     @if (posterStore.hoveredSlot() || posterStore.selectedSlot(); as activeSlot) {
       <div class="telemetry-group">
-        <span class="meta-label">COORDS:</span>
+        <span class="meta-label">SLOT:</span>
         <span class="meta-val font-mono tabular-nums">R{{ activeSlot.r }} C{{ activeSlot.c }}</span>
       </div>
       <div class="telemetry-group">
         <span class="meta-label">CIELAB:</span>
         <span class="meta-val font-mono tabular-nums">
-          L:{{ activeSlot.lab[0].toFixed(1) }} a:{{ activeSlot.lab[1].toFixed(1) }} b:{{ activeSlot.lab[2].toFixed(1) }}
+          {{ activeSlot.lab[0].toFixed(1) }}, {{ activeSlot.lab[1].toFixed(1) }}, {{ activeSlot.lab[2].toFixed(1) }}
         </span>
       </div>
       <div class="telemetry-group">
-        <span class="meta-label">SOBEL GRAD:</span>
+        <span class="meta-label">GRAD:</span>
         <span class="meta-val font-mono tabular-nums">{{ (activeSlot.gradient * 100).toFixed(1) }}%</span>
       </div>
       <div class="telemetry-group">
-        <span class="meta-label">ASSIGNED TRAY:</span>
+        <span class="meta-label">TRAY:</span>
         @if (activeSlot.isBorder) {
           <span class="tray-chip" style="background-color: #6b7280;"></span>
-          <span class="meta-val font-mono">PERIMETER BORDER [124 PCS]</span>
+          <span class="meta-val font-mono">BORDER</span>
         } @else {
           <span class="tray-chip" [style.background-color]="posterStore.getTray(activeSlot.trayId)?.color"></span>
-          <span class="meta-val font-mono">TRAY {{ activeSlot.trayId }} &middot; {{ posterStore.getTray(activeSlot.trayId)?.name }}</span>
+          <span class="meta-val font-mono">0{{ activeSlot.trayId }} &middot; {{ posterStore.getTray(activeSlot.trayId)?.name }}</span>
         }
       </div>
       <div class="telemetry-group">
@@ -112,7 +112,7 @@
       </div>
     } @else {
       <div class="telemetry-group">
-        <span class="meta-label">HOVER OVER A SLOT TO INSPECT COLOR & TRAY ASSIGNMENT</span>
+        <span class="meta-label font-mono">NO SLOT SELECTED</span>
       </div>
     }
   </div>

@@ -223,28 +223,6 @@
   opacity: 0.6;
 }
 
-.inspector-summary {
-  padding: 6px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  background: var(--bg-surface);
-  font-size: 11px;
-}
-
-.inspector-line {
-  display: flex;
-  justify-content: space-between;
-}
-
-.inspector-line .k {
-  color: var(--text-muted);
-}
-
-.inspector-line .v {
-  color: var(--text-primary);
-}
-
 .canvas-workspace {
   flex: 1;
   height: 100%;

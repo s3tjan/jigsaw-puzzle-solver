@@ -10,9 +10,12 @@ yarn-error.log*
 scans
 .agents
 
-# Rust / Cargo
+# Rust / Cargo / WASM
 /cv-engine/target/
 Cargo.lock
+*.wasm
+/web-app/public/*_bg.wasm
+/web-app/public/*.wasm
 
 # Vite
 .env

@@ -1968,10 +1968,10 @@ pub fn compute_slot_cluster_distance_sq(
     let dr = r_norm - centroid.r_norm;
     let dc = c_norm - centroid.c_norm;
     // Calibrated spatial scaling:
-    // Without scaling, 1 slot step is (1/33)^2 ~ 0.0009 while moderate color delta is ~0.15 (160x larger).
-    // Multiplying normalized coordinate distance by 12.0 balances spatial compactness with color grouping,
-    // keeping trays as cohesive geographic regions while adapting boundaries to features.
-    let d_spatial_sq = (dr * dr + dc * dc) * 12.0;
+    // Uses 3.5 multiplier so that spatial coherence acts as an organic elastic force
+    // rather than an artificial rigid grid clamp, allowing tray boundaries to fluidly
+    // follow visual landmarks (car contours, mountain ridges, horizons).
+    let d_spatial_sq = (dr * dr + dc * dc) * 3.5;
 
     w_color * norm_color_sq + w_texture * d_texture_sq + w_spatial * d_spatial_sq
 }
@@ -2067,15 +2067,13 @@ pub fn cluster_interior_slots(
                     current_count
                 };
 
-                // Capacity penalty proportional to distance scale (normalized distances are ~0..1)
+                // Gentle capacity penalty above average (~111), rigid wall at max capacity (125)
                 let mut capacity_penalty = 0.0f32;
                 if count_for_eval >= target_avg {
-                    // Smooth quadratic ramp above average capacity
                     let excess = (count_for_eval - target_avg) as f32;
-                    capacity_penalty += excess * 0.035;
+                    capacity_penalty += excess * 0.015;
                 }
                 if count_for_eval >= max_capacity {
-                    // Severe barrier penalty to prevent tray overflowing beyond 125
                     capacity_penalty += 10.0;
                 }
 
@@ -2097,7 +2095,8 @@ pub fn cluster_interior_slots(
             }
         }
 
-        // Recompute centroids with spatial anchor retention to prevent spatial collapse
+        // Recompute centroids with gentle spatial anchor bias (10%) to allow centroids
+        // to naturally center on landmarks while preventing regional drift
         let mut sum_l = [0.0f32; NUM_TRAYS + 1];
         let mut sum_a = [0.0f32; NUM_TRAYS + 1];
         let mut sum_b = [0.0f32; NUM_TRAYS + 1];
@@ -2128,9 +2127,9 @@ pub fn cluster_interior_slots(
                 let mean_c = sum_c[t] / counts[t] as f32;
                 let (anchor_r, anchor_c) = seed_anchors[t - 1];
 
-                // Retain spatial anchoring to prevent disconnected confetti fragmentation
-                let blended_r = 0.55 * mean_r + 0.45 * anchor_r;
-                let blended_c = 0.55 * mean_c + 0.45 * anchor_c;
+                // 90% cluster mean position + 10% gentle anchor guide
+                let blended_r = 0.90 * mean_r + 0.10 * anchor_r;
+                let blended_c = 0.90 * mean_c + 0.10 * anchor_c;
 
                 centroids[t - 1] = Centroid {
                     lab: [
