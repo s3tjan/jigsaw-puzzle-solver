@@ -1,8 +1,8 @@
 <footer class="status-root border-t">
-  <!-- Global System Readiness & Active Mode -->
+  <!-- Left: Global System Health & Active Mode -->
   <div class="status-section">
-    <span class="indicator ok">●</span>
-    <span class="status-title">SYS: READY</span>
+    <span class="indicator" [class.ok]="wasmEngine.isReady()" [class.error]="!wasmEngine.isReady()">●</span>
+    <span class="status-title">{{ wasmEngine.isReady() ? 'SYS: READY' : 'SYS: INITIALIZING' }}</span>
   </div>
 
   <div class="status-section">
@@ -10,23 +10,19 @@
     <span class="val font-mono">{{ appModeStore.activeMode() }}</span>
   </div>
 
-  <!-- VIEW-SPECIFIC TELEMETRY: POSTER_STUDIO -->
+  <!-- Center: Context-Specific Operational Telemetry Only -->
+  <!-- 1. POSTER_STUDIO MODE -->
   @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
-    <div class="status-section">
-      <span class="muted">GRID:</span>
-      <span class="val font-mono">{{ posterStore.dimensionLabel }} &middot; {{ posterStore.totalSlots }} SLOTS</span>
-    </div>
-
     <div class="status-section">
       <span class="muted">SORTING:</span>
       @if (posterStore.isAnalyzing()) {
         <span class="val font-mono">WASM COMPUTING...</span>
       } @else {
-        <span class="val font-mono">{{ posterStore.trays().length }} TRAYS &middot; {{ posterStore.stats().computeTimeMs }}ms</span>
+        <span class="val font-mono">{{ posterStore.trays().length }} TRAYS ({{ posterStore.stats().computeTimeMs }}ms)</span>
       }
     </div>
 
-    <!-- Active Slot Telemetry HUD -->
+    <!-- Active Slot Inspection HUD -->
     @if (posterStore.hoveredSlot() || posterStore.selectedSlot(); as activeSlot) {
       <div class="status-section">
         <span class="muted">SLOT:</span>
@@ -39,10 +35,6 @@
         </span>
       </div>
       <div class="status-section">
-        <span class="muted">GRAD:</span>
-        <span class="val font-mono tabular-nums">{{ (activeSlot.gradient * 100).toFixed(1) }}%</span>
-      </div>
-      <div class="status-section">
         <span class="muted">TRAY:</span>
         @if (activeSlot.isBorder) {
           <span class="tray-chip border-chip"></span>
@@ -52,16 +44,10 @@
           <span class="val font-mono">0{{ activeSlot.trayId }} &middot; {{ posterStore.getTray(activeSlot.trayId)?.name }}</span>
         }
       </div>
-      <div class="status-section">
-        <span class="muted">TYPE:</span>
-        <span class="val font-mono">
-          {{ activeSlot.isCorner ? 'CORNER' : activeSlot.isBorder ? 'BORDER' : 'INTERIOR' }}
-        </span>
-      </div>
     }
   }
 
-  <!-- VIEW-SPECIFIC TELEMETRY: WORKBENCH -->
+  <!-- 2. WORKBENCH MODE -->
   @if (appModeStore.activeMode() === 'WORKBENCH') {
     <div class="status-section">
       <span class="muted">FRONTIER:</span>
@@ -75,33 +61,28 @@
     </div>
   }
 
-  <!-- VIEW-SPECIFIC TELEMETRY: INGESTION -->
+  <!-- 3. INGESTION MODE -->
   @if (appModeStore.activeMode() === 'INGESTION') {
+    <div class="status-section">
+      <span class="muted">FEED:</span>
+      @if (cameraService.isStreaming()) {
+        <span class="val font-mono">{{ cameraService.activeResolution().height }}P ACTIVE</span>
+      } @else {
+        <span class="val font-mono text-muted">OFFLINE</span>
+      }
+    </div>
+
     <div class="status-section">
       <span class="muted">INGESTED:</span>
       <span class="val font-mono tabular-nums">{{ inventoryStore.totalIngested() }} / {{ inventoryStore.targetTotal }}</span>
     </div>
-    <div class="status-section">
-      <span class="muted">FEED:</span>
-      <span class="val font-mono">1080P ACTIVE</span>
-    </div>
   }
 
-  <!-- Right side system status & active mode shortcuts -->
+  <!-- Right: Only Actionable Operational Shortcuts -->
   <div class="status-right">
-    <div class="status-section">
-      <span class="muted">WASM:</span>
-      <span class="val font-mono tabular-nums">{{ appModeStore.wasmLatencyMs() }}ms</span>
+    <div class="status-section highlight">
+      <span>RAIL: {{ appModeStore.isLeftRailCollapsed() ? 'COLLAPSED' : 'EXPANDED' }}</span>
+      <span class="shortcut font-mono">[Alt+B]</span>
     </div>
-    <div class="status-section">
-      <span class="muted">FPS:</span>
-      <span class="val font-mono tabular-nums">{{ appModeStore.fps() }}</span>
-    </div>
-    @if (appModeStore.activeMode() === 'WORKBENCH') {
-      <div class="status-section highlight">
-        <span>RAIL: {{ appModeStore.isLeftRailCollapsed() ? 'COLLAPSED' : 'EXPANDED' }}</span>
-        <span class="shortcut font-mono">[Alt+B]</span>
-      </div>
-    }
   </div>
 </footer>

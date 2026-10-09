@@ -17,12 +17,6 @@ export class AppModeStore {
   private readonly _isCommandPaletteOpen = signal<boolean>(false);
   readonly isCommandPaletteOpen = this._isCommandPaletteOpen.asReadonly();
 
-  // Telemetry signals
-  readonly fps = signal<number>(60);
-  readonly wasmMemoryMb = signal<number>(4.2);
-  readonly wasmLatencyMs = signal<number>(0.04);
-  readonly isWasmReady = signal<boolean>(true);
-
   setMode(mode: AppMode): void {
     this._activeMode.set(mode);
   }

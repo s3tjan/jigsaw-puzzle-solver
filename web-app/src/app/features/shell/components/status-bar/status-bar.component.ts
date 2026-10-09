@@ -4,6 +4,8 @@ import { AppModeStore } from '../../../../core/state/app-mode.store';
 import { BoardStore } from '../../../../core/state/board.store';
 import { InventoryStore } from '../../../../core/state/inventory.store';
 import { PosterStore } from '../../../../core/state/poster.store';
+import { CameraService } from '../../../../core/services/camera.service';
+import { WasmEngineService } from '../../../../core/services/wasm-engine.service';
 
 @Component({
   selector: 'app-status-bar',
@@ -17,4 +19,6 @@ export class StatusBarComponent {
   readonly boardStore = inject(BoardStore);
   readonly inventoryStore = inject(InventoryStore);
   readonly posterStore = inject(PosterStore);
+  readonly cameraService = inject(CameraService);
+  readonly wasmEngine = inject(WasmEngineService);
 }
