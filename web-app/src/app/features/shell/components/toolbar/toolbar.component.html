@@ -4,22 +4,22 @@
     <button 
       type="button" 
       class="mode-btn" 
-      [class.active]="appModeStore.activeMode() === 'INGESTION'"
-      [attr.aria-pressed]="appModeStore.activeMode() === 'INGESTION'"
-      (click)="setMode('INGESTION')"
+      [class.active]="appModeStore.activeMode() === 'POSTER'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'POSTER'"
+      (click)="setMode('POSTER')"
       title="Shortcut: Alt+1"
     >
-      INGESTION [Alt+1]
+      POSTER [Alt+1]
     </button>
     <button 
       type="button" 
       class="mode-btn" 
-      [class.active]="appModeStore.activeMode() === 'POSTER_STUDIO'"
-      [attr.aria-pressed]="appModeStore.activeMode() === 'POSTER_STUDIO'"
-      (click)="setMode('POSTER_STUDIO')"
+      [class.active]="appModeStore.activeMode() === 'INGESTION'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'INGESTION'"
+      (click)="setMode('INGESTION')"
       title="Shortcut: Alt+2"
     >
-      POSTER STUDIO [Alt+2]
+      INGESTION [Alt+2]
     </button>
     <button 
       type="button" 

@@ -29,18 +29,18 @@ export class CommandPaletteComponent implements AfterViewInit {
 
   private readonly commands: CommandItem[] = [
     {
+      id: 'mode-poster',
+      label: 'SWITCH MODE: POSTER ANALYSIS & TRAY CLUSTERING',
+      category: 'VIEW',
+      shortcut: 'Alt+1',
+      action: () => this.setMode('POSTER')
+    },
+    {
       id: 'mode-ingestion',
       label: 'SWITCH MODE: CONTINUOUS MAT INGESTION',
       category: 'VIEW',
-      shortcut: 'Alt+1',
-      action: () => this.setMode('INGESTION')
-    },
-    {
-      id: 'mode-poster',
-      label: 'SWITCH MODE: POSTER ANALYSIS & TRAY CLUSTERING STUDIO',
-      category: 'VIEW',
       shortcut: 'Alt+2',
-      action: () => this.setMode('POSTER_STUDIO')
+      action: () => this.setMode('INGESTION')
     },
     {
       id: 'mode-workbench',
@@ -65,7 +65,7 @@ export class CommandPaletteComponent implements AfterViewInit {
       category: 'POSTER',
       shortcut: 'R',
       action: () => {
-        this.setMode('POSTER_STUDIO');
+        this.setMode('POSTER');
       }
     },
     {

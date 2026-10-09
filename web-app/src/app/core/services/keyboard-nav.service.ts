@@ -36,13 +36,13 @@ export class KeyboardNavService {
           case 'Digit1':
           case 'Key1':
             event.preventDefault();
-            this.appModeStore.setMode('INGESTION');
+            this.appModeStore.setMode('POSTER');
             return;
 
           case 'Digit2':
           case 'Key2':
             event.preventDefault();
-            this.appModeStore.setMode('POSTER_STUDIO');
+            this.appModeStore.setMode('INGESTION');
             return;
 
           case 'Digit3':

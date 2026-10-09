@@ -9,19 +9,19 @@
 
   <!-- Main Operational Split Workspace -->
   <main class="workspace-split">
-    <!-- MODE: WORKBENCH (Alt+3) -->
-    @if (appModeStore.activeMode() === 'WORKBENCH') {
-      <app-workbench></app-workbench>
+    <!-- MODE: POSTER (Alt+1 / Calibration, Clustering & Trays) -->
+    @if (appModeStore.activeMode() === 'POSTER') {
+      <app-tray-studio></app-tray-studio>
     }
 
-    <!-- MODE: INGESTION (Alt+1) -->
+    <!-- MODE: INGESTION (Alt+2 / Continuous Drop Mat) -->
     @if (appModeStore.activeMode() === 'INGESTION') {
       <app-ingestion-scanner></app-ingestion-scanner>
     }
 
-    <!-- MODE: POSTER_STUDIO (Alt+2 / Task TRY-05 & TRY-06) -->
-    @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
-      <app-tray-studio></app-tray-studio>
+    <!-- MODE: WORKBENCH (Alt+3 / Assembly HUD) -->
+    @if (appModeStore.activeMode() === 'WORKBENCH') {
+      <app-workbench></app-workbench>
     }
   </main>
 

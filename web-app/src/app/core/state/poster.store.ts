@@ -13,6 +13,7 @@ import {
   PosterClusteringService
 } from '../services/poster-clustering.service';
 import { WasmEngineService } from '../services/wasm-engine.service';
+import { StorageService } from '../services/storage.service';
 
 export const DEFAULT_CLUSTERING_WEIGHTS: ClusteringWeights = {
   wColor: 0.45,
@@ -26,6 +27,7 @@ export const DEFAULT_CLUSTERING_WEIGHTS: ClusteringWeights = {
 export class PosterStore {
   private readonly clusteringService = inject(PosterClusteringService);
   private readonly wasmEngine = inject(WasmEngineService);
+  private readonly storageService = inject(StorageService);
 
   readonly rows = PUZZLE_GRID.rows;
   readonly cols = PUZZLE_GRID.cols;
@@ -87,9 +89,43 @@ export class PosterStore {
   }
 
   constructor() {
-    this.wasmEngine.initWasm().then(() => {
-      this.initDefaultPoster();
+    this.wasmEngine.initWasm().then(async () => {
+      await this.initPosterFromStorageOrDefault();
     });
+  }
+
+  /**
+   * Initializes poster from IndexedDB if previously calibrated, or falls back to default
+   */
+  async initPosterFromStorageOrDefault(): Promise<void> {
+    try {
+      const stored = await this.storageService.getPoster();
+      if (stored && stored.imageDataUrl) {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+            this.posterCanvas.set(canvas);
+            this.weights.set(stored.weights);
+            this.slots.set(stored.slots);
+            this.trays.set(stored.trays);
+            this.stats.set(stored.stats);
+            this.selectedSlot.set(stored.slots[0] || null);
+            return;
+          }
+        };
+        img.src = stored.imageDataUrl;
+        return;
+      }
+    } catch (err) {
+      console.warn('PosterStore: Failed to load stored poster, using defaults', err);
+    }
+
+    this.initDefaultPoster();
   }
 
   /**
@@ -140,6 +176,16 @@ export class PosterStore {
       this.trays.set(result.trays);
       this.stats.set(result.stats);
       this.syncSelectedSlot(result.slots);
+
+      this.storageService.savePoster({
+        id: 'current_poster',
+        timestamp: Date.now(),
+        weights: this.weights(),
+        imageDataUrl: canvas.toDataURL('image/jpeg', 0.85),
+        slots: result.slots,
+        trays: result.trays,
+        stats: result.stats
+      }).catch(err => console.warn('PosterStore: Failed to persist re-clustered poster', err));
     }
     this.isAnalyzing.set(false);
   }
@@ -180,6 +226,16 @@ export class PosterStore {
       this.trays.set(result.trays);
       this.stats.set(result.stats);
       this.selectedSlot.set(result.slots[0] || null);
+
+      this.storageService.savePoster({
+        id: 'current_poster',
+        timestamp: Date.now(),
+        weights: this.weights(),
+        imageDataUrl: canvas.toDataURL('image/jpeg', 0.85),
+        slots: result.slots,
+        trays: result.trays,
+        stats: result.stats
+      }).catch(err => console.warn('PosterStore: Failed to persist extracted poster', err));
     }
     this.isAnalyzing.set(false);
   }

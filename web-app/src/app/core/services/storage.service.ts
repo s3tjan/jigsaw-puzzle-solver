@@ -13,9 +13,20 @@ export interface StoredPiece {
   thumbnailDataUrl?: string;
 }
 
+export interface StoredPoster {
+  id: string; // 'current_poster'
+  timestamp: number;
+  weights: { wColor: number; wTexture: number; wSpatial: number };
+  imageDataUrl?: string;
+  slots: any[];
+  trays: any[];
+  stats: any;
+}
+
 const DB_NAME = 'jigsaw_puzzle_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_PIECES = 'pieces';
+const STORE_POSTER = 'poster';
 const STORE_METADATA = 'metadata';
 
 @Injectable({
@@ -37,6 +48,9 @@ export class StorageService {
           pieceStore.createIndex('trayId', 'trayId', { unique: false });
           pieceStore.createIndex('timestamp', 'timestamp', { unique: false });
         }
+        if (!db.objectStoreNames.contains(STORE_POSTER)) {
+          db.createObjectStore(STORE_POSTER, { keyPath: 'id' });
+        }
         if (!db.objectStoreNames.contains(STORE_METADATA)) {
           db.createObjectStore(STORE_METADATA, { keyPath: 'key' });
         }
@@ -47,6 +61,34 @@ export class StorageService {
     });
 
     return this.dbPromise;
+  }
+
+  /**
+   * Saves or updates the calibrated poster state in IndexedDB
+   */
+  async savePoster(poster: StoredPoster): Promise<void> {
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_POSTER, 'readwrite');
+      const store = tx.objectStore(STORE_POSTER);
+      const req = store.put(poster);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /**
+   * Retrieves the current calibrated poster state from IndexedDB
+   */
+  async getPoster(): Promise<StoredPoster | null> {
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_POSTER, 'readonly');
+      const store = tx.objectStore(STORE_POSTER);
+      const req = store.get('current_poster');
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
   }
 
   /**

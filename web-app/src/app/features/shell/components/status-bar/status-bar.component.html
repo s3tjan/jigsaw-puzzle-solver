@@ -11,8 +11,8 @@
   </div>
 
   <!-- Center: Context-Specific Operational Telemetry Only -->
-  <!-- 1. POSTER_STUDIO MODE -->
-  @if (appModeStore.activeMode() === 'POSTER_STUDIO') {
+  <!-- 1. POSTER MODE -->
+  @if (appModeStore.activeMode() === 'POSTER') {
     <div class="status-section">
       <span class="muted">SORTING:</span>
       @if (posterStore.isAnalyzing()) {
