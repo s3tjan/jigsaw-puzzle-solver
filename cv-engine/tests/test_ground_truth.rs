@@ -28,7 +28,7 @@ fn test_ground_truth_benchmarks() {
     let mut entries: Vec<_> = fs::read_dir(gt_dir)
         .expect("Read ground truth dir")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
         .collect();
 
     entries.sort_by_key(|e| e.file_name());

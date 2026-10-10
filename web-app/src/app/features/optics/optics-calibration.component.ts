@@ -10,6 +10,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { AppModeStore } from '../../core/state/app-mode.store';
 import { CameraService } from '../../core/services/camera.service';
+import { StorageService } from '../../core/services/storage.service';
 import { WasmEngineService } from '../../core/services/wasm-engine.service';
 
 @Component({
@@ -61,32 +62,21 @@ export class OpticsCalibrationComponent implements OnInit, OnDestroy {
     if (this.focusIntervalId) clearInterval(this.focusIntervalId);
   }
 
+  readonly storageService = inject(StorageService);
+
   private loadCalibration(): void {
-    try {
-      const savedCorners = localStorage.getItem('jigsaw_calibration_corners_v3');
-      if (savedCorners) {
-        const parsed = JSON.parse(savedCorners);
-        if (Array.isArray(parsed) && parsed.length === 4) {
-          this.corners.set(parsed as any);
-        }
-      }
-      const savedK1 = localStorage.getItem('jigsaw_k1');
-      if (savedK1) {
-        this.lensK1.set(parseFloat(savedK1) || 0.0);
-      }
-      const savedSens = localStorage.getItem('jigsaw_sensitivity');
-      if (savedSens) {
-        this.sensitivity.set(parseFloat(savedSens) || 25.0);
-      }
-    } catch { }
+    const cal = this.storageService.getOpticalCalibration();
+    this.corners.set(cal.corners);
+    this.lensK1.set(cal.lensK1);
+    this.sensitivity.set(cal.sensitivity);
   }
 
   saveCalibration(): void {
-    try {
-      localStorage.setItem('jigsaw_calibration_corners_v3', JSON.stringify(this.corners()));
-      localStorage.setItem('jigsaw_k1', this.lensK1().toString());
-      localStorage.setItem('jigsaw_sensitivity', this.sensitivity().toString());
-    } catch { }
+    this.storageService.saveOpticalCalibration({
+      corners: this.corners(),
+      lensK1: this.lensK1(),
+      sensitivity: this.sensitivity()
+    });
   }
 
   setLensK1(val: number): void {

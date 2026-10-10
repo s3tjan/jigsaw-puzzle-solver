@@ -14,6 +14,7 @@ pub struct Homography {
 impl Homography {
     /// Compute a 3x3 homography matrix mapping 4 source points to 4 destination points
     /// using Direct Linear Transform (DLT) with Gaussian elimination / SVD approximation
+    #[allow(clippy::needless_range_loop)]
     pub fn from_4_points(src: &[Point2D; 4], dst: &[Point2D; 4]) -> Option<Self> {
         // Construct 8x8 linear system A * h = b
         // where h = [h00, h01, h02, h10, h11, h12, h20, h21]^T and h22 is normalized to 1.0
@@ -191,7 +192,7 @@ pub fn undistort_point(pt: Point2D, w: f32, h: f32, k1: f32) -> Point2D {
         }
     }
 
-    let scale = (r_un / r_dist).max(0.1).min(3.0);
+    let scale = (r_un / r_dist).clamp(0.1, 3.0);
     Point2D {
         x: cx + dist_x * scale * diag,
         y: cy + dist_y * scale * diag,

@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop)]
+
 use cv_engine::contour::{EdgeType, PieceEdge};
 use cv_engine::homography::Point2D;
 use cv_engine::matcher::{
@@ -91,7 +93,7 @@ fn test_sliding_window_recovers_corner_jitter() {
     let jitter = 1i32;
     for j in 0..100 {
         let orig_idx = (99 - j) - jitter;
-        if orig_idx >= 0 && orig_idx < 100 {
+        if (0..100).contains(&orig_idx) {
             hole_profile_shifted[j as usize] = -tab_profile[orig_idx as usize];
         }
     }

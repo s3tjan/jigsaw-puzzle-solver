@@ -36,4 +36,11 @@ export class AppModeStore {
   toggleCommandPalette(): void {
     this._isCommandPaletteOpen.update(open => !open);
   }
+
+  // Transient trigger for continuous ingestion piece scan
+  readonly scanTrigger = signal<number>(0);
+
+  triggerScanDrop(): void {
+    this.scanTrigger.update(n => n + 1);
+  }
 }

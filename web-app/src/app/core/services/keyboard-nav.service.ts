@@ -80,10 +80,7 @@ export class KeyboardNavService {
       if (event.code === 'Space' && !event.ctrlKey && !event.altKey && !event.metaKey) {
         if (this.appModeStore.activeMode() === 'INGESTION') {
           event.preventDefault();
-          const scanBtn = document.getElementById('scan-drop-btn') as HTMLButtonElement | null;
-          if (scanBtn && !scanBtn.disabled) {
-            scanBtn.click();
-          }
+          this.appModeStore.triggerScanDrop();
           return;
         }
       }

@@ -105,8 +105,8 @@ pub fn apply_clahe(src: &[u8], width: u32, height: u32, tiles_x: u32, tiles_y: u
     let tx = (tiles_x as usize).max(1).min(w);
     let ty = (tiles_y as usize).max(1).min(h);
 
-    let tile_w = (w + tx - 1) / tx;
-    let tile_h = (h + ty - 1) / ty;
+    let tile_w = w.div_ceil(tx);
+    let tile_h = h.div_ceil(ty);
 
     // Build transformation LUT for each tile
     let mut tile_mappings = vec![vec![0u8; 256]; tx * ty];
@@ -136,20 +136,20 @@ pub fn apply_clahe(src: &[u8], width: u32, height: u32, tiles_x: u32, tiles_y: u
             // Clip histogram
             let clip_limit = ((count as f32 / 256.0) * clip_limit_factor).max(1.0) as u32;
             let mut clipped_excess = 0u32;
-            for i in 0..256 {
-                if hist[i] > clip_limit {
-                    clipped_excess += hist[i] - clip_limit;
-                    hist[i] = clip_limit;
+            for val in &mut hist {
+                if *val > clip_limit {
+                    clipped_excess += *val - clip_limit;
+                    *val = clip_limit;
                 }
             }
 
             // Redistribute excess evenly across all bins
             let redistrib = clipped_excess / 256;
             let residual = clipped_excess % 256;
-            for i in 0..256 {
-                hist[i] += redistrib;
+            for (i, val) in hist.iter_mut().enumerate() {
+                *val += redistrib;
                 if (i as u32) < residual {
-                    hist[i] += 1;
+                    *val += 1;
                 }
             }
 
@@ -159,7 +159,7 @@ pub fn apply_clahe(src: &[u8], width: u32, height: u32, tiles_x: u32, tiles_y: u
             for i in 0..256 {
                 cdf += hist[i];
                 let mapped = ((cdf as f32 / count as f32) * 255.0).round();
-                tile_mappings[tile_idx][i] = mapped.min(255.0).max(0.0) as u8;
+                tile_mappings[tile_idx][i] = mapped.clamp(0.0, 255.0) as u8;
             }
         }
     }
@@ -189,7 +189,7 @@ pub fn apply_clahe(src: &[u8], width: u32, height: u32, tiles_x: u32, tiles_y: u
             let bot = v01 * (1.0 - wx) + v11 * wx;
             let out = top * (1.0 - wy) + bot * wy;
 
-            dst[row_idx + x] = out.round().min(255.0).max(0.0) as u8;
+            dst[row_idx + x] = out.round().clamp(0.0, 255.0) as u8;
         }
     }
 
@@ -405,7 +405,7 @@ pub fn rgb_to_cielab(r: u8, g: u8, b: u8) -> [f32; 3] {
     // 2. Linear RGB to XYZ
     let x = lr * 0.4124564 + lg * 0.3575761 + lb * 0.1804375;
     let y = lr * 0.2126729 + lg * 0.7151522 + lb * 0.0721750;
-    let z = lr * 0.0193339 + lg * 0.1191920 + lb * 0.9503041;
+    let z = lr * 0.0193339 + lg * 0.119_192 + lb * 0.9503041;
 
     // 3. XYZ to CIELAB with D65 reference white (Xn=0.95047, Yn=1.00000, Zn=1.08883)
     let f = |t: f32| -> f32 {
@@ -486,9 +486,9 @@ pub fn extract_slot_preview(
         }
     }
 
-    let mean_r = if count > 0 { (sum_r / count) as u8 } else { 0 };
-    let mean_g = if count > 0 { (sum_g / count) as u8 } else { 0 };
-    let mean_b = if count > 0 { (sum_b / count) as u8 } else { 0 };
+    let mean_r = sum_r.checked_div(count).unwrap_or(0) as u8;
+    let mean_g = sum_g.checked_div(count).unwrap_or(0) as u8;
+    let mean_b = sum_b.checked_div(count).unwrap_or(0) as u8;
 
     let lab = rgb_to_cielab(mean_r, mean_g, mean_b);
 
@@ -665,11 +665,10 @@ pub fn extract_visual_fingerprint(
 
     for i in (0..pixel_count).step_by(step) {
         // If a segmentation mask is supplied, only accept piece foreground pixels
-        if let Some(m) = mask {
-            if i < m.len() && m[i] < 128 {
+        if let Some(m) = mask
+            && i < m.len() && m[i] < 128 {
                 continue;
             }
-        }
         let alpha = rgba[i * 4 + 3];
         if alpha < 50 {
             continue; // Skip transparent
@@ -699,11 +698,10 @@ pub fn extract_visual_fingerprint(
     let mut total_grad = 0.0f32;
 
     for i in 0..pixel_count {
-        if let Some(m) = mask {
-            if m[i] < 128 {
+        if let Some(m) = mask
+            && m[i] < 128 {
                 continue;
             }
-        }
         let m = mag[i] as f32;
         if m > 15.0 {
             let bin = (ori[i] as usize).min(7);
@@ -713,13 +711,11 @@ pub fn extract_visual_fingerprint(
     }
 
     if total_grad > 0.0 {
-        for b in 0..8 {
-            ori_hist[b] /= total_grad;
+        for val in &mut ori_hist {
+            *val /= total_grad;
         }
     } else {
-        for b in 0..8 {
-            ori_hist[b] = 0.125;
-        }
+        ori_hist.fill(0.125);
     }
 
     (mean_lab, ori_hist)
@@ -1004,11 +1000,10 @@ pub fn extract_spatial_grid_precomputed(
             let cell_idx = gy * 4 + gx;
             let pix_idx = row_idx + (x as usize);
 
-            if let Some(m) = mask {
-                if pix_idx < m.len() && m[pix_idx] < 128 {
+            if let Some(m) = mask
+                && pix_idx < m.len() && m[pix_idx] < 128 {
                     continue;
                 }
-            }
 
             let byte_idx = pix_idx * 4;
             if byte_idx + 3 >= rgba.len() {
@@ -1070,7 +1065,7 @@ pub fn extract_spatial_grid_precomputed(
 /// Rotates a 4x4 spatial grid by k clockwise 90-degree increments (k = 0, 1, 2, 3).
 /// Maps cell (r, c) -> (c, 3 - r) for 90 deg clockwise, and rotates gradient bins by 2k.
 pub fn rotate_spatial_grid(cells: &[SpatialCell; 16], k: usize) -> [SpatialCell; 16] {
-    if k % 4 == 0 {
+    if k.is_multiple_of(4) {
         return cells.clone();
     }
     let mut rotated = cells.clone();
@@ -1647,8 +1642,8 @@ pub fn locate_piece_spatial(
     corners: &[f32],
     flat_edges: &[u8],
 ) -> Result<JsValue, JsValue> {
-    if let Ok(lock) = PERSISTENT_POSTER.lock() {
-        if let Some(ref state) = *lock {
+    if let Ok(lock) = PERSISTENT_POSTER.lock()
+        && let Some(ref state) = *lock {
             let result = locate_piece_spatial_core(
                 piece_rgba,
                 piece_mask,
@@ -1665,7 +1660,6 @@ pub fn locate_piece_spatial(
             return serde_wasm_bindgen::to_value(&result)
                 .map_err(|e| JsValue::from_str(&e.to_string()));
         }
-    }
     Err(JsValue::from_str("Master poster not initialized. Call init_master_poster_spatial first."))
 }
 
@@ -1861,7 +1855,7 @@ pub fn extract_poster_features(
             let lab = rgb_to_cielab(mean_r, mean_g, mean_b);
             let gradient = if grad_count > 0 {
                 // Sobel central difference with magnitude up to ~180: normalize into [0.0, 1.0]
-                (grad_sum / (grad_count as f32 * 50.0)).min(1.0).max(0.0)
+                (grad_sum / (grad_count as f32 * 50.0)).clamp(0.0, 1.0)
             } else {
                 0.0
             };
@@ -2227,12 +2221,11 @@ pub fn cluster_interior_slots(
                 ];
 
                 for &nb in &neighbors {
-                    if let Some(n_idx) = nb {
-                        if !visited[n_idx] && assignments[n_idx] == tray {
+                    if let Some(n_idx) = nb
+                        && !visited[n_idx] && assignments[n_idx] == tray {
                             visited[n_idx] = true;
                             queue.push_back(n_idx);
                         }
-                    }
                 }
             }
 
@@ -2303,8 +2296,8 @@ pub fn cluster_interior_slots(
     // TRY-03: Hard post-process capacity overflow resolution with spatial adjacency preference
     loop {
         let mut overflow_tray = 0usize;
-        for t in 1..=NUM_TRAYS {
-            if tray_counts[t] > max_capacity {
+        for (t, &count) in tray_counts.iter().enumerate().skip(1).take(NUM_TRAYS) {
+            if count > max_capacity {
                 overflow_tray = t;
                 break;
             }

@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 pub mod fiducial;
 pub mod contour;
 pub mod homography;
@@ -145,8 +147,8 @@ pub fn map_dewarped_points_to_camera(
     ];
 
     let mut result = Vec::with_capacity(points.len());
-    if let Some(h) = Homography::from_4_points(&src_corners, &dst_corners) {
-        if let Some(inv_h) = h.invert() {
+    if let Some(h) = Homography::from_4_points(&src_corners, &dst_corners)
+        && let Some(inv_h) = h.invert() {
             let n = points.len() / 2;
             for i in 0..n {
                 let u = points[i * 2];
@@ -158,33 +160,35 @@ pub fn map_dewarped_points_to_camera(
             }
             return result;
         }
-    }
     points.to_vec()
 }
 
 /// Scans, segments, and analyzes the puzzle piece from a rectified RGBA buffer.
 /// Robust against white bond paper background: pieces have distinct contrast from the white floor.
-#[wasm_bindgen]
-pub fn analyze_staged_piece(
+#[derive(Clone, Debug)]
+pub struct StageSegmentationOutput {
+    pub closed_binary: Vec<u8>,
+    pub bg_rgb: [u8; 3],
+    pub foreground_count: usize,
+    pub thresh_val: u8,
+}
+
+/// Segments a puzzle piece from a rectified RGBA buffer against white or neutral stage background.
+pub fn segment_rectified_stage_binary(
     dewarped_pixels: &[u8],
     width: u32,
     height: u32,
     sensitivity: f32,
-) -> Result<JsValue, JsValue> {
+) -> Result<StageSegmentationOutput, &'static str> {
     let total_pixels = (width * height) as usize;
     if dewarped_pixels.len() < total_pixels * 4 {
-        return Err(JsValue::from_str("Buffer size mismatch"));
+        return Err("Buffer size mismatch");
     }
 
     let w = width as usize;
     let h = height as usize;
 
-    // 1. Robust Background Sampling from the 4 outer peripheral margins:
-    // Robust Background Sampling from the 4 outer peripheral margins:
-    // Samples strips along Top, Bottom, Left, and Right independently.
-    // Instead of pooling all border pixels together (where a hand on one edge pulls down the percentile),
-    // we compute the 85th percentile (brightest clean paper) for each of the 4 edges independently,
-    // and take the median/highest of these clean quadrant estimates.
+    // 1. Robust Background Sampling from the 4 outer peripheral margins
     let margin_px = ((w.min(h) as f32) * 0.05).max(8.0) as usize;
     
     let mut top_pixels = Vec::with_capacity(w * margin_px);
@@ -192,7 +196,6 @@ pub fn analyze_staged_piece(
     let mut left_pixels = Vec::with_capacity(h * margin_px);
     let mut right_pixels = Vec::with_capacity(h * margin_px);
 
-    // Top strip
     for x in margin_px..(w - margin_px) {
         for y in 2..margin_px {
             let idx = (y * w + x) * 4;
@@ -203,7 +206,6 @@ pub fn analyze_staged_piece(
             top_pixels.push((r, g, b, lum));
         }
     }
-    // Bottom strip
     for x in margin_px..(w - margin_px) {
         for y in (h - margin_px)..(h - 2) {
             let idx = (y * w + x) * 4;
@@ -214,7 +216,6 @@ pub fn analyze_staged_piece(
             bottom_pixels.push((r, g, b, lum));
         }
     }
-    // Left strip
     for y in margin_px..(h - margin_px) {
         for x in 2..margin_px {
             let idx = (y * w + x) * 4;
@@ -225,7 +226,6 @@ pub fn analyze_staged_piece(
             left_pixels.push((r, g, b, lum));
         }
     }
-    // Right strip
     for y in margin_px..(h - margin_px) {
         for x in (w - margin_px)..(w - 2) {
             let idx = (y * w + x) * 4;
@@ -251,7 +251,6 @@ pub fn analyze_staged_piece(
     if let Some(p) = pick_percentile(right_pixels) { edge_refs.push(p); }
 
     edge_refs.sort_by_key(|p| p.3);
-    // Take the 2nd highest / median edge reference so an obstructed side does not corrupt the background
     let bg_ref = if !edge_refs.is_empty() {
         let mid = edge_refs.len() * 3 / 4;
         edge_refs[mid.min(edge_refs.len() - 1)]
@@ -263,20 +262,15 @@ pub fn analyze_staged_piece(
     let bg_g = bg_ref.1 as f32;
     let bg_b = bg_ref.2 as f32;
 
-    // 2. Compute Color/Luminance Distance from background:
-    // Works whether background is white paper (bg_lum > 180) or dark card (bg_lum < 80)
+    // 2. Perceptual color distance
     let mut delta_img = vec![0u8; total_pixels];
-
     for i in 0..total_pixels {
         let r = dewarped_pixels[i * 4] as f32;
         let g = dewarped_pixels[i * 4 + 1] as f32;
         let b = dewarped_pixels[i * 4 + 2] as f32;
-
         let dr = r - bg_r;
         let dg = g - bg_g;
         let db = b - bg_b;
-
-        // Euclidean perceptual color distance
         let dist = (dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114).sqrt();
         delta_img[i] = dist.clamp(0.0, 255.0) as u8;
     }
@@ -284,17 +278,13 @@ pub fn analyze_staged_piece(
     let mut smoothed_delta = vec![0u8; total_pixels];
     contour::gaussian_blur_3x3(&delta_img, width, height, &mut smoothed_delta);
 
-    // 3. Thresholding:
-    // Sens slider: 10 to 60 (nominal 25).
-    // Threshold directly scales to contrast difference:
-    // sens=15 -> thresh=38; sens=25 -> thresh=27; sens=45 -> thresh=16
     let sens = sensitivity.clamp(10.0, 60.0);
     let thresh_val = (48.0 - sens * 0.55).clamp(12.0, 48.0) as u8;
 
     let mut binary = vec![0u8; total_pixels];
     let mut foreground_count = 0;
-
     let border_cut = 3usize;
+
     for y in border_cut..(h - border_cut) {
         for x in border_cut..(w - border_cut) {
             let idx = y * w + x;
@@ -305,14 +295,10 @@ pub fn analyze_staged_piece(
         }
     }
 
-    // Morphological closing
     let mut closed_binary = vec![0u8; total_pixels];
     contour::morphological_close_3x3(&binary, width, height, &mut closed_binary);
 
     // Topological stage isolation test:
-    // A legitimate puzzle piece is strictly an enclosed island positioned within the staging arena.
-    // If a hand, fingers, or foreign object enters the stage, it forms an intrusion from the outer margin.
-    // We check outer 3px..6px ring (after the border_cut) and test if intrusion is significant (>10% of samples)
     let stage_border_margin = ((w.min(h) as f32 * 0.015) as usize).clamp(3, 6);
     let mut border_intrusion_count = 0usize;
     for x in border_cut..(w - border_cut) {
@@ -331,23 +317,41 @@ pub fn analyze_staged_piece(
         + (stage_border_margin - border_cut).max(1) * (h - 2 * stage_border_margin) * 2;
     let touches_stage_border = border_intrusion_count > (total_border_samples * 10 / 100);
 
-    // Obstruction / Hand filter: >55% of stage, <0.3% of stage, or touching the stage border perimeter
     let is_obstructed = touches_stage_border || foreground_count > (total_pixels * 55 / 100);
+    if is_obstructed || foreground_count < total_pixels / 300 {
+        return Err("Stage empty or obstructed by hand");
+    }
 
-    let piece_profile = if !is_obstructed && foreground_count >= total_pixels / 300 {
-        trace_piece_contour(&closed_binary, width, height)
-            .and_then(|c| partition_edges_and_classify(&c))
-    } else {
-        None
+    Ok(StageSegmentationOutput {
+        closed_binary,
+        bg_rgb: [bg_r as u8, bg_g as u8, bg_b as u8],
+        foreground_count,
+        thresh_val,
+    })
+}
+
+/// Scans, segments, and analyzes the puzzle piece from a rectified RGBA buffer.
+#[wasm_bindgen]
+pub fn analyze_staged_piece(
+    dewarped_pixels: &[u8],
+    width: u32,
+    height: u32,
+    sensitivity: f32,
+) -> Result<JsValue, JsValue> {
+    let seg = match segment_rectified_stage_binary(dewarped_pixels, width, height, sensitivity) {
+        Ok(s) => s,
+        Err(e) => return Err(JsValue::from_str(e)),
     };
 
-    let bg_rgb = [bg_r as u8, bg_g as u8, bg_b as u8];
+    let piece_profile = trace_piece_contour(&seg.closed_binary, width, height)
+        .and_then(|c| partition_edges_and_classify(&c));
+
     let result = AnalysisResult {
         piece: piece_profile,
-        binary_mask: closed_binary,
-        bg_mean_rgb: bg_rgb,
-        fg_pixels: foreground_count,
-        threshold_used: thresh_val,
+        binary_mask: seg.closed_binary,
+        bg_mean_rgb: seg.bg_rgb,
+        fg_pixels: seg.foreground_count,
+        threshold_used: seg.thresh_val,
     };
 
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -474,139 +478,9 @@ pub fn ingest_mat_piece_internal(
     dewarp_image(src_pixels, src_w, src_h, dst_w, dst_h, &inv_h, k1, &mut dewarped_buffer);
 
     // 2. Segment piece from stage background
-    let total_pixels = (dst_w * dst_h) as usize;
-    let w = dst_w as usize;
-    let h_len = dst_h as usize;
-
-    let margin_px = ((w.min(h_len) as f32) * 0.05).max(8.0) as usize;
-    let mut top_pixels = Vec::with_capacity(w * margin_px);
-    let mut bottom_pixels = Vec::with_capacity(w * margin_px);
-    let mut left_pixels = Vec::with_capacity(h_len * margin_px);
-    let mut right_pixels = Vec::with_capacity(h_len * margin_px);
-
-    for x in margin_px..(w - margin_px) {
-        for y in 2..margin_px {
-            let idx = (y * w + x) * 4;
-            let r = dewarped_buffer[idx];
-            let g = dewarped_buffer[idx + 1];
-            let b = dewarped_buffer[idx + 2];
-            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
-            top_pixels.push((r, g, b, lum));
-        }
-    }
-    for x in margin_px..(w - margin_px) {
-        for y in (h_len - margin_px)..(h_len - 2) {
-            let idx = (y * w + x) * 4;
-            let r = dewarped_buffer[idx];
-            let g = dewarped_buffer[idx + 1];
-            let b = dewarped_buffer[idx + 2];
-            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
-            bottom_pixels.push((r, g, b, lum));
-        }
-    }
-    for y in margin_px..(h_len - margin_px) {
-        for x in 2..margin_px {
-            let idx = (y * w + x) * 4;
-            let r = dewarped_buffer[idx];
-            let g = dewarped_buffer[idx + 1];
-            let b = dewarped_buffer[idx + 2];
-            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
-            left_pixels.push((r, g, b, lum));
-        }
-    }
-    for y in margin_px..(h_len - margin_px) {
-        for x in (w - margin_px)..(w - 2) {
-            let idx = (y * w + x) * 4;
-            let r = dewarped_buffer[idx];
-            let g = dewarped_buffer[idx + 1];
-            let b = dewarped_buffer[idx + 2];
-            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
-            right_pixels.push((r, g, b, lum));
-        }
-    }
-
-    let pick_percentile = |mut samples: Vec<(u8, u8, u8, u8)>| -> Option<(u8, u8, u8, u8)> {
-        if samples.is_empty() { return None; }
-        samples.sort_by_key(|p| p.3);
-        let idx = (samples.len() as f32 * 0.85) as usize;
-        Some(samples[idx.min(samples.len() - 1)])
-    };
-
-    let mut edge_refs = Vec::new();
-    if let Some(p) = pick_percentile(top_pixels) { edge_refs.push(p); }
-    if let Some(p) = pick_percentile(bottom_pixels) { edge_refs.push(p); }
-    if let Some(p) = pick_percentile(left_pixels) { edge_refs.push(p); }
-    if let Some(p) = pick_percentile(right_pixels) { edge_refs.push(p); }
-
-    edge_refs.sort_by_key(|p| p.3);
-    let bg_ref = if !edge_refs.is_empty() {
-        let mid = edge_refs.len() * 3 / 4;
-        edge_refs[mid.min(edge_refs.len() - 1)]
-    } else {
-        (240, 240, 240, 240)
-    };
-
-    let bg_r = bg_ref.0 as f32;
-    let bg_g = bg_ref.1 as f32;
-    let bg_b = bg_ref.2 as f32;
-
-    let mut delta_img = vec![0u8; total_pixels];
-    for i in 0..total_pixels {
-        let r = dewarped_buffer[i * 4] as f32;
-        let g = dewarped_buffer[i * 4 + 1] as f32;
-        let b = dewarped_buffer[i * 4 + 2] as f32;
-        let dr = r - bg_r;
-        let dg = g - bg_g;
-        let db = b - bg_b;
-        let dist = (dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114).sqrt();
-        delta_img[i] = dist.clamp(0.0, 255.0) as u8;
-    }
-
-    let mut smoothed_delta = vec![0u8; total_pixels];
-    contour::gaussian_blur_3x3(&delta_img, dst_w, dst_h, &mut smoothed_delta);
-
-    let sens = sensitivity.clamp(10.0, 60.0);
-    let thresh_val = (48.0 - sens * 0.55).clamp(12.0, 48.0) as u8;
-
-    let mut binary = vec![0u8; total_pixels];
-    let mut foreground_count = 0;
-    let border_cut = 3usize;
-
-    for y in border_cut..(h_len - border_cut) {
-        for x in border_cut..(w - border_cut) {
-            let idx = y * w + x;
-            if smoothed_delta[idx] >= thresh_val {
-                binary[idx] = 255;
-                foreground_count += 1;
-            }
-        }
-    }
-
-    let mut closed_binary = vec![0u8; total_pixels];
-    contour::morphological_close_3x3(&binary, dst_w, dst_h, &mut closed_binary);
-
-    // Check border intrusion (hand or foreign obstacle on stage arena)
-    let stage_border_margin = ((w.min(h_len) as f32 * 0.015) as usize).clamp(3, 6);
-    let mut border_intrusion_count = 0usize;
-    for x in border_cut..(w - border_cut) {
-        for y in border_cut..stage_border_margin {
-            if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
-            if closed_binary[(h_len - 1 - y) * w + x] > 0 { border_intrusion_count += 1; }
-        }
-    }
-    for y in stage_border_margin..(h_len - stage_border_margin) {
-        for x in border_cut..stage_border_margin {
-            if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
-            if closed_binary[y * w + (w - 1 - x)] > 0 { border_intrusion_count += 1; }
-        }
-    }
-    let total_border_samples = (stage_border_margin - border_cut).max(1) * (w - 2 * border_cut) * 2
-        + (stage_border_margin - border_cut).max(1) * (h_len - 2 * stage_border_margin) * 2;
-    let touches_stage_border = border_intrusion_count > (total_border_samples * 10 / 100);
-
-    let is_obstructed = touches_stage_border || foreground_count > (total_pixels * 55 / 100);
-    if is_obstructed || foreground_count < total_pixels / 300 {
-        return IngestedPieceResult {
+    let seg = match segment_rectified_stage_binary(&dewarped_buffer, dst_w, dst_h, sensitivity) {
+        Ok(s) => s,
+        Err(err_msg) => return IngestedPieceResult {
             success: false,
             polarities: ["FLAT".into(), "FLAT".into(), "FLAT".into(), "FLAT".into()],
             tab_width_mm: 0.0,
@@ -618,9 +492,10 @@ pub fn ingest_mat_piece_internal(
             contour_points: Vec::new(),
             corners: Vec::new(),
             normalized_profiles: Vec::new(),
-            error: Some("Stage empty or obstructed by hand".into()),
-        };
-    }
+            error: Some(err_msg.into()),
+        },
+    };
+    let closed_binary = seg.closed_binary;
 
     // 3. Trace contour and partition edges
     let scanned_piece = match trace_piece_contour(&closed_binary, dst_w, dst_h)
@@ -687,6 +562,7 @@ pub fn ingest_mat_piece_internal(
     };
 
     // 4. Sample piece core CIELAB and Sobel gradient texture
+    let w = dst_w as usize;
     let min_x = (scanned_piece.center.x - 12.0).clamp(0.0, dst_w as f32 - 1.0) as usize;
     let max_x = (scanned_piece.center.x + 12.0).clamp(0.0, dst_w as f32 - 1.0) as usize;
     let min_y = (scanned_piece.center.y - 12.0).clamp(0.0, dst_h as f32 - 1.0) as usize;
@@ -750,9 +626,9 @@ pub fn ingest_mat_piece_internal(
     let mut assigned_tray: u8 = if scanned_piece.is_border || scanned_piece.is_corner { 0 } else { 1 };
     let mut best_dist_sq = f32::MAX;
 
-    if !scanned_piece.is_border && !scanned_piece.is_corner {
-        if let Ok(centroids) = serde_json::from_str::<Vec<poster::Centroid>>(centroids_json) {
-            if !centroids.is_empty() {
+    if !scanned_piece.is_border && !scanned_piece.is_corner
+        && let Ok(centroids) = serde_json::from_str::<Vec<poster::Centroid>>(centroids_json)
+            && !centroids.is_empty() {
                 for (idx, centroid) in centroids.iter().enumerate() {
                     let dl = (mean_lab[0] - centroid.lab[0]) * 0.5; // glare damping
                     let da = mean_lab[1] - centroid.lab[1];
@@ -769,8 +645,6 @@ pub fn ingest_mat_piece_internal(
                     }
                 }
             }
-        }
-    }
 
     let flat_edges = scanned_piece.edges.iter().filter(|e| e.edge_type == contour::EdgeType::Flat).count();
     let is_border = flat_edges == 1;

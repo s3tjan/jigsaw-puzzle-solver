@@ -5,7 +5,8 @@ import {
   OnInit,
   OnDestroy,
   inject,
-  signal
+  signal,
+  effect
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AppModeStore } from '../../core/state/app-mode.store';
@@ -57,6 +58,15 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   readonly lensK1 = signal<number>(0.0);
   readonly sensitivity = signal<number>(25.0);
 
+  constructor() {
+    effect(() => {
+      const trigger = this.appModeStore.scanTrigger();
+      if (trigger > 0 && !this.isProcessing()) {
+        this.triggerScan();
+      }
+    });
+  }
+
   async ngOnInit(): Promise<void> {
     this.loadCalibration();
     await this.cameraService.refreshDevices();
@@ -70,23 +80,10 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   }
 
   loadCalibration(): void {
-    try {
-      const savedCorners = localStorage.getItem('jigsaw_calibration_corners_v3');
-      if (savedCorners) {
-        const parsed = JSON.parse(savedCorners);
-        if (Array.isArray(parsed) && parsed.length === 4) {
-          this.corners.set(parsed as any);
-        }
-      }
-      const savedK1 = localStorage.getItem('jigsaw_k1');
-      if (savedK1) {
-        this.lensK1.set(parseFloat(savedK1) || 0.0);
-      }
-      const savedSens = localStorage.getItem('jigsaw_sensitivity');
-      if (savedSens) {
-        this.sensitivity.set(parseFloat(savedSens) || 25.0);
-      }
-    } catch { }
+    const cal = this.storageService.getOpticalCalibration();
+    this.corners.set(cal.corners);
+    this.lensK1.set(cal.lensK1);
+    this.sensitivity.set(cal.sensitivity);
   }
 
   async retryCamera(): Promise<void> {

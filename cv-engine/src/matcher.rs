@@ -132,11 +132,10 @@ pub fn compute_complementary_l2_distance(
         let mut max_abs_diff = 0.0f32;
         let mut count = 0usize;
 
-        for k in 0..n {
+        for (k, &val_a) in profile_a.iter().enumerate().take(n) {
             // Profile B is traversed in reverse (from n - 1 down to 0) along the common seam.
             let b_target_idx = (n as i32 - 1) - (k as i32 + shift);
             if b_target_idx >= 0 && b_target_idx < n as i32 {
-                let val_a = profile_a[k];
                 let val_b = profile_b[b_target_idx as usize];
 
                 let res_comp = val_a + val_b;
@@ -324,9 +323,9 @@ pub fn identify_staged_piece_core(
         // Try all 4 rotational alignments (rot = 0, 1, 2, 3)
         for rot in 0..4 {
             let mut edge_types_match = true;
-            for k in 0..4 {
+            for (k, query_edge) in query_edges.iter().enumerate().take(4) {
                 let stored_edge_idx = (k + rot) % 4;
-                if query_edges[k].edge_type != stored.edges[stored_edge_idx].edge_type {
+                if query_edge.edge_type != stored.edges[stored_edge_idx].edge_type {
                     edge_types_match = false;
                     break;
                 }
@@ -338,10 +337,10 @@ pub fn identify_staged_piece_core(
 
             // Compute edge profile distance across all 4 edges
             let mut total_edge_dist = 0.0f32;
-            for k in 0..4 {
+            for (k, query_edge) in query_edges.iter().enumerate().take(4) {
                 let stored_edge_idx = (k + rot) % 4;
                 let d = compute_profile_identity_distance(
-                    &query_edges[k].normalized_profile,
+                    &query_edge.normalized_profile,
                     &stored.edges[stored_edge_idx].normalized_profile,
                 );
                 total_edge_dist += d;
@@ -622,7 +621,7 @@ pub fn check_step4_subpixel_contour(
     let max_l2_tolerance = 0.070f32;
     let max_linf_tolerance = 0.120f32;
     let is_physically_compatible = l2_dist <= max_l2_tolerance && linf_dist <= max_linf_tolerance;
-    let score = ((1.0 - (l2_dist / max_l2_tolerance)).max(0.0)).min(1.0);
+    let score = (1.0 - (l2_dist / max_l2_tolerance)).clamp(0.0, 1.0);
 
     SubpixelInterlockResult {
         is_physically_compatible,

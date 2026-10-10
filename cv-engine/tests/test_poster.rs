@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop)]
+
 use cv_engine::poster::{
     build_grayscale_pyramid, compute_slot_grid, downsample_2x, ingest_poster_buffer,
     rgba_to_grayscale,
@@ -282,7 +284,7 @@ fn test_seeded_kmeans_centroids() {
     let mut seed_counts = [0u32; NUM_TRAYS + 1];
     for s in &interior_slots {
         let seed = get_spatial_seed_tray(s.r, s.c);
-        assert!(seed >= 1 && seed <= 8);
+        assert!((1..=8).contains(&seed));
         seed_counts[seed as usize] += 1;
     }
 

@@ -79,9 +79,9 @@ export class CommandPaletteComponent implements AfterViewInit {
       id: 'calibrate-optics',
       label: 'CALIBRATE OPTICS (K1 DISTORTION)',
       category: 'OPTICS',
-      shortcut: 'OPT-03',
+      shortcut: 'Alt+2',
       action: () => {
-        this.close();
+        this.setMode('OPTICS');
       }
     }
   ];

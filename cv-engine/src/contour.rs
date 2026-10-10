@@ -47,8 +47,8 @@ pub fn compute_otsu_threshold(grayscale: &[u8]) -> u8 {
     }
 
     let mut sum_all: f64 = 0.0;
-    for t in 0..256 {
-        sum_all += t as f64 * histogram[t] as f64;
+    for (t, &count) in histogram.iter().enumerate() {
+        sum_all += t as f64 * count as f64;
     }
 
     let mut sum_bg: f64 = 0.0;
@@ -56,8 +56,8 @@ pub fn compute_otsu_threshold(grayscale: &[u8]) -> u8 {
     let mut max_variance: f64 = 0.0;
     let mut best_thresh: u8 = 128;
 
-    for t in 0..256 {
-        weight_bg += histogram[t] as f64;
+    for (t, &count) in histogram.iter().enumerate() {
+        weight_bg += count as f64;
         if weight_bg == 0.0 {
             continue;
         }
@@ -66,7 +66,7 @@ pub fn compute_otsu_threshold(grayscale: &[u8]) -> u8 {
             break;
         }
 
-        sum_bg += t as f64 * histogram[t] as f64;
+        sum_bg += t as f64 * count as f64;
         let mean_bg = sum_bg / weight_bg;
         let mean_fg = (sum_all - sum_bg) / weight_fg;
 
@@ -265,12 +265,11 @@ pub fn trace_piece_contour(
                         let max_valid_area = (width * height) as f32 * 0.85;
                         let min_valid_area = (width * height) as f32 * 0.005;
 
-                        if area >= min_valid_area && area <= max_valid_area {
-                            if area > best_area {
+                        if area >= min_valid_area && area <= max_valid_area
+                            && area > best_area {
                                 best_area = area;
                                 best_contour = Some(raw_contour);
                             }
-                        }
                     }
                 }
             }
@@ -342,12 +341,11 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             let p0 = contour[i];
             let p1 = contour[(i + span) % n];
             let chord = ((p1.x - p0.x).powi(2) + (p1.y - p0.y).powi(2)).sqrt();
-            if std_res < 0.45 && chord > 50.0 {
-                if best_line.is_none() || span > best_line.unwrap().0 {
+            if std_res < 0.45 && chord > 50.0
+                && (best_line.is_none() || span > best_line.unwrap().0) {
                     let angle = (p1.y - p0.y).atan2(p1.x - p0.x);
                     best_line = Some((span, i, angle));
                 }
-            }
         }
     }
 
@@ -451,7 +449,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let mut filtered_corners = Vec::with_capacity(6);
     for &(idx, sc) in &top_corners {
         let too_close = filtered_corners.iter().any(|&(f_idx, _): &(usize, f32)| {
-            let dist = ((idx as i32 - f_idx as i32).abs() as usize).min(n - (idx as i32 - f_idx as i32).abs() as usize);
+            let dist = ((idx as i32 - f_idx as i32).unsigned_abs() as usize).min(n - (idx as i32 - f_idx as i32).unsigned_abs() as usize);
             dist < 15
         });
         if !too_close {
@@ -492,7 +490,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         bin_indices.sort_by(|&a, &b| angle_bins[b].partial_cmp(&angle_bins[a]).unwrap_or(std::cmp::Ordering::Equal));
 
         let best_bin1 = bin_indices[0];
-        let t1 = ((best_bin1 as f32 - 45.0)).to_radians();
+        let t1 = (best_bin1 as f32 - 45.0).to_radians();
 
         let mut cands = vec![t1];
 
@@ -500,21 +498,19 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let mut best_bin2_votes = 0.0f32;
         for &b in &bin_indices[1..] {
             let diff = (b as i32 - best_bin1 as i32).abs();
-            if diff >= 20 && diff <= 70 {
-                if angle_bins[b] > best_bin2_votes {
+            if (20..=70).contains(&diff)
+                && angle_bins[b] > best_bin2_votes {
                     best_bin2_votes = angle_bins[b];
                     best_bin2 = Some(b);
                 }
-            }
         }
-        if let Some(b2) = best_bin2 {
-            if best_bin2_votes >= angle_bins[best_bin1] * 0.15 {
-                let t2 = ((b2 as f32 - 45.0)).to_radians();
+        if let Some(b2) = best_bin2
+            && best_bin2_votes >= angle_bins[best_bin1] * 0.15 {
+                let t2 = (b2 as f32 - 45.0).to_radians();
                 if !cands.iter().any(|&t| (t - t2).abs() < 0.1) {
                     cands.push(t2);
                 }
             }
-        }
 
         if let Some((_, _, bl_ang)) = best_line {
             let mut bl_deg = bl_ang.to_degrees().rem_euclid(90.0);
@@ -630,7 +626,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             let mut filtered = Vec::with_capacity(8);
             for &(idx, sc) in &raw_q_cands[q] {
                 let too_close = filtered.iter().any(|&(f_idx, _): &(usize, f32)| {
-                    let dist = ((idx as i32 - f_idx as i32).abs() as usize).min(n - (idx as i32 - f_idx as i32).abs() as usize);
+                    let dist = ((idx as i32 - f_idx as i32).unsigned_abs() as usize).min(n - (idx as i32 - f_idx as i32).unsigned_abs() as usize);
                     dist < 5
                 });
                 if !too_close {
@@ -723,13 +719,12 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             }
         }
 
-        if let Some(q_idx) = cand_best_quad {
-            if cand_best_score > best_global_score {
+        if let Some(q_idx) = cand_best_quad
+            && cand_best_score > best_global_score {
                 best_global_score = cand_best_score;
                 best_global_quad = Some(q_idx);
                 best_chosen_theta = theta;
             }
-        }
     }
 
     let best_q_idx = best_global_quad?;
@@ -933,14 +928,13 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
 
     // Edge 1 is also flat (Corner piece) if:
     // Edge 0 is flat AND s1 is also flat / separated from tabs s2 and s3
-    if is_flat[scores[0].0] {
-        if (has_straight_line && s1 < 9.0 && (s2 - s1 >= 1.2 || s1 < 4.5))
+    if is_flat[scores[0].0]
+        && ((has_straight_line && s1 < 9.0 && (s2 - s1 >= 1.2 || s1 < 4.5))
             || s1 < 4.5
-            || (s2 - s1 >= 2.0 && s1 < 7.5)
+            || (s2 - s1 >= 2.0 && s1 < 7.5))
         {
             is_flat[scores[1].0] = true;
         }
-    }
 
     for (i, edge) in edges_vec.iter_mut().enumerate() {
         if is_flat[i] {

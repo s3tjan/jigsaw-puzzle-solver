@@ -52,7 +52,7 @@ fn test_edge_endpoint_corner_consistency() {
     let entries: Vec<_> = fs::read_dir(archive_dir)
         .expect("Read archive dir")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
         .collect();
 
     let mut inconsistent_count = 0;
@@ -108,7 +108,7 @@ fn test_contour_smoothness_and_wobble_budget() {
     let entries: Vec<_> = fs::read_dir(archive_dir)
         .expect("Read archive dir")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
         .collect();
 
     let mut rough_contours = 0;

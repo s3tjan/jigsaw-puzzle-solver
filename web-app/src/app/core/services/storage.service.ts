@@ -15,6 +15,23 @@ export interface StoredPiece {
   thumbnailDataUrl?: string;
 }
 
+export interface OpticalCalibration {
+  corners: [{ x: number; y: number }, { x: number; y: number }, { x: number; y: number }, { x: number; y: number }];
+  lensK1: number;
+  sensitivity: number;
+}
+
+export const DEFAULT_OPTICAL_CALIBRATION: OpticalCalibration = {
+  corners: [
+    { x: 120, y: 80 },
+    { x: 520, y: 80 },
+    { x: 520, y: 400 },
+    { x: 120, y: 400 }
+  ],
+  lensK1: 0.0,
+  sensitivity: 25.0
+};
+
 export interface StoredPoster {
   id: string; // 'current_poster'
   timestamp: number;
@@ -162,5 +179,37 @@ export class StorageService {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
+  }
+
+  /**
+   * Retrieves optical calibration parameters (homography corners, lens K1, binarization sensitivity)
+   */
+  getOpticalCalibration(): OpticalCalibration {
+    try {
+      const savedCorners = localStorage.getItem('jigsaw_calibration_corners_v3');
+      const savedK1 = localStorage.getItem('jigsaw_k1');
+      const savedSens = localStorage.getItem('jigsaw_sensitivity');
+
+      return {
+        corners: savedCorners && Array.isArray(JSON.parse(savedCorners)) && JSON.parse(savedCorners).length === 4
+          ? JSON.parse(savedCorners)
+          : [...DEFAULT_OPTICAL_CALIBRATION.corners],
+        lensK1: savedK1 ? parseFloat(savedK1) || 0.0 : DEFAULT_OPTICAL_CALIBRATION.lensK1,
+        sensitivity: savedSens ? parseFloat(savedSens) || 25.0 : DEFAULT_OPTICAL_CALIBRATION.sensitivity,
+      };
+    } catch {
+      return { ...DEFAULT_OPTICAL_CALIBRATION };
+    }
+  }
+
+  /**
+   * Persists optical calibration parameters
+   */
+  saveOpticalCalibration(cal: OpticalCalibration): void {
+    try {
+      localStorage.setItem('jigsaw_calibration_corners_v3', JSON.stringify(cal.corners));
+      localStorage.setItem('jigsaw_k1', cal.lensK1.toString());
+      localStorage.setItem('jigsaw_sensitivity', cal.sensitivity.toString());
+    } catch { }
   }
 }

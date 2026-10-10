@@ -4,6 +4,6 @@
     <span class="font-mono">SCALE: 1:1 CALIBRATED</span>
   </div>
   <div class="canvas-viewport" #containerRef>
-    <canvas #canvasRef class="board-canvas"></canvas>
+    <canvas #canvasRef class="board-canvas" (click)="onCanvasClick($event)"></canvas>
   </div>
 </div>
