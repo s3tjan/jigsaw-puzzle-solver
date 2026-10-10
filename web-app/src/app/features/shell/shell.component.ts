@@ -7,6 +7,7 @@ import { CommandPaletteComponent } from './components/command-palette/command-pa
 import { WorkbenchComponent } from '../workbench/workbench.component';
 import { TrayStudioComponent } from '../poster/tray-studio.component';
 import { IngestionScannerComponent } from '../scanner/ingestion-scanner.component';
+import { OpticsCalibrationComponent } from '../optics/optics-calibration.component';
 
 @Component({
   selector: 'app-shell',
@@ -18,6 +19,7 @@ import { IngestionScannerComponent } from '../scanner/ingestion-scanner.componen
     CommandPaletteComponent,
     WorkbenchComponent,
     TrayStudioComponent,
+    OpticsCalibrationComponent,
     IngestionScannerComponent
   ],
   templateUrl: './shell.component.html',

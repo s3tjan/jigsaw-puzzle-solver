@@ -36,17 +36,24 @@ export class CommandPaletteComponent implements AfterViewInit {
       action: () => this.setMode('POSTER')
     },
     {
+      id: 'mode-optics',
+      label: 'SWITCH MODE: OPTICAL CALIBRATION & LENS K1 TUNING',
+      category: 'VIEW',
+      shortcut: 'Alt+2',
+      action: () => this.setMode('OPTICS')
+    },
+    {
       id: 'mode-ingestion',
       label: 'SWITCH MODE: CONTINUOUS MAT INGESTION',
       category: 'VIEW',
-      shortcut: 'Alt+2',
+      shortcut: 'Alt+3',
       action: () => this.setMode('INGESTION')
     },
     {
       id: 'mode-workbench',
       label: 'SWITCH MODE: ASSEMBLY WORKBENCH & SPOTTING HUD',
       category: 'VIEW',
-      shortcut: 'Alt+3',
+      shortcut: 'Alt+4',
       action: () => this.setMode('WORKBENCH')
     },
     {

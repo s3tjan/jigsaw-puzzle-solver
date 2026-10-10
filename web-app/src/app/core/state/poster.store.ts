@@ -84,6 +84,62 @@ export class PosterStore {
     return map;
   });
 
+  // Computed tray cluster centroids for piece routing
+  readonly activeCentroids = computed(() => {
+    const slots = this.slots();
+    const centroids: Array<{
+      lab: [number, number, number];
+      gradient: number;
+      color_std: number;
+      r_norm: number;
+      c_norm: number;
+    }> = [];
+
+    for (let trayId = 1; trayId <= 8; trayId++) {
+      let sumL = 0;
+      let sumA = 0;
+      let sumB = 0;
+      let sumGrad = 0;
+      let sumStd = 0;
+      let sumR = 0;
+      let sumC = 0;
+      let count = 0;
+
+      for (const s of slots) {
+        if (s.trayId === trayId) {
+          sumL += s.lab[0];
+          sumA += s.lab[1];
+          sumB += s.lab[2];
+          sumGrad += s.gradient;
+          sumStd += s.colorStd ?? 0;
+          sumR += Math.max(0, s.r - 1) / 25.0;
+          sumC += Math.max(0, s.c - 1) / 33.0;
+          count++;
+        }
+      }
+
+      if (count > 0) {
+        centroids.push({
+          lab: [sumL / count, sumA / count, sumB / count],
+          gradient: sumGrad / count,
+          color_std: sumStd / count,
+          r_norm: sumR / count,
+          c_norm: sumC / count
+        });
+      } else {
+        centroids.push({
+          lab: [50, 0, 0],
+          gradient: 0,
+          color_std: 0,
+          r_norm: 0.5,
+          c_norm: 0.5
+        });
+      }
+    }
+
+    return centroids;
+  });
+
   getTray(trayId: number): TrayInfo | undefined {
     return this.trayMap().get(trayId as TrayId);
   }

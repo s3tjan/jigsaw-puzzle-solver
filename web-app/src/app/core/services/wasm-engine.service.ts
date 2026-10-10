@@ -1,5 +1,11 @@
 import { Injectable, signal } from '@angular/core';
-import init, { analyze_and_cluster_poster } from '../../../pkg/cv_engine';
+import init, {
+  analyze_and_cluster_poster,
+  ingest_mat_piece,
+  snap_fiducial_corner,
+  dewarp_quad,
+  measure_stage_focus
+} from '../../../pkg/cv_engine';
 import {
   ClusteringResult,
   ClusteringStats,
@@ -9,6 +15,21 @@ import {
   TrayInfo
 } from '../models/poster.model';
 import { INITIAL_TRAYS } from './poster-clustering.service';
+
+export interface IngestedPiecePayload {
+  success: boolean;
+  polarities: [string, string, string, string];
+  tabWidthMm: number;
+  confidence: number;
+  trayId: number;
+  isBorder: boolean;
+  isCorner: boolean;
+  meanLab: [number, number, number];
+  contourPoints: number[];
+  corners: number[];
+  normalizedProfiles: number[][];
+  error?: string;
+}
 
 interface RustSlotFeature {
   r: number;
@@ -104,6 +125,134 @@ export class WasmEngineService {
       return this.mapRustResult(rawResult);
     } catch (err) {
       console.error('WasmEngineService: analyze_and_cluster_poster failed:', err);
+      return null;
+    }
+  }
+
+  snapFiducialCorner(
+    rgbaBuffer: Uint8Array,
+    width: number,
+    height: number,
+    seedX: number,
+    seedY: number,
+    radius: number = 32
+  ): [number, number] | null {
+    if (!this._isReady()) return null;
+    try {
+      const res = snap_fiducial_corner(rgbaBuffer, width, height, seedX, seedY, radius);
+      if (res && res.length >= 2) {
+        return [res[0], res[1]];
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  dewarpQuad(
+    rgbaBuffer: Uint8Array,
+    width: number,
+    height: number,
+    corners: [number, number, number, number, number, number, number, number],
+    dstW: number = 384,
+    dstH: number = 384,
+    k1: number = 0.0
+  ): Uint8Array | null {
+    if (!this._isReady()) return null;
+    try {
+      return dewarp_quad(
+        rgbaBuffer,
+        width,
+        height,
+        corners[0], corners[1],
+        corners[2], corners[3],
+        corners[4], corners[5],
+        corners[6], corners[7],
+        dstW,
+        dstH,
+        k1
+      );
+    } catch (err) {
+      console.error('WasmEngineService: dewarp_quad failed:', err);
+      return null;
+    }
+  }
+
+  measureStageFocus(
+    rgbaBuffer: Uint8Array,
+    width: number,
+    height: number,
+    corners: [number, number, number, number, number, number, number, number]
+  ): number {
+    if (!this._isReady()) return 0;
+    try {
+      return measure_stage_focus(
+        rgbaBuffer,
+        width,
+        height,
+        corners[0], corners[1],
+        corners[2], corners[3],
+        corners[4], corners[5],
+        corners[6], corners[7]
+      );
+    } catch {
+      return 0;
+    }
+  }
+
+  ingestMatPiece(
+    canvas: HTMLCanvasElement,
+    corners: [number, number, number, number, number, number, number, number],
+    centroids: Array<{ lab: [number, number, number]; gradient: number; color_std: number; r_norm: number; c_norm: number }>,
+    weights: { wColor: number; wTexture: number } = { wColor: 0.7, wTexture: 0.2 },
+    sensitivity: number = 25.0,
+    k1: number = 0.0
+  ): IngestedPiecePayload | null {
+    if (!this._isReady()) {
+      return null;
+    }
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const rgbaBuffer = new Uint8Array(imgData.data.buffer);
+    const centroidsJson = JSON.stringify(centroids);
+
+    try {
+      const raw = ingest_mat_piece(
+        rgbaBuffer,
+        canvas.width,
+        canvas.height,
+        corners[0], corners[1],
+        corners[2], corners[3],
+        corners[4], corners[5],
+        corners[6], corners[7],
+        384, // dst_w (96mm at 96px = 25mm)
+        384, // dst_h
+        k1,  // lens distortion
+        sensitivity,
+        centroidsJson,
+        weights.wColor,
+        weights.wTexture
+      );
+
+      return {
+        success: Boolean(raw.success),
+        polarities: raw.polarities,
+        tabWidthMm: raw.tab_width_mm,
+        confidence: raw.confidence,
+        trayId: raw.tray_id,
+        isBorder: Boolean(raw.is_border),
+        isCorner: Boolean(raw.is_corner),
+        meanLab: raw.mean_lab,
+        contourPoints: raw.contour_points || [],
+        corners: raw.corners || [],
+        normalizedProfiles: raw.normalized_profiles || [],
+        error: raw.error
+      };
+    } catch (err) {
+      console.error('WasmEngineService: ingest_mat_piece failed:', err);
       return null;
     }
   }

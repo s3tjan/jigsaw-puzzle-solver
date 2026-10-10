@@ -1,0 +1,176 @@
+<div class="optics-root">
+  <!-- Left Telemetry & Optics Adjustment Rail -->
+  @if (!appModeStore.isLeftRailCollapsed()) {
+    <aside class="optics-rail border-r">
+      <div class="inverted-header">
+        <span>OPTICAL CALIBRATION</span>
+        <span class="font-mono">OPT-02 / OPT-03</span>
+      </div>
+
+      <!-- Video Feed Status -->
+      <div class="rail-section border-b">
+        <div class="section-title">CAMERA STREAM</div>
+        <div class="source-info font-mono">
+          <span class="label">SENSOR:</span>
+          <span class="val" [class.ok]="cameraService.isStreaming()" [class.error]="!cameraService.isStreaming()">
+            {{ cameraService.isStreaming() ? 'ONLINE' : 'OFFLINE' }}
+          </span>
+        </div>
+        <div class="source-info font-mono">
+          <span class="label">FORMAT:</span>
+          <span class="val">{{ cameraService.activeResolution().width }}×{{ cameraService.activeResolution().height }}</span>
+        </div>
+        <div class="source-info font-mono">
+          <span class="label">FOCUS MTF:</span>
+          <span class="val" [class.ok]="focusMtf() >= 45" [class.warn]="focusMtf() < 45">
+            {{ focusMtf() }}%
+          </span>
+        </div>
+
+        <div class="action-row">
+          <button type="button" class="rail-btn" (click)="retryCamera()">
+            RECONNECT SENSOR
+          </button>
+        </div>
+
+        @if (statusMessage(); as msg) {
+          <div class="status-msg font-mono">
+            {{ msg }}
+          </div>
+        }
+      </div>
+
+      <!-- Lens Distortion K1 & Sensitivity Knobs -->
+      <div class="inverted-header">
+        <span>METRIC & RADIAL CORRECTION</span>
+      </div>
+      <div class="rail-section border-b">
+        <div class="control-row">
+          <div class="control-label">
+            <span>LENS K1 [-0.30 .. +0.30]</span>
+            <span class="val font-mono tabular-nums">{{ lensK1().toFixed(2) }}</span>
+          </div>
+          <input 
+            type="range" 
+            min="-0.30" 
+            max="0.30" 
+            step="0.01" 
+            [value]="lensK1()" 
+            (input)="setLensK1($any($event.target).valueAsNumber)"
+            class="slider-input"
+          >
+        </div>
+
+        <div class="control-row">
+          <div class="control-label">
+            <span>SEGMENT SENSITIVITY [10 .. 60]</span>
+            <span class="val font-mono tabular-nums">{{ sensitivity().toFixed(0) }}</span>
+          </div>
+          <input 
+            type="range" 
+            min="10" 
+            max="60" 
+            step="1" 
+            [value]="sensitivity()" 
+            (input)="setSensitivity($any($event.target).valueAsNumber)"
+            class="slider-input"
+          >
+        </div>
+
+        <div class="action-row">
+          <button type="button" class="rail-btn active" (click)="snapAllCorners()" title="Auto sub-pixel snap pins to fiducial bullseyes">
+            SNAP FIDUCIALS
+          </button>
+          <button type="button" class="rail-btn" (click)="resetCorners()" title="Reset pins to standard 100mm mat defaults">
+            RESET CORNERS
+          </button>
+        </div>
+      </div>
+
+      <!-- Fiducial Coordinates Telemetry -->
+      <div class="inverted-header">
+        <span>PIN RETICLE COORDINATES</span>
+        <span class="font-mono">PX</span>
+      </div>
+      <div class="rail-section border-b">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-head">PIN</th>
+              <th class="col-head">POS X</th>
+              <th class="col-head">POS Y</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="prop-key font-mono">C1 [TL]</td>
+              <td class="prop-val font-mono tabular-nums">{{ corners()[0].x.toFixed(1) }}</td>
+              <td class="prop-val font-mono tabular-nums">{{ corners()[0].y.toFixed(1) }}</td>
+            </tr>
+            <tr>
+              <td class="prop-key font-mono">C2 [TR]</td>
+              <td class="prop-val font-mono tabular-nums">{{ corners()[1].x.toFixed(1) }}</td>
+              <td class="prop-val font-mono tabular-nums">{{ corners()[1].y.toFixed(1) }}</td>
+            </tr>
+            <tr>
+              <td class="prop-key font-mono">C3 [BR]</td>
+              <td class="prop-val font-mono tabular-nums">{{ corners()[2].x.toFixed(1) }}</td>
+              <td class="prop-val font-mono tabular-nums">{{ corners()[2].y.toFixed(1) }}</td>
+            </tr>
+            <tr>
+              <td class="prop-key font-mono">C4 [BL]</td>
+              <td class="prop-val font-mono tabular-nums">{{ corners()[3].x.toFixed(1) }}</td>
+              <td class="prop-val font-mono tabular-nums">{{ corners()[3].y.toFixed(1) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Metric Grounding Specification -->
+      <div class="inverted-header">
+        <span>PHYSICAL METRIC GROUNDING</span>
+      </div>
+      <div class="rail-section">
+        <div class="spec-note font-mono">
+          PHYSICAL ARENA: 100MM &times; 100MM<br>
+          ORTHOGRAPHIC SCALE: 96PX = 25MM<br>
+          RECTIFIED STAGE: 384PX &times; 384PX (96MM)
+        </div>
+      </div>
+    </aside>
+  } @else {
+    <div class="rail-collapsed-strip" (click)="appModeStore.toggleLeftRail()" title="Click or press [Alt+B] to expand">
+      <span class="collapsed-glyph">&#9654;</span>
+      <span class="collapsed-label font-mono">OPTICS</span>
+    </div>
+  }
+
+  <!-- Center Viewport: Full 1080p Camera Feed with Interactive Alignment Reticles -->
+  <main class="viewport-main">
+    <div class="viewport-header border-b">
+      <span class="header-title">OPTICAL RETICLE CALIBRATION &amp; HOMOGRAPHY GROUNDING</span>
+      <span class="header-meta font-mono">DRAG SQUARE BRACKETS C1&ndash;C4 TO MAT CORNERS</span>
+    </div>
+
+    <div class="video-container">
+      <video #videoRef autoplay playsinline muted class="camera-stream"></video>
+
+      <!-- Draggable Reticle Overlay Canvas -->
+      <canvas 
+        #overlayCanvas 
+        class="camera-overlay"
+        (pointerdown)="handlePointerDown($event)"
+        (pointermove)="handlePointerMove($event)"
+        (pointerup)="handlePointerUp($event)"
+        (pointercancel)="handlePointerUp($event)"
+      ></canvas>
+
+      @if (!cameraService.isStreaming()) {
+        <div class="camera-offline font-mono">
+          <span>NO SENSOR STREAM DETECTED</span>
+          <button type="button" class="rail-btn" (click)="retryCamera()">INITIALIZE SENSOR</button>
+        </div>
+      }
+    </div>
+  </main>
+</div>

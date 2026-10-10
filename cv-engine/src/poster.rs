@@ -1722,7 +1722,7 @@ pub struct ClusteringResult {
     pub stats: ClusteringStats,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Centroid {
     pub lab: [f32; 3],
     pub gradient: f32,

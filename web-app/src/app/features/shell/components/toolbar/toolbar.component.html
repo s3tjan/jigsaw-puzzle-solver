@@ -1,47 +1,30 @@
 <header class="toolbar-root border-b">
   <!-- Mode Selector (Alt+1 - Alt+3) -->
   <div class="mode-cluster" role="group" aria-label="Operational Mode Selection">
-    <button 
-      type="button" 
-      class="mode-btn" 
-      [class.active]="appModeStore.activeMode() === 'POSTER'"
-      [attr.aria-pressed]="appModeStore.activeMode() === 'POSTER'"
-      (click)="setMode('POSTER')"
-      title="Shortcut: Alt+1"
-    >
+    <button type="button" class="mode-btn" [class.active]="appModeStore.activeMode() === 'POSTER'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'POSTER'" (click)="setMode('POSTER')" title="Shortcut: Alt+1">
       POSTER [Alt+1]
     </button>
-    <button 
-      type="button" 
-      class="mode-btn" 
-      [class.active]="appModeStore.activeMode() === 'INGESTION'"
-      [attr.aria-pressed]="appModeStore.activeMode() === 'INGESTION'"
-      (click)="setMode('INGESTION')"
-      title="Shortcut: Alt+2"
-    >
-      INGESTION [Alt+2]
+    <button type="button" class="mode-btn" [class.active]="appModeStore.activeMode() === 'OPTICS'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'OPTICS'" (click)="setMode('OPTICS')" title="Shortcut: Alt+2">
+      OPTICS [Alt+2]
     </button>
-    <button 
-      type="button" 
-      class="mode-btn" 
-      [class.active]="appModeStore.activeMode() === 'WORKBENCH'"
-      [attr.aria-pressed]="appModeStore.activeMode() === 'WORKBENCH'"
-      (click)="setMode('WORKBENCH')"
-      title="Shortcut: Alt+3"
-    >
-      WORKBENCH [Alt+3]
+    <button type="button" class="mode-btn" [class.active]="appModeStore.activeMode() === 'INGESTION'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'INGESTION'" (click)="setMode('INGESTION')"
+      title="Shortcut: Alt+3">
+      INGESTION [Alt+3]
+    </button>
+    <button type="button" class="mode-btn" [class.active]="appModeStore.activeMode() === 'WORKBENCH'"
+      [attr.aria-pressed]="appModeStore.activeMode() === 'WORKBENCH'" (click)="setMode('WORKBENCH')"
+      title="Shortcut: Alt+4">
+      WORKBENCH [Alt+4]
     </button>
   </div>
 
   <div class="divider"></div>
 
   <!-- Command Palette Discovery Trigger (Ctrl+K) -->
-  <button 
-    type="button" 
-    class="action-btn" 
-    (click)="openCommandPalette()"
-    title="Open Command Palette (Ctrl+K)"
-  >
+  <button type="button" class="action-btn" (click)="openCommandPalette()" title="Open Command Palette (Ctrl+K)">
     COMMANDS [Ctrl+K]
   </button>
 </header>

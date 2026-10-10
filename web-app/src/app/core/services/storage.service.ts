@@ -9,6 +9,8 @@ export interface StoredPiece {
   confidence: number;
   // Normalized contour coordinates (in mm or unit scale)
   contourPoints?: [number, number][];
+  // 4 edges x 100 normalized baseline profile points for FCQL matching
+  normalizedProfiles?: number[][];
   // Data URL thumbnail of the piece
   thumbnailDataUrl?: string;
 }

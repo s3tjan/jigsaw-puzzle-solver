@@ -30,7 +30,7 @@ export class KeyboardNavService {
         return;
       }
 
-      // Mode switching via Alt+1, Alt+2, Alt+3
+      // Mode switching via Alt+1, Alt+2, Alt+3, Alt+4
       if (event.altKey) {
         switch (event.code) {
           case 'Digit1':
@@ -42,17 +42,23 @@ export class KeyboardNavService {
           case 'Digit2':
           case 'Key2':
             event.preventDefault();
-            this.appModeStore.setMode('INGESTION');
+            this.appModeStore.setMode('OPTICS');
             return;
 
           case 'Digit3':
           case 'Key3':
             event.preventDefault();
+            this.appModeStore.setMode('INGESTION');
+            return;
+
+          case 'Digit4':
+          case 'Key4':
+            event.preventDefault();
             this.appModeStore.setMode('WORKBENCH');
             return;
 
           case 'KeyB':
-            if (this.appModeStore.activeMode() === 'WORKBENCH') {
+            if (['OPTICS', 'INGESTION', 'WORKBENCH'].includes(this.appModeStore.activeMode())) {
               event.preventDefault();
               this.appModeStore.toggleLeftRail();
               return;
@@ -66,6 +72,18 @@ export class KeyboardNavService {
         if (this.appModeStore.activeMode() === 'WORKBENCH') {
           event.preventDefault();
           this.appModeStore.toggleLeftRail();
+          return;
+        }
+      }
+
+      // Space bar: trigger piece drop scan when in INGESTION mode
+      if (event.code === 'Space' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        if (this.appModeStore.activeMode() === 'INGESTION') {
+          event.preventDefault();
+          const scanBtn = document.getElementById('scan-drop-btn') as HTMLButtonElement | null;
+          if (scanBtn && !scanBtn.disabled) {
+            scanBtn.click();
+          }
           return;
         }
       }

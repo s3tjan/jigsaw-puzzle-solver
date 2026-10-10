@@ -4,24 +4,29 @@
 
   <!-- Transient Command Palette (Section 6.5) -->
   @if (appModeStore.isCommandPaletteOpen()) {
-    <app-command-palette></app-command-palette>
+  <app-command-palette></app-command-palette>
   }
 
   <!-- Main Operational Split Workspace -->
   <main class="workspace-split">
     <!-- MODE: POSTER (Alt+1 / Calibration, Clustering & Trays) -->
     @if (appModeStore.activeMode() === 'POSTER') {
-      <app-tray-studio></app-tray-studio>
+    <app-tray-studio></app-tray-studio>
     }
 
-    <!-- MODE: INGESTION (Alt+2 / Continuous Drop Mat) -->
+    <!-- MODE: OPTICS (Alt+2 / 100mm Fiducial Optics & K1 Distortion Calibration) -->
+    @if (appModeStore.activeMode() === 'OPTICS') {
+    <app-optics-calibration></app-optics-calibration>
+    }
+
+    <!-- MODE: INGESTION (Alt+3 / Continuous Drop Mat & 96mm Rectified Arena) -->
     @if (appModeStore.activeMode() === 'INGESTION') {
-      <app-ingestion-scanner></app-ingestion-scanner>
+    <app-ingestion-scanner></app-ingestion-scanner>
     }
 
-    <!-- MODE: WORKBENCH (Alt+3 / Assembly HUD) -->
+    <!-- MODE: WORKBENCH (Alt+4 / Assembly HUD) -->
     @if (appModeStore.activeMode() === 'WORKBENCH') {
-      <app-workbench></app-workbench>
+    <app-workbench></app-workbench>
     }
   </main>
 

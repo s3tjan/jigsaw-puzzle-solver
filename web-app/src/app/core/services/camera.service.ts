@@ -125,6 +125,17 @@ export class CameraService {
     return stream;
   }
 
+  getStream(): MediaStream | null {
+    return this.mediaStream;
+  }
+
+  attachVideo(videoElement: HTMLVideoElement): void {
+    if (this.mediaStream) {
+      videoElement.srcObject = this.mediaStream;
+      videoElement.play().catch(e => console.warn('CameraService: video play() error', e));
+    }
+  }
+
   /**
    * Captures the current video frame onto an HTMLCanvasElement
    */

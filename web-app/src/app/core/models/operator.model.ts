@@ -1,4 +1,4 @@
-export type AppMode = 'POSTER' | 'INGESTION' | 'WORKBENCH';
+export type AppMode = 'POSTER' | 'OPTICS' | 'INGESTION' | 'WORKBENCH';
 
 export interface BoardSlot {
   r: number;

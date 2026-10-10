@@ -8,126 +8,167 @@
     </div>
   }
 
+  <!-- Hidden camera video feed element running in background for stage dewarping -->
+  <video #videoRef autoplay playsinline muted class="hidden-video"></video>
+
   <!-- Left Control & Ingestion Queue Rail (Collapsible with Alt+B) -->
   @if (!appModeStore.isLeftRailCollapsed()) {
     <aside class="scanner-rail border-r">
       <div class="inverted-header">
         <span>CONTINUOUS MAT INGESTION</span>
-        <span class="font-mono">1080P FEED</span>
+        <span class="font-mono">ING-02</span>
       </div>
 
-    <!-- Camera Source Selection -->
-    <div class="rail-section border-b">
-      <div class="section-title">CAMERA SOURCE</div>
-      <div class="source-info font-mono">
-        <span class="label">STATUS:</span>
-        <span class="val" [class.ok]="cameraService.isStreaming()" [class.error]="!cameraService.isStreaming()">
-          {{ cameraService.isStreaming() ? 'ONLINE' : 'OFFLINE' }}
-        </span>
-      </div>
-      <div class="source-info font-mono">
-        <span class="label">RES:</span>
-        <span class="val">{{ cameraService.activeResolution().width }}×{{ cameraService.activeResolution().height }}</span>
-      </div>
-
-      <div class="action-row">
-        <button type="button" class="rail-btn active" (click)="triggerScan()" [disabled]="!cameraService.isStreaming() || isProcessing()">
-          SCAN DROP [SPACE]
-        </button>
-        <button type="button" class="rail-btn" (click)="retryCamera()">
-          RECONNECT
-        </button>
-      </div>
-    </div>
-
-    <!-- Latest Piece Telemetry -->
-    <div class="inverted-header">
-      <span>LAST INGESTED PIECE</span>
-    </div>
-    <div class="rail-section border-b">
-      @if (lastPiece(); as piece) {
-        <table class="data-table">
-          <tbody>
-            <tr>
-              <td class="prop-key">PIECE ID</td>
-              <td class="prop-val font-mono">#{{ piece.id }}</td>
-            </tr>
-            <tr>
-              <td class="prop-key">ASSIGNED TRAY</td>
-              <td class="prop-val font-mono">
-                <span class="tray-chip" [style.background-color]="posterStore.getTray(piece.trayId)?.color"></span>
-                0{{ piece.trayId }} &middot; {{ posterStore.getTray(piece.trayId)?.name }}
-              </td>
-            </tr>
-            <tr>
-              <td class="prop-key">TAB WIDTH</td>
-              <td class="prop-val font-mono">{{ piece.tabWidthMm.toFixed(2) }} MM</td>
-            </tr>
-            <tr>
-              <td class="prop-key">POLARITY</td>
-              <td class="prop-val font-mono">{{ piece.polarities.join('-') }}</td>
-            </tr>
-          </tbody>
-        </table>
-      } @else {
-        <div class="empty-state font-mono">
-          NO PIECES INGESTED
+      <!-- Action Panel & Operational Trigger -->
+      <div class="rail-section border-b">
+        <div class="section-title">INGESTION TRIGGER</div>
+        <div class="source-info font-mono">
+          <span class="label">STAGE SENSOR:</span>
+          <span class="val" [class.ok]="cameraService.isStreaming()" [class.error]="!cameraService.isStreaming()">
+            {{ cameraService.isStreaming() ? 'ONLINE' : 'OFFLINE' }}
+          </span>
         </div>
-      }
-    </div>
-
-    <!-- Sorting Trays Volume Breakdown -->
-    <div class="inverted-header">
-      <span>SORTING TRAYS FILL</span>
-      <span class="font-mono">8 TRAYS</span>
-    </div>
-    <div class="tray-mini-list">
-      @for (tray of inventoryStore.trays(); track tray.id) {
-        <div class="tray-mini-row border-b">
-          <div class="tray-mini-header">
-            <span class="tray-chip" [style.background-color]="posterStore.getTray(tray.id)?.color"></span>
-            <span class="tray-mini-name">0{{ tray.id }} &middot; {{ tray.name }}</span>
-            <span class="tray-mini-count font-mono tabular-nums">{{ tray.count }}/{{ tray.maxCapacity }}</span>
-          </div>
-          <div class="gauge-track">
-            <div class="gauge-fill" [style.width.%]="(tray.count / tray.maxCapacity) * 100"></div>
-          </div>
+        <div class="source-info font-mono">
+          <span class="label">RESOLUTION:</span>
+          <span class="val">{{ cameraService.activeResolution().width }}×{{ cameraService.activeResolution().height }}</span>
         </div>
-      }
-    </div>
-  </aside>
-} @else {
-  <div class="rail-collapsed-strip" (click)="appModeStore.toggleLeftRail()" title="Click or press [Alt+B] to expand">
-    <span class="collapsed-glyph">▶</span>
-    <span class="collapsed-label font-mono">INGESTION</span>
-  </div>
-}
 
-  <!-- Center Viewport: Camera Video Stream on 100mm Fiducial Mat -->
+        <div class="action-row">
+          <button 
+            id="scan-drop-btn" 
+            type="button" 
+            class="rail-btn active font-mono" 
+            (click)="triggerScan()" 
+            [disabled]="!cameraService.isStreaming() || isProcessing()"
+          >
+            {{ isProcessing() ? 'PROCESSING...' : 'DROP PIECE [SPACE]' }}
+          </button>
+          <button type="button" class="rail-btn" (click)="retryCamera()">
+            RECONNECT
+          </button>
+        </div>
+
+        @if (scanStatusMessage(); as msg) {
+          <div class="status-msg font-mono" [class.error-msg]="msg.includes('EMPTY') || msg.includes('OBSTRUCTED')">
+            {{ msg }}
+          </div>
+        }
+      </div>
+
+      <!-- Ingested Piece Telemetry & Cardinal Edge Polarities -->
+      <div class="inverted-header">
+        <span>DETECTED PIECE TELEMETRY</span>
+      </div>
+      <div class="rail-section border-b">
+        @if (lastPiece(); as piece) {
+          <table class="data-table">
+            <tbody>
+              <tr>
+                <td class="prop-key">PIECE ID</td>
+                <td class="prop-val font-mono">#{{ piece.id }}</td>
+              </tr>
+              <tr>
+                <td class="prop-key">ROUTED TRAY</td>
+                <td class="prop-val font-mono">
+                  @if (piece.trayId === 0) {
+                    <span class="tray-chip border-chip"></span>
+                    BORDER TRAY
+                  } @else {
+                    <span class="tray-chip" [style.background-color]="posterStore.getTray(piece.trayId)?.color"></span>
+                    0{{ piece.trayId }} &middot; {{ posterStore.getTray(piece.trayId)?.name }}
+                  }
+                </td>
+              </tr>
+              <tr>
+                <td class="prop-key">TAB WIDTH</td>
+                <td class="prop-val font-mono">{{ piece.tabWidthMm.toFixed(2) }} MM</td>
+              </tr>
+              <tr>
+                <td class="prop-key">NORTH / EAST</td>
+                <td class="prop-val font-mono">{{ piece.polarities[0] }} / {{ piece.polarities[1] }}</td>
+              </tr>
+              <tr>
+                <td class="prop-key">SOUTH / WEST</td>
+                <td class="prop-val font-mono">{{ piece.polarities[2] }} / {{ piece.polarities[3] }}</td>
+              </tr>
+              <tr>
+                <td class="prop-key">CONFIDENCE</td>
+                <td class="prop-val font-mono">{{ (piece.confidence * 100).toFixed(0) }}%</td>
+              </tr>
+            </tbody>
+          </table>
+        } @else {
+          <div class="empty-state font-mono">
+            DROP PIECE ON MAT &amp; PRESS SPACE
+          </div>
+        }
+      </div>
+
+      <!-- Sorting Trays Volume Breakdown -->
+      <div class="inverted-header">
+        <span>SORTING TRAYS FILL</span>
+        <span class="font-mono">8 TRAYS</span>
+      </div>
+      <div class="tray-mini-list">
+        @for (tray of inventoryStore.trays(); track tray.id) {
+          <div class="tray-mini-row border-b">
+            <div class="tray-mini-header">
+              <span class="tray-chip" [style.background-color]="posterStore.getTray(tray.id)?.color"></span>
+              <span class="tray-mini-name">0{{ tray.id }} &middot; {{ tray.name }}</span>
+              <span class="tray-mini-count font-mono tabular-nums">{{ tray.count }}/{{ tray.maxCapacity }}</span>
+            </div>
+            <div class="gauge-track">
+              <div class="gauge-fill" [style.width.%]="(tray.count / tray.maxCapacity) * 100"></div>
+            </div>
+          </div>
+        }
+      </div>
+
+      <!-- Quick Link to Calibration Optics -->
+      <div class="rail-section">
+        <button type="button" class="rail-btn font-mono" (click)="appModeStore.setMode('OPTICS')">
+          TUNE MAT OPTICS [Alt+2]
+        </button>
+      </div>
+    </aside>
+  } @else {
+    <div class="rail-collapsed-strip" (click)="appModeStore.toggleLeftRail()" title="Click or press [Alt+B] to expand">
+      <span class="collapsed-glyph">&#9654;</span>
+      <span class="collapsed-label font-mono">INGESTION</span>
+    </div>
+  }
+
+  <!-- Center Viewport: The Rectified 96mm x 96mm Staging Arena -->
   <main class="viewport-main">
     <div class="viewport-header border-b">
-      <span class="header-title">100MM FIDUCIAL CALIBRATION MAT</span>
-      <span class="header-meta font-mono">ORTHOGRAPHIC 96PX / 25MM</span>
+      <span class="header-title">RECTIFIED PIECE STAGING ARENA</span>
+      <span class="header-meta font-mono">ORTHOGRAPHIC 384×384 (96MM &times; 96MM) &middot; 96PX = 25MM</span>
     </div>
 
-    <div class="video-container">
-      <video #videoRef autoplay playsinline muted class="camera-stream"></video>
+    <div class="stage-container">
+      <div class="stage-frame">
+        <!-- Dewarped 384x384 canvas directly rendering piece pixels -->
+        <canvas #stageCanvas width="384" height="384" class="stage-canvas"></canvas>
 
-      <!-- Fiducial Overlay Target Box (C1-C4 ground truth) -->
-      <div class="mat-overlay">
-        <div class="corner-reticle tl">C1</div>
-        <div class="corner-reticle tr">C2</div>
-        <div class="corner-reticle br">C3</div>
-        <div class="corner-reticle bl">C4</div>
-        <div class="crosshair-center">+</div>
+        <!-- Overlay canvas rendering detected contour and 4 corner brackets -->
+        <canvas #stageOverlayCanvas width="384" height="384" class="stage-overlay"></canvas>
+
+        @if (!cameraService.isStreaming()) {
+          <div class="camera-offline font-mono">
+            <span>NO SENSOR STREAM DETECTED</span>
+            <button type="button" class="rail-btn" (click)="retryCamera()">CONNECT SENSOR</button>
+          </div>
+        }
       </div>
 
-      @if (!cameraService.isStreaming()) {
-        <div class="camera-offline font-mono">
-          <span>NO CAMERA FEED DETECTED</span>
-          <button type="button" class="rail-btn" (click)="retryCamera()">CONNECT CAMERA</button>
-        </div>
-      }
+      <!-- Metric Dimension Rulers (96mm square stage) -->
+      <div class="stage-telemetry-bar font-mono">
+        <div class="metric-badge">STAGE: 96.0 MM &times; 96.0 MM</div>
+        <div class="metric-badge">SCALE: 3.84 PX / MM</div>
+        @if (lastPiece(); as piece) {
+          <div class="metric-badge highlight">PIECE #{{ piece.id }} PROCESSED</div>
+        }
+      </div>
     </div>
   </main>
 </div>

@@ -44,7 +44,7 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | OPT-01 | - | `web-app/src/app/core/services/camera.service.ts` | Browser preview inspection | WebRTC 1080p stream ingestion with 720p fallback in `CameraService`. | DONE |
 | OPT-02 | OPT-01 | `cv-engine/src/homography.rs` | `cargo test test_homography` | Detect 4 corners (C1-C4) of 100mm mat; compute 3x3 homography (<0.2mm error). | DONE |
-| OPT-03 | OPT-02 | `web-app/src/app/features/scanner/calibration-modal.component.ts` | Browser modal inspection | Full-screen calibration modal tuning K1 radial distortion; main board stays free of sliders. | Planned |
+| OPT-03 | OPT-02 | `web-app/src/app/features/optics/optics-calibration.component.ts` | Browser UI inspection | Dedicated Optics view (`[OPTICS Alt+2]`) tuning K1 radial distortion, focus MTF, and fiducial pins; no modals or popups. | DONE |
 
 ### CNT: Contour & Edge Classification
 
@@ -80,8 +80,8 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | ING-01 | - | `web-app/src/app/core/services/storage.service.ts` | Browser DevTools Application tab | Reactive IndexedDB schema for pieces, contours, assigned trays, and board state. | DONE |
-| ING-02 | OPT-01, ING-01 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | Browser mat drop test | Continuous mat camera feed UI, drop triggering, and IndexedDB piece indexing. | DONE |
-| ING-02B| CNT-03, OPT-02 | `cv-engine/src/lib.rs` | `cargo test test_ingest_mat_piece` | **cv-engine WASM Ingestion Bridge**: Expose `ingest_mat_piece` WASM binding linking camera canvas frame to Rust homography unwarp, contour extraction, 4-edge polarity segmentation, and tray assignment. | Planned |
+| ING-02 | OPT-01, ING-01 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | Browser mat drop test | Continuous mat ingestion UI with rectified 96mm stage arena, Space-bar drop triggering, and IndexedDB piece indexing. | DONE |
+| ING-02B| CNT-03, OPT-02 | `cv-engine/src/lib.rs` | `cargo test test_ingest_mat_piece` | **cv-engine WASM Ingestion Bridge**: Expose `ingest_mat_piece` WASM binding linking camera canvas frame to Rust homography unwarp, contour extraction, 4-edge polarity segmentation, and tray assignment. | DONE |
 | ING-03 | ING-02, TRY-05 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | Browser audio/visual inspection | Full-screen peripheral color flash (8 tray colors) and banner for eyes-free sorting. | DONE |
 | ING-04 | ING-02, ING-01 | `web-app/src/app/core/state/inventory.store.ts` | Browser drawer inspection | Index all 1,008 pieces with normalized contours, polarity masks, and transparent-masked thumbs. | DONE |
 

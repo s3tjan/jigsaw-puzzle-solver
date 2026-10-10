@@ -13,69 +13,84 @@
   <!-- Center: Context-Specific Operational Telemetry Only -->
   <!-- 1. POSTER MODE -->
   @if (appModeStore.activeMode() === 'POSTER') {
-    <div class="status-section">
-      <span class="muted">SORTING:</span>
-      @if (posterStore.isAnalyzing()) {
-        <span class="val font-mono">WASM COMPUTING...</span>
-      } @else {
-        <span class="val font-mono">{{ posterStore.trays().length }} TRAYS ({{ posterStore.stats().computeTimeMs }}ms)</span>
-      }
-    </div>
-
-    <!-- Active Slot Inspection HUD -->
-    @if (posterStore.hoveredSlot() || posterStore.selectedSlot(); as activeSlot) {
-      <div class="status-section">
-        <span class="muted">SLOT:</span>
-        <span class="val font-mono tabular-nums">R{{ activeSlot.r }} C{{ activeSlot.c }}</span>
-      </div>
-      <div class="status-section">
-        <span class="muted">CIELAB:</span>
-        <span class="val font-mono tabular-nums">
-          {{ activeSlot.lab[0].toFixed(1) }}, {{ activeSlot.lab[1].toFixed(1) }}, {{ activeSlot.lab[2].toFixed(1) }}
-        </span>
-      </div>
-      <div class="status-section">
-        <span class="muted">TRAY:</span>
-        @if (activeSlot.isBorder) {
-          <span class="tray-chip border-chip"></span>
-          <span class="val font-mono">BORDER</span>
-        } @else {
-          <span class="tray-chip" [style.background-color]="posterStore.getTray(activeSlot.trayId)?.color"></span>
-          <span class="val font-mono">0{{ activeSlot.trayId }} &middot; {{ posterStore.getTray(activeSlot.trayId)?.name }}</span>
-        }
-      </div>
+  <div class="status-section">
+    <span class="muted">SORTING:</span>
+    @if (posterStore.isAnalyzing()) {
+    <span class="val font-mono">WASM COMPUTING...</span>
+    } @else {
+    <span class="val font-mono">{{ posterStore.trays().length }} TRAYS ({{ posterStore.stats().computeTimeMs
+      }}ms)</span>
     }
+  </div>
+
+  <!-- Active Slot Inspection HUD -->
+  @if (posterStore.hoveredSlot() || posterStore.selectedSlot(); as activeSlot) {
+  <div class="status-section">
+    <span class="muted">SLOT:</span>
+    <span class="val font-mono tabular-nums">R{{ activeSlot.r }} C{{ activeSlot.c }}</span>
+  </div>
+  <div class="status-section">
+    <span class="muted">CIELAB:</span>
+    <span class="val font-mono tabular-nums">
+      {{ activeSlot.lab[0].toFixed(1) }}, {{ activeSlot.lab[1].toFixed(1) }}, {{ activeSlot.lab[2].toFixed(1) }}
+    </span>
+  </div>
+  <div class="status-section">
+    <span class="muted">TRAY:</span>
+    @if (activeSlot.isBorder) {
+    <span class="tray-chip border-chip"></span>
+    <span class="val font-mono">BORDER</span>
+    } @else {
+    <span class="tray-chip" [style.background-color]="posterStore.getTray(activeSlot.trayId)?.color"></span>
+    <span class="val font-mono">0{{ activeSlot.trayId }} &middot; {{ posterStore.getTray(activeSlot.trayId)?.name
+      }}</span>
+    }
+  </div>
+  }
   }
 
   <!-- 2. WORKBENCH MODE -->
   @if (appModeStore.activeMode() === 'WORKBENCH') {
-    <div class="status-section">
-      <span class="muted">FRONTIER:</span>
-      <span class="val font-mono tabular-nums">{{ boardStore.frontierCount() }}</span>
-      <span class="unit">SLOTS</span>
-    </div>
+  <div class="status-section">
+    <span class="muted">FRONTIER:</span>
+    <span class="val font-mono tabular-nums">{{ boardStore.frontierCount() }}</span>
+    <span class="unit">SLOTS</span>
+  </div>
 
-    <div class="status-section">
-      <span class="muted">PLACED:</span>
-      <span class="val font-mono tabular-nums">{{ boardStore.placedCount() }} / {{ boardStore.totalSlots }}</span>
-    </div>
+  <div class="status-section">
+    <span class="muted">PLACED:</span>
+    <span class="val font-mono tabular-nums">{{ boardStore.placedCount() }} / {{ boardStore.totalSlots }}</span>
+  </div>
+  }
+
+  <!-- 2. OPTICS CALIBRATION MODE -->
+  @if (appModeStore.activeMode() === 'OPTICS') {
+  <div class="status-section">
+    <span class="muted">OPTICS:</span>
+    <span class="val font-mono">100MM FIDUCIAL MAT</span>
+  </div>
+  <div class="status-section">
+    <span class="muted">METRIC SCALE:</span>
+    <span class="val font-mono">96PX = 25MM</span>
+  </div>
   }
 
   <!-- 3. INGESTION MODE -->
   @if (appModeStore.activeMode() === 'INGESTION') {
-    <div class="status-section">
-      <span class="muted">FEED:</span>
-      @if (cameraService.isStreaming()) {
-        <span class="val font-mono">{{ cameraService.activeResolution().height }}P ACTIVE</span>
-      } @else {
-        <span class="val font-mono text-muted">OFFLINE</span>
-      }
-    </div>
+  <div class="status-section">
+    <span class="muted">FEED:</span>
+    @if (cameraService.isStreaming()) {
+    <span class="val font-mono">{{ cameraService.activeResolution().height }}P ACTIVE</span>
+    } @else {
+    <span class="val font-mono text-muted">OFFLINE</span>
+    }
+  </div>
 
-    <div class="status-section">
-      <span class="muted">INGESTED:</span>
-      <span class="val font-mono tabular-nums">{{ inventoryStore.totalIngested() }} / {{ inventoryStore.targetTotal }}</span>
-    </div>
+  <div class="status-section">
+    <span class="muted">INGESTED:</span>
+    <span class="val font-mono tabular-nums">{{ inventoryStore.totalIngested() }} / {{ inventoryStore.targetTotal
+      }}</span>
+  </div>
   }
 
   <!-- Right: Only Actionable Operational Shortcuts -->
