@@ -85,6 +85,11 @@ pub fn dewarp_quad(
     dst_h: u32,
     k1: f32,
 ) -> Result<Vec<u8>, JsValue> {
+    let expected_src_len = (src_w * src_h * 4) as usize;
+    if src_pixels.len() < expected_src_len {
+        return Err(JsValue::from_str("src_pixels buffer length is smaller than src_w * src_h * 4"));
+    }
+
     let src_w_f = src_w as f32;
     let src_h_f = src_h as f32;
 
@@ -419,6 +424,24 @@ pub fn ingest_mat_piece_internal(
     w_color: f32,
     w_texture: f32,
 ) -> IngestedPieceResult {
+    let expected_src_len = (src_w * src_h * 4) as usize;
+    if src_pixels.len() < expected_src_len {
+        return IngestedPieceResult {
+            success: false,
+            polarities: ["FLAT".into(), "FLAT".into(), "FLAT".into(), "FLAT".into()],
+            tab_width_mm: 0.0,
+            confidence: 0.0,
+            tray_id: 0,
+            is_border: false,
+            is_corner: false,
+            mean_lab: [0.0, 0.0, 0.0],
+            contour_points: Vec::new(),
+            corners: Vec::new(),
+            normalized_profiles: Vec::new(),
+            error: Some("src_pixels buffer length is smaller than src_w * src_h * 4".into()),
+        };
+    }
+
     // 1. Unwarp quadrilateral from camera frame to staging arena (96px = 25mm metric grounding)
     let src_w_f = src_w as f32;
     let src_h_f = src_h as f32;
@@ -601,14 +624,17 @@ pub fn ingest_mat_piece_internal(
     // Compute core Sobel texture
     let mut core_grad_sum = 0.0f32;
     let mut core_grad_count = 0u32;
+    let get_lum = |buf: &[u8], idx: usize| -> f32 {
+        buf[idx] as f32 * 0.299 + buf[idx + 1] as f32 * 0.587 + buf[idx + 2] as f32 * 0.114
+    };
     for y in (min_y + 1)..max_y {
         for x in (min_x + 1)..max_x {
             let idx = y * w + x;
             if closed_binary[idx] > 128 {
-                let p_l = dewarped_buffer[(y * w + (x - 1)) * 4] as f32;
-                let p_r = dewarped_buffer[(y * w + (x + 1)) * 4] as f32;
-                let p_u = dewarped_buffer[((y - 1) * w + x) * 4] as f32;
-                let p_d = dewarped_buffer[((y + 1) * w + x) * 4] as f32;
+                let p_l = get_lum(&dewarped_buffer, (y * w + (x - 1)) * 4);
+                let p_r = get_lum(&dewarped_buffer, (y * w + (x + 1)) * 4);
+                let p_u = get_lum(&dewarped_buffer, ((y - 1) * w + x) * 4);
+                let p_d = get_lum(&dewarped_buffer, ((y + 1) * w + x) * 4);
                 let gx = (p_r - p_l) * 0.5;
                 let gy = (p_d - p_u) * 0.5;
                 core_grad_sum += (gx * gx + gy * gy).sqrt();

@@ -82,6 +82,9 @@ pub fn compute_otsu_threshold(grayscale: &[u8]) -> u8 {
 
 /// Applies a 3x3 Gaussian smoothing kernel on grayscale to eliminate cardboard fiber noise
 pub fn gaussian_blur_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8]) {
+    if width == 0 || height == 0 {
+        return;
+    }
     let w = width as i32;
     let h = height as i32;
 
@@ -109,6 +112,9 @@ pub fn gaussian_blur_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8
 
 /// Applies a 3x3 morphological closing (dilation followed by erosion) to fuse small dropouts
 pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8]) {
+    if width == 0 || height == 0 {
+        return;
+    }
     let w = width as i32;
     let h = height as i32;
     let total = (width * height) as usize;
@@ -192,11 +198,14 @@ pub fn trace_piece_contour(
     width: u32,
     height: u32,
 ) -> Option<Vec<Point2D>> {
+    if width < 3 || height < 3 {
+        return None;
+    }
     let w = width as i32;
     let h = height as i32;
 
-    let margin_x = (width as f32 * 0.02) as i32;
-    let margin_y = (height as f32 * 0.02) as i32;
+    let margin_x = ((width as f32 * 0.02) as i32).max(1);
+    let margin_y = ((height as f32 * 0.02) as i32).max(1);
 
     let mut best_contour: Option<Vec<Point2D>> = None;
     let mut best_area = 0.0f32;
@@ -567,6 +576,9 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let mut best_chosen_theta = candidate_thetas[0];
 
     for &cand_t in &candidate_thetas {
+        if !cand_t.is_finite() {
+            continue;
+        }
         let mut theta = cand_t;
         while theta <= -std::f32::consts::FRAC_PI_4 {
             theta += std::f32::consts::FRAC_PI_2;
@@ -794,7 +806,8 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let next_e = best_q_idx[(e + 1) % 4];
         fwd_corner_span += (next_e + n - s) % n;
     }
-    let _is_forward_winding = fwd_corner_span < (n * 2);
+    let is_forward_winding = fwd_corner_span < (n * 2);
+    let step = if is_forward_winding { 1 } else { n - 1 };
 
     for e in 0..4 {
         let start_i = best_q_idx[e];
@@ -804,7 +817,7 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         let mut curr = start_i;
         while curr != end_i {
             samples.push(contour[curr]);
-            curr = (curr + 1) % n;
+            curr = (curr + step) % n;
         }
         samples.push(contour[end_i]);
 
@@ -1013,8 +1026,10 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     Some(ScannedPiece {
         center: Point2D { x: cx, y: cy },
         rotation_angle_rad: canonical_theta,
-        bounding_width: (corners[1].x - corners[0].x).abs().max((corners[2].x - corners[3].x).abs()),
-        bounding_height: (corners[3].y - corners[0].y).abs().max((corners[2].y - corners[1].y).abs()),
+        bounding_width: ((corners[1].x - corners[0].x).powi(2) + (corners[1].y - corners[0].y).powi(2)).sqrt()
+            .max(((corners[2].x - corners[3].x).powi(2) + (corners[2].y - corners[3].y).powi(2)).sqrt()),
+        bounding_height: ((corners[3].x - corners[0].x).powi(2) + (corners[3].y - corners[0].y).powi(2)).sqrt()
+            .max(((corners[2].x - corners[1].x).powi(2) + (corners[2].y - corners[1].y).powi(2)).sqrt()),
         perimeter_length: contour.len() as f32,
         corners,
         edges,

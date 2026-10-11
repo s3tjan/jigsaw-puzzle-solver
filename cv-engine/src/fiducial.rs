@@ -92,6 +92,10 @@ pub fn compute_focus_mtf(
     height: u32,
     corners: &[Point2D; 4],
 ) -> f32 {
+    if width < 6 || height < 6 {
+        return 0.0;
+    }
+
     let w = width as i32;
     let h = height as i32;
 

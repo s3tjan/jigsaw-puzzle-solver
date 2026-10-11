@@ -264,7 +264,7 @@ pub fn downsample_2x(src: &[u8], src_w: u32, src_h: u32) -> (Vec<u8>, u32, u32) 
 
         for x in 0..dst_w {
             let sx0 = (x * 2) as usize;
-            let sx1 = ((x * 2 + 1) as usize).min((src_h - 1) as usize);
+            let sx1 = ((x * 2 + 1) as usize).min((src_w - 1) as usize);
 
             let p00 = src[src_row0 + sx0] as u32;
             let p10 = src[src_row0 + sx1] as u32;
@@ -699,7 +699,7 @@ pub fn extract_visual_fingerprint(
 
     for i in 0..pixel_count {
         if let Some(m) = mask
-            && m[i] < 128 {
+            && i < m.len() && m[i] < 128 {
                 continue;
             }
         let m = mag[i] as f32;

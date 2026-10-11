@@ -666,16 +666,16 @@ pub fn evaluate_candidate_edge_pair(
         &edge_b.seam_rgb_samples,
     );
 
-    // Active Seam MGC Gate: If printed ink samples exist on both edges, reject color discontinuities (>0.30)
-    let has_ink_samples = !edge_a.seam_rgb_samples.is_empty() && !edge_b.seam_rgb_samples.is_empty();
-    if has_ink_samples && ink_cost > 0.30 {
+    // Active Seam MGC Gate: If valid printed ink samples exist on both edges, reject color discontinuities (>0.30)
+    let has_valid_ink = ink_cost >= 0.0;
+    if has_valid_ink && ink_cost > 0.30 {
         return None;
     }
 
     // Multimodal fusion:
-    // If seam ink samples are available, contour score is weighted and penalized by ink discontinuity.
+    // If valid seam ink samples are available, contour score is weighted and penalized by ink discontinuity.
     // If only geometry is available, contour score dominates.
-    let fused_score = if has_ink_samples {
+    let fused_score = if has_valid_ink {
         let ink_factor = (1.0 - (ink_cost / 0.30).min(1.0)).powi(2);
         contour_res.combined_compatibility_score * (0.50 + 0.50 * ink_factor)
     } else {
