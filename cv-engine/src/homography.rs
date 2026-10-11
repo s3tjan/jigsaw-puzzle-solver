@@ -149,6 +149,29 @@ impl Homography {
     }
 }
 
+/// Apply radial lens distortion with precomputed geometry constants
+#[inline(always)]
+pub fn apply_radial_distortion_fast(
+    pt: Point2D,
+    cx: f32,
+    cy: f32,
+    inv_diag: f32,
+    diag: f32,
+    k1: f32,
+) -> Point2D {
+    if k1.abs() <= 1e-4 {
+        return pt;
+    }
+    let norm_x = (pt.x - cx) * inv_diag;
+    let norm_y = (pt.y - cy) * inv_diag;
+    let r2 = norm_x * norm_x + norm_y * norm_y;
+    let factor = 1.0 + k1 * r2;
+    Point2D {
+        x: cx + norm_x * factor * diag,
+        y: cy + norm_y * factor * diag,
+    }
+}
+
 /// Apply radial lens distortion to a 2D point given image dimensions and k1 coefficient
 pub fn apply_radial_distortion(pt: Point2D, w: f32, h: f32, k1: f32) -> Point2D {
     if k1.abs() <= 1e-4 {
@@ -157,14 +180,7 @@ pub fn apply_radial_distortion(pt: Point2D, w: f32, h: f32, k1: f32) -> Point2D 
     let cx = w * 0.5;
     let cy = h * 0.5;
     let diag = (cx * cx + cy * cy).sqrt().max(1.0);
-    let norm_x = (pt.x - cx) / diag;
-    let norm_y = (pt.y - cy) / diag;
-    let r2 = norm_x * norm_x + norm_y * norm_y;
-    let factor = 1.0 + k1 * r2;
-    Point2D {
-        x: cx + norm_x * factor * diag,
-        y: cy + norm_y * factor * diag,
-    }
+    apply_radial_distortion_fast(pt, cx, cy, 1.0 / diag, diag, k1)
 }
 
 /// Invert radial lens distortion for a point (from distorted sensor coordinate to rectilinear undistorted plane)
@@ -214,6 +230,10 @@ pub fn dewarp_image(
 ) {
     let src_w_f = src_w as f32;
     let src_h_f = src_h as f32;
+    let cx = src_w_f * 0.5;
+    let cy = src_h_f * 0.5;
+    let diag = (cx * cx + cy * cy).sqrt().max(1.0);
+    let inv_diag = 1.0 / diag;
 
     for dy in 0..dst_h {
         let dy_f = dy as f32;
@@ -227,7 +247,7 @@ pub fn dewarp_image(
             let unwarped_pt = inv_h.transform_point(Point2D { x: dx_f, y: dy_f });
 
             // Apply radial lens distortion to find where this unwarped ray hits the distorted sensor
-            let src_pt = apply_radial_distortion(unwarped_pt, src_w_f, src_h_f, k1);
+            let src_pt = apply_radial_distortion_fast(unwarped_pt, cx, cy, inv_diag, diag, k1);
 
             if src_pt.x >= 0.0 && src_pt.x < src_w_f && src_pt.y >= 0.0 && src_pt.y < src_h_f {
                 let sx = src_pt.x as u32;

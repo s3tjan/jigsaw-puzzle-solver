@@ -34,10 +34,7 @@ pub fn refine_fiducial_centroid(
             if dx * dx + dy * dy <= rad_sq {
                 let idx = ((y as u32 * width + x as u32) * 4) as usize;
                 if idx + 2 < pixels.len() {
-                    let r = pixels[idx] as u32;
-                    let g = pixels[idx + 1] as u32;
-                    let b = pixels[idx + 2] as u32;
-                    let lum = (r * 299 + g * 587 + b * 114) / 1000;
+                    let lum = crate::poster::rgb_to_luminance(pixels[idx], pixels[idx + 1], pixels[idx + 2]) as u32;
                     if lum < min_lum { min_lum = lum; }
                     if lum > max_lum { max_lum = lum; }
                 }
@@ -58,10 +55,7 @@ pub fn refine_fiducial_centroid(
             if dx * dx + dy * dy <= rad_sq {
                 let idx = ((y as u32 * width + x as u32) * 4) as usize;
                 if idx + 2 < pixels.len() {
-                    let r = pixels[idx] as u32;
-                    let g = pixels[idx + 1] as u32;
-                    let b = pixels[idx + 2] as u32;
-                    let lum = (r * 299 + g * 587 + b * 114) / 1000;
+                    let lum = crate::poster::rgb_to_luminance(pixels[idx], pixels[idx + 1], pixels[idx + 2]) as u32;
 
                     let darkness_norm = (max_lum.saturating_sub(lum)) as f64 / contrast_range;
                     let weight = darkness_norm * darkness_norm * darkness_norm;
@@ -126,7 +120,7 @@ pub fn compute_focus_mtf(
                 let get_lum = |px: i32, py: i32| -> f64 {
                     let idx = ((py * w + px) * 4) as usize;
                     if idx + 2 < pixels.len() {
-                        pixels[idx] as f64 * 0.299 + pixels[idx + 1] as f64 * 0.587 + pixels[idx + 2] as f64 * 0.114
+                        crate::poster::rgb_to_luminance(pixels[idx], pixels[idx + 1], pixels[idx + 2]) as f64
                     } else {
                         0.0
                     }

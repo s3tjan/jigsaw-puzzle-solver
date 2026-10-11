@@ -75,6 +75,37 @@ pub struct MasterPoster {
     pub pyramids: Vec<PyramidLevel>,
 }
 
+/// Standard ITU-R BT.601 perceptual luminance calculation from RGB
+#[inline(always)]
+pub fn rgb_to_luminance(r: u8, g: u8, b: u8) -> u8 {
+    ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8
+}
+
+/// Classify whether a grid slot (r, c) is on the boundary (border) or vertex (corner)
+#[inline(always)]
+pub fn classify_grid_cell(r: u32, c: u32, rows: u32, cols: u32) -> (bool, bool) {
+    let is_top = r == 0;
+    let is_bottom = r == rows.saturating_sub(1);
+    let is_left = c == 0;
+    let is_right = c == cols.saturating_sub(1);
+    let is_border = is_top || is_bottom || is_left || is_right;
+    let is_corner = (is_left || is_right) && (is_top || is_bottom);
+    (is_border, is_corner)
+}
+
+static SRGB_TO_LINEAR_LUT: std::sync::LazyLock<[f32; 256]> = std::sync::LazyLock::new(|| {
+    let mut lut = [0.0f32; 256];
+    for (i, item) in lut.iter_mut().enumerate() {
+        let v = i as f32 / 255.0;
+        *item = if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        };
+    }
+    lut
+});
+
 /// Convert an RGBA buffer (4 bytes per pixel) into a single-channel grayscale buffer (1 byte per pixel).
 /// Uses standard luminance weights: Y = 0.299*R + 0.587*G + 0.114*B.
 pub fn rgba_to_grayscale(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
@@ -83,11 +114,7 @@ pub fn rgba_to_grayscale(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
     let src_len = rgba.len().min(pixel_count * 4);
 
     for i in 0..(src_len / 4) {
-        let r = rgba[i * 4] as u32;
-        let g = rgba[i * 4 + 1] as u32;
-        let b = rgba[i * 4 + 2] as u32;
-        let lum = (299 * r + 587 * g + 114 * b) / 1000;
-        gray[i] = lum.min(255) as u8;
+        gray[i] = rgb_to_luminance(rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]);
     }
     gray
 }
@@ -359,13 +386,7 @@ pub fn compute_slot_grid(
             let center_x_mm = (c as f32 + 0.5) * cell_w_mm;
             let center_y_mm = (r as f32 + 0.5) * cell_h_mm;
 
-            let is_left = c == 0;
-            let is_right = c == cols - 1;
-            let is_top = r == 0;
-            let is_bottom = r == rows - 1;
-
-            let is_corner = (is_left || is_right) && (is_top || is_bottom);
-            let is_border = is_left || is_right || is_top || is_bottom;
+            let (is_border, is_corner) = classify_grid_cell(r, c, rows, cols);
 
             slots.push(PosterSlot {
                 col: c,
@@ -389,18 +410,10 @@ pub fn compute_slot_grid(
 
 /// Convert sRGB [0..255] to CIELAB (D65 illuminant).
 pub fn rgb_to_cielab(r: u8, g: u8, b: u8) -> [f32; 3] {
-    // 1. sRGB to linear RGB
-    let to_linear = |val: u8| -> f32 {
-        let v = (val as f32) / 255.0;
-        if v <= 0.04045 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    let lr = to_linear(r);
-    let lg = to_linear(g);
-    let lb = to_linear(b);
+    // 1. sRGB to linear RGB via precomputed lookup table
+    let lr = SRGB_TO_LINEAR_LUT[r as usize];
+    let lg = SRGB_TO_LINEAR_LUT[g as usize];
+    let lb = SRGB_TO_LINEAR_LUT[b as usize];
 
     // 2. Linear RGB to XYZ
     let x = lr * 0.4124564 + lg * 0.3575761 + lb * 0.1804375;
@@ -492,13 +505,7 @@ pub fn extract_slot_preview(
 
     let lab = rgb_to_cielab(mean_r, mean_g, mean_b);
 
-    let is_left = col == 0;
-    let is_right = col == cols - 1;
-    let is_top = row == 0;
-    let is_bottom = row == rows - 1;
-
-    let is_corner = (is_left || is_right) && (is_top || is_bottom);
-    let is_border = is_left || is_right || is_top || is_bottom;
+    let (is_border, is_corner) = classify_grid_cell(row, col, rows, cols);
 
     Ok(SlotPreview {
         col,
@@ -797,9 +804,7 @@ pub fn precompute_poster_slots(
 
     for r in 0..rows {
         for c in 0..cols {
-            let is_corner = (r == 0 && c == 0) || (r == 0 && c == cols - 1)
-                || (r == rows - 1 && c == 0) || (r == rows - 1 && c == cols - 1);
-            let is_border = r == 0 || r == rows - 1 || c == 0 || c == cols - 1;
+            let (is_border, is_corner) = classify_grid_cell(r, c, rows, cols);
 
             let x0 = (c as f32 * (poster_w as f32 / cols as f32)) as usize;
             let y0 = (r as f32 * (poster_h as f32 / rows as f32)) as usize;
@@ -1238,11 +1243,7 @@ pub fn precompute_spatial_poster_slots(
 
     for r in 0..rows {
         for c in 0..cols {
-            let is_corner = (r == 0 && c == 0)
-                || (r == 0 && c == cols - 1)
-                || (r == rows - 1 && c == 0)
-                || (r == rows - 1 && c == cols - 1);
-            let is_border = r == 0 || r == rows - 1 || c == 0 || c == cols - 1;
+            let (is_border, is_corner) = classify_grid_cell(r, c, rows, cols);
 
             let center_x = (c as f32 + 0.5) * cell_w_f;
             let center_y = (r as f32 + 0.5) * cell_h_f;
@@ -1738,40 +1739,56 @@ pub fn get_default_tray_definitions(max_capacity: u32) -> Vec<TrayInfo> {
     ]
 }
 
-/// TRY-04: Deterministic 2x4 spatial grid partition for interior cells (r: 1..26, c: 1..34)
+/// TRY-04: Deterministic 2x4 spatial grid partition for interior cells (default 28 rows, 36 cols)
 pub fn get_spatial_seed_tray(r: u32, c: u32) -> u8 {
-    let row_band = if r <= 13 { 0u8 } else { 1u8 };
-    let col_band = if c <= 9 {
-        0u8
-    } else if c <= 18 {
-        1u8
-    } else if c <= 26 {
-        2u8
-    } else {
-        3u8
-    };
-    row_band * 4 + col_band + 1
+    get_spatial_seed_tray_grid(r, c, POSTER_TOTAL_ROWS, POSTER_TOTAL_COLS)
 }
 
-/// TRY-01: Extract 1,008 feature vectors from an RGBA poster buffer
+/// Dynamic 2x4 spatial grid partition for arbitrary puzzle grid dimensions
+pub fn get_spatial_seed_tray_grid(r: u32, c: u32, rows: u32, cols: u32) -> u8 {
+    if rows == POSTER_TOTAL_ROWS && cols == POSTER_TOTAL_COLS {
+        let row_band = if r <= 13 { 0u8 } else { 1u8 };
+        let col_band = if c <= 9 {
+            0u8
+        } else if c <= 18 {
+            1u8
+        } else if c <= 26 {
+            2u8
+        } else {
+            3u8
+        };
+        row_band * 4 + col_band + 1
+    } else {
+        let row_band = if r < rows / 2 { 0u8 } else { 1u8 };
+        let col_band = ((c as f32 / cols.max(1) as f32) * 4.0).clamp(0.0, 3.0) as u8;
+        row_band * 4 + col_band + 1
+    }
+}
+
+/// TRY-01: Extract feature vectors from an RGBA poster buffer for the default 1008-piece grid (36x28)
 pub fn extract_poster_features(
     poster_rgba: &[u8],
     width: u32,
     height: u32,
 ) -> Vec<PosterSlotFeature> {
-    let mut slots = Vec::with_capacity((POSTER_TOTAL_COLS * POSTER_TOTAL_ROWS) as usize);
-    let cell_w = width as f32 / POSTER_TOTAL_COLS as f32;
-    let cell_h = height as f32 / POSTER_TOTAL_ROWS as f32;
+    extract_poster_features_grid(poster_rgba, width, height, POSTER_TOTAL_COLS, POSTER_TOTAL_ROWS)
+}
 
-    for r in 0..POSTER_TOTAL_ROWS {
-        for c in 0..POSTER_TOTAL_COLS {
-            let is_border = r == 0 || r == POSTER_TOTAL_ROWS - 1 || c == 0 || c == POSTER_TOTAL_COLS - 1;
-            let is_corner = is_border && (
-                (r == 0 && c == 0) ||
-                (r == 0 && c == POSTER_TOTAL_COLS - 1) ||
-                (r == POSTER_TOTAL_ROWS - 1 && c == 0) ||
-                (r == POSTER_TOTAL_ROWS - 1 && c == POSTER_TOTAL_COLS - 1)
-            );
+/// Extract feature vectors from an RGBA poster buffer for arbitrary grid dimensions
+pub fn extract_poster_features_grid(
+    poster_rgba: &[u8],
+    width: u32,
+    height: u32,
+    cols: u32,
+    rows: u32,
+) -> Vec<PosterSlotFeature> {
+    let mut slots = Vec::with_capacity((cols * rows) as usize);
+    let cell_w = width as f32 / cols.max(1) as f32;
+    let cell_h = height as f32 / rows.max(1) as f32;
+
+    for r in 0..rows {
+        for c in 0..cols {
+            let (is_border, is_corner) = classify_grid_cell(r, c, rows, cols);
 
             let x0 = c as f32 * cell_w;
             let y0 = r as f32 * cell_h;
@@ -1811,18 +1828,26 @@ pub fn extract_poster_features(
                         pixel_count += 1;
 
                         if x > 0 && x + 1 < width && y > 0 && y + 1 < height {
-                            let p_l = ((poster_rgba[((y * width + (x - 1)) * 4) as usize] as i32 * 299
-                                + poster_rgba[((y * width + (x - 1)) * 4 + 1) as usize] as i32 * 587
-                                + poster_rgba[((y * width + (x - 1)) * 4 + 2) as usize] as i32 * 114) / 1000) as f32;
-                            let p_r = ((poster_rgba[((y * width + (x + 1)) * 4) as usize] as i32 * 299
-                                + poster_rgba[((y * width + (x + 1)) * 4 + 1) as usize] as i32 * 587
-                                + poster_rgba[((y * width + (x + 1)) * 4 + 2) as usize] as i32 * 114) / 1000) as f32;
-                            let p_u = ((poster_rgba[(((y - 1) * width + x) * 4) as usize] as i32 * 299
-                                + poster_rgba[(((y - 1) * width + x) * 4 + 1) as usize] as i32 * 587
-                                + poster_rgba[(((y - 1) * width + x) * 4 + 2) as usize] as i32 * 114) / 1000) as f32;
-                            let p_d = ((poster_rgba[(((y + 1) * width + x) * 4) as usize] as i32 * 299
-                                + poster_rgba[(((y + 1) * width + x) * 4 + 1) as usize] as i32 * 587
-                                + poster_rgba[(((y + 1) * width + x) * 4 + 2) as usize] as i32 * 114) / 1000) as f32;
+                            let p_l = rgb_to_luminance(
+                                poster_rgba[((y * width + (x - 1)) * 4) as usize],
+                                poster_rgba[((y * width + (x - 1)) * 4 + 1) as usize],
+                                poster_rgba[((y * width + (x - 1)) * 4 + 2) as usize],
+                            ) as f32;
+                            let p_r = rgb_to_luminance(
+                                poster_rgba[((y * width + (x + 1)) * 4) as usize],
+                                poster_rgba[((y * width + (x + 1)) * 4 + 1) as usize],
+                                poster_rgba[((y * width + (x + 1)) * 4 + 2) as usize],
+                            ) as f32;
+                            let p_u = rgb_to_luminance(
+                                poster_rgba[(((y - 1) * width + x) * 4) as usize],
+                                poster_rgba[(((y - 1) * width + x) * 4 + 1) as usize],
+                                poster_rgba[(((y - 1) * width + x) * 4 + 2) as usize],
+                            ) as f32;
+                            let p_d = rgb_to_luminance(
+                                poster_rgba[(((y + 1) * width + x) * 4) as usize],
+                                poster_rgba[(((y + 1) * width + x) * 4 + 1) as usize],
+                                poster_rgba[(((y + 1) * width + x) * 4 + 2) as usize],
+                            ) as f32;
 
                             let gx = (p_r - p_l) * 0.5;
                             let gy = (p_d - p_u) * 0.5;
@@ -1860,7 +1885,7 @@ pub fn extract_poster_features(
                 0.0
             };
 
-            let tray_id = if is_border { 0 } else { get_spatial_seed_tray(r, c) };
+            let tray_id = if is_border { 0 } else { get_spatial_seed_tray_grid(r, c, rows, cols) };
 
             slots.push(PosterSlotFeature {
                 r,
@@ -1880,7 +1905,22 @@ pub fn extract_poster_features(
 
 /// TRY-04: Initialize K=8 centroids from the 2x4 spatial grid
 pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<Centroid> {
+    let max_r = interior_slots.iter().map(|s| s.r).max().unwrap_or(0);
+    let max_c = interior_slots.iter().map(|s| s.c).max().unwrap_or(0);
+    let rows = (max_r + 2).max(POSTER_TOTAL_ROWS);
+    let cols = (max_c + 2).max(POSTER_TOTAL_COLS);
+    initialize_seeded_centroids_grid(interior_slots, rows, cols)
+}
+
+/// Initialize K=8 centroids from the 2x4 spatial grid for arbitrary puzzle grid dimensions
+pub fn initialize_seeded_centroids_grid(
+    interior_slots: &[PosterSlotFeature],
+    rows: u32,
+    cols: u32,
+) -> Vec<Centroid> {
     let mut centroids = Vec::with_capacity(NUM_TRAYS);
+    let r_denom = (rows.saturating_sub(3)).max(1) as f32;
+    let c_denom = (cols.saturating_sub(3)).max(1) as f32;
 
     for tray_idx in 1..=NUM_TRAYS as u8 {
         let mut sum_l = 0.0f32;
@@ -1893,14 +1933,14 @@ pub fn initialize_seeded_centroids(interior_slots: &[PosterSlotFeature]) -> Vec<
         let mut count = 0u32;
 
         for s in interior_slots {
-            if get_spatial_seed_tray(s.r, s.c) == tray_idx {
+            if get_spatial_seed_tray_grid(s.r, s.c, rows, cols) == tray_idx {
                 sum_l += s.lab[0];
                 sum_a += s.lab[1];
                 sum_b += s.lab[2];
                 sum_grad += s.gradient;
                 sum_std += s.color_std;
-                let r_norm = (s.r.saturating_sub(1)) as f32 / 25.0;
-                let c_norm = (s.c.saturating_sub(1)) as f32 / 33.0;
+                let r_norm = (s.r.saturating_sub(1)) as f32 / r_denom;
+                let c_norm = (s.c.saturating_sub(1)) as f32 / c_denom;
                 sum_r += r_norm;
                 sum_c += c_norm;
                 count += 1;
@@ -1945,6 +1985,29 @@ pub fn compute_slot_cluster_distance_sq(
     w_spatial: f32,
     luminance_scale: f32,
 ) -> f32 {
+    compute_slot_cluster_distance_sq_grid(
+        slot,
+        centroid,
+        w_color,
+        w_texture,
+        w_spatial,
+        luminance_scale,
+        25.0,
+        33.0,
+    )
+}
+
+/// Compute weighted Euclidean distance between a slot feature and a centroid for arbitrary grid dimensions
+pub fn compute_slot_cluster_distance_sq_grid(
+    slot: &PosterSlotFeature,
+    centroid: &Centroid,
+    w_color: f32,
+    w_texture: f32,
+    w_spatial: f32,
+    luminance_scale: f32,
+    r_denom: f32,
+    c_denom: f32,
+) -> f32 {
     let dl = (slot.lab[0] - centroid.lab[0]) * luminance_scale;
     let da = slot.lab[1] - centroid.lab[1];
     let db = slot.lab[2] - centroid.lab[2];
@@ -1957,8 +2020,8 @@ pub fn compute_slot_cluster_distance_sq(
     let d_texture_sq = 0.55 * (d_grad * d_grad) + 0.45 * (d_std * d_std);
 
     // Spatial coordinates normalized across interior grid span
-    let r_norm = (slot.r.saturating_sub(1)) as f32 / 25.0;
-    let c_norm = (slot.c.saturating_sub(1)) as f32 / 33.0;
+    let r_norm = (slot.r.saturating_sub(1)) as f32 / r_denom;
+    let c_norm = (slot.c.saturating_sub(1)) as f32 / c_denom;
     let dr = r_norm - centroid.r_norm;
     let dc = c_norm - centroid.c_norm;
     // Calibrated spatial scaling:
@@ -1970,7 +2033,7 @@ pub fn compute_slot_cluster_distance_sq(
     w_color * norm_color_sq + w_texture * d_texture_sq + w_spatial * d_spatial_sq
 }
 
-/// TRY-02 & TRY-03: Capacity-constrained weighted K-Means clustering
+/// TRY-02 & TRY-03: Capacity-constrained weighted K-Means clustering (default 28 rows, 36 cols)
 pub fn cluster_interior_slots(
     interior_slots: &[PosterSlotFeature],
     w_color: f32,
@@ -1979,10 +2042,40 @@ pub fn cluster_interior_slots(
     max_capacity: u32,
     max_iterations: u32,
 ) -> (Vec<u8>, Vec<Centroid>, u32, f32) {
+    let max_r = interior_slots.iter().map(|s| s.r).max().unwrap_or(0);
+    let max_c = interior_slots.iter().map(|s| s.c).max().unwrap_or(0);
+    let rows = (max_r + 2).max(POSTER_TOTAL_ROWS);
+    let cols = (max_c + 2).max(POSTER_TOTAL_COLS);
+    cluster_interior_slots_grid(
+        interior_slots,
+        w_color,
+        w_texture,
+        w_spatial,
+        max_capacity,
+        max_iterations,
+        rows,
+        cols,
+    )
+}
+
+/// Capacity-constrained weighted K-Means clustering for arbitrary grid dimensions
+pub fn cluster_interior_slots_grid(
+    interior_slots: &[PosterSlotFeature],
+    w_color: f32,
+    w_texture: f32,
+    w_spatial: f32,
+    max_capacity: u32,
+    max_iterations: u32,
+    rows: u32,
+    cols: u32,
+) -> (Vec<u8>, Vec<Centroid>, u32, f32) {
     let n = interior_slots.len();
     if n == 0 {
         return (Vec::new(), Vec::new(), 0, 0.0);
     }
+
+    let r_denom = (rows.saturating_sub(3)).max(1) as f32;
+    let c_denom = (cols.saturating_sub(3)).max(1) as f32;
 
     // 1. Normalize weights so user sliders operate consistently and don't skew penalty
     let sum_w = w_color + w_texture + w_spatial;
@@ -2010,7 +2103,7 @@ pub fn cluster_interior_slots(
     };
 
     // 3. Initialize seeded centroids and store spatial anchor anchors
-    let initial_seeds = initialize_seeded_centroids(interior_slots);
+    let initial_seeds = initialize_seeded_centroids_grid(interior_slots, rows, cols);
     let seed_anchors: Vec<(f32, f32)> = initial_seeds
         .iter()
         .map(|c| (c.r_norm, c.c_norm))
@@ -2019,7 +2112,7 @@ pub fn cluster_interior_slots(
     let mut centroids = initial_seeds;
     let mut assignments: Vec<u8> = interior_slots
         .iter()
-        .map(|s| get_spatial_seed_tray(s.r, s.c))
+        .map(|s| get_spatial_seed_tray_grid(s.r, s.c, rows, cols))
         .collect();
 
     let mut tray_counts = [0u32; NUM_TRAYS + 1];
@@ -2027,7 +2120,7 @@ pub fn cluster_interior_slots(
         tray_counts[t as usize] += 1;
     }
 
-    let target_avg = (n as f32 / NUM_TRAYS as f32).round() as u32; // ~111
+    let target_avg = (n as f32 / NUM_TRAYS as f32).round() as u32;
     let mut total_iterations = 0;
     let mut final_inertia = 0.0f32;
 
@@ -2045,13 +2138,15 @@ pub fn cluster_interior_slots(
             let mut best_raw_dist_sq = 0.0f32;
 
             for t in 1..=NUM_TRAYS as u8 {
-                let dist_sq = compute_slot_cluster_distance_sq(
+                let dist_sq = compute_slot_cluster_distance_sq_grid(
                     slot,
                     &centroids[(t - 1) as usize],
                     nw_c,
                     nw_t,
                     nw_s,
                     luminance_scale,
+                    r_denom,
+                    c_denom,
                 );
 
                 let current_count = tray_counts[t as usize];
@@ -2061,7 +2156,7 @@ pub fn cluster_interior_slots(
                     current_count
                 };
 
-                // Gentle capacity penalty above average (~111), rigid wall at max capacity (125)
+                // Gentle capacity penalty above average, rigid wall at max capacity
                 let mut capacity_penalty = 0.0f32;
                 if count_for_eval >= target_avg {
                     let excess = (count_for_eval - target_avg) as f32;
@@ -2108,8 +2203,8 @@ pub fn cluster_interior_slots(
             sum_b[t] += s.lab[2];
             sum_grad[t] += s.gradient;
             sum_std[t] += s.color_std;
-            let r_norm = (s.r.saturating_sub(1)) as f32 / 25.0;
-            let c_norm = (s.c.saturating_sub(1)) as f32 / 33.0;
+            let r_norm = (s.r.saturating_sub(1)) as f32 / r_denom;
+            let c_norm = (s.c.saturating_sub(1)) as f32 / c_denom;
             sum_r[t] += r_norm;
             sum_c[t] += c_norm;
             counts[t] += 1;
@@ -2145,10 +2240,21 @@ pub fn cluster_interior_slots(
     }
 
     // Build slot spatial lookup table (row, col) -> index for 4-neighbor adjacency checking
-    let mut grid_idx = [[None; POSTER_TOTAL_COLS as usize]; POSTER_TOTAL_ROWS as usize];
+    let mut grid_idx = vec![None; (rows * cols) as usize];
     for (idx, s) in interior_slots.iter().enumerate() {
-        grid_idx[s.r as usize][s.c as usize] = Some(idx);
+        let g = (s.r * cols + s.c) as usize;
+        if g < grid_idx.len() {
+            grid_idx[g] = Some(idx);
+        }
     }
+
+    let get_nb = |r_idx: usize, c_idx: usize| -> Option<usize> {
+        if r_idx < rows as usize && c_idx < cols as usize {
+            grid_idx[r_idx * cols as usize + c_idx]
+        } else {
+            None
+        }
+    };
 
     // Pass 1: Neighbor Majority Smoothing (Iterated Conditional Modes)
     // Smooths out single-slot jitter along boundaries if a slot is surrounded by a different tray
@@ -2160,10 +2266,10 @@ pub fn cluster_interior_slots(
             let c = slot.c as usize;
 
             let neighbors = [
-                if r > 0 { grid_idx[r - 1][c] } else { None },
-                if r + 1 < POSTER_TOTAL_ROWS as usize { grid_idx[r + 1][c] } else { None },
-                if c > 0 { grid_idx[r][c - 1] } else { None },
-                if c + 1 < POSTER_TOTAL_COLS as usize { grid_idx[r][c + 1] } else { None },
+                if r > 0 { get_nb(r - 1, c) } else { None },
+                get_nb(r + 1, c),
+                if c > 0 { get_nb(r, c - 1) } else { None },
+                get_nb(r, c + 1),
             ];
 
             let mut neighbor_tray_counts = [0u8; NUM_TRAYS + 1];
@@ -2214,10 +2320,10 @@ pub fn cluster_interior_slots(
                 let cc = interior_slots[curr].c as usize;
 
                 let neighbors = [
-                    if cr > 0 { grid_idx[cr - 1][cc] } else { None },
-                    if cr + 1 < POSTER_TOTAL_ROWS as usize { grid_idx[cr + 1][cc] } else { None },
-                    if cc > 0 { grid_idx[cr][cc - 1] } else { None },
-                    if cc + 1 < POSTER_TOTAL_COLS as usize { grid_idx[cr][cc + 1] } else { None },
+                    if cr > 0 { get_nb(cr - 1, cc) } else { None },
+                    get_nb(cr + 1, cc),
+                    if cc > 0 { get_nb(cr, cc - 1) } else { None },
+                    get_nb(cr, cc + 1),
                 ];
 
                 for &nb in &neighbors {
@@ -2237,10 +2343,10 @@ pub fn cluster_interior_slots(
                     let cr = interior_slots[idx].r as usize;
                     let cc = interior_slots[idx].c as usize;
                     let neighbors = [
-                        if cr > 0 { grid_idx[cr - 1][cc] } else { None },
-                        if cr + 1 < POSTER_TOTAL_ROWS as usize { grid_idx[cr + 1][cc] } else { None },
-                        if cc > 0 { grid_idx[cr][cc - 1] } else { None },
-                        if cc + 1 < POSTER_TOTAL_COLS as usize { grid_idx[cr][cc + 1] } else { None },
+                        if cr > 0 { get_nb(cr - 1, cc) } else { None },
+                        get_nb(cr + 1, cc),
+                        if cc > 0 { get_nb(cr, cc - 1) } else { None },
+                        get_nb(cr, cc + 1),
                     ];
                     for &nb in &neighbors {
                         if let Some(n_idx) = nb {
@@ -2260,13 +2366,15 @@ pub fn cluster_interior_slots(
                     if touching_trays[t] > 0 && tray_counts[t] + (component.len() as u32) <= max_capacity {
                         let mut sum_cost = 0.0f32;
                         for &idx in &component {
-                            sum_cost += compute_slot_cluster_distance_sq(
+                            sum_cost += compute_slot_cluster_distance_sq_grid(
                                 &interior_slots[idx],
                                 &centroids[t - 1],
                                 nw_c,
                                 nw_t,
                                 nw_s,
                                 luminance_scale,
+                                r_denom,
+                                c_denom,
                             );
                         }
                         if sum_cost < best_target_cost {
@@ -2315,33 +2423,37 @@ pub fn cluster_interior_slots(
         for i in 0..n {
             if assignments[i] as usize == overflow_tray {
                 let slot = &interior_slots[i];
-                let current_dist_sq = compute_slot_cluster_distance_sq(
+                let current_dist_sq = compute_slot_cluster_distance_sq_grid(
                     slot,
                     &centroids[overflow_tray - 1],
                     nw_c,
                     nw_t,
                     nw_s,
                     luminance_scale,
+                    r_denom,
+                    c_denom,
                 );
 
                 let r = slot.r as usize;
                 let c = slot.c as usize;
                 let neighbors = [
-                    if r > 0 { grid_idx[r - 1][c] } else { None },
-                    if r + 1 < POSTER_TOTAL_ROWS as usize { grid_idx[r + 1][c] } else { None },
-                    if c > 0 { grid_idx[r][c - 1] } else { None },
-                    if c + 1 < POSTER_TOTAL_COLS as usize { grid_idx[r][c + 1] } else { None },
+                    if r > 0 { get_nb(r - 1, c) } else { None },
+                    get_nb(r + 1, c),
+                    if c > 0 { get_nb(r, c - 1) } else { None },
+                    get_nb(r, c + 1),
                 ];
 
                 for target_t in 1..=NUM_TRAYS {
                     if target_t != overflow_tray && tray_counts[target_t] < max_capacity {
-                        let target_dist_sq = compute_slot_cluster_distance_sq(
+                        let target_dist_sq = compute_slot_cluster_distance_sq_grid(
                             slot,
                             &centroids[target_t - 1],
                             nw_c,
                             nw_t,
                             nw_s,
                             luminance_scale,
+                            r_denom,
+                            c_denom,
                         );
 
                         let touches_target = neighbors.iter().any(|&nb| {
@@ -2374,7 +2486,7 @@ pub fn cluster_interior_slots(
     (assignments, centroids, total_iterations, final_inertia / n as f32)
 }
 
-/// Full analysis and clustering pipeline
+/// Full analysis and clustering pipeline for default 36x28 puzzle grid
 pub fn analyze_and_cluster_poster_internal(
     poster_rgba: &[u8],
     width: u32,
@@ -2384,16 +2496,43 @@ pub fn analyze_and_cluster_poster_internal(
     w_spatial: f32,
     max_capacity: u32,
 ) -> ClusteringResult {
-    let mut slots = extract_poster_features(poster_rgba, width, height);
+    analyze_and_cluster_poster_grid_internal(
+        poster_rgba,
+        width,
+        height,
+        POSTER_TOTAL_COLS,
+        POSTER_TOTAL_ROWS,
+        w_color,
+        w_texture,
+        w_spatial,
+        max_capacity,
+    )
+}
+
+/// Full analysis and clustering pipeline for arbitrary puzzle grid dimensions
+pub fn analyze_and_cluster_poster_grid_internal(
+    poster_rgba: &[u8],
+    width: u32,
+    height: u32,
+    cols: u32,
+    rows: u32,
+    w_color: f32,
+    w_texture: f32,
+    w_spatial: f32,
+    max_capacity: u32,
+) -> ClusteringResult {
+    let mut slots = extract_poster_features_grid(poster_rgba, width, height, cols, rows);
     let interior_slots: Vec<PosterSlotFeature> = slots.iter().filter(|s| !s.is_border).cloned().collect();
 
-    let (assignments, _centroids, iterations, inertia) = cluster_interior_slots(
+    let (assignments, _centroids, iterations, inertia) = cluster_interior_slots_grid(
         &interior_slots,
         w_color,
         w_texture,
         w_spatial,
         max_capacity,
         20,
+        rows,
+        cols,
     );
 
     let mut interior_idx = 0;
@@ -2423,6 +2562,14 @@ pub fn analyze_and_cluster_poster_internal(
         }
     }
 
+    let total_pieces = cols * rows;
+    let border_pieces = if rows > 1 && cols > 1 {
+        (cols * 2) + (rows - 2) * 2
+    } else {
+        total_pieces
+    };
+    let interior_pieces = total_pieces.saturating_sub(border_pieces);
+
     let stats = ClusteringStats {
         iterations,
         max_iterations: 20,
@@ -2430,9 +2577,9 @@ pub fn analyze_and_cluster_poster_internal(
         is_balanced: overflow_count == 0,
         overflow_count,
         compute_time_ms: 0,
-        total_pieces: POSTER_TOTAL_PIECES,
-        border_pieces: POSTER_BORDER_PIECES,
-        interior_pieces: POSTER_INTERIOR_PIECES,
+        total_pieces,
+        border_pieces,
+        interior_pieces,
     };
 
     ClusteringResult {
@@ -2442,12 +2589,38 @@ pub fn analyze_and_cluster_poster_internal(
     }
 }
 
-/// TRY-05: WASM entrypoint
+/// TRY-05: WASM entrypoint (default 36x28 puzzle grid)
 #[wasm_bindgen]
 pub fn analyze_and_cluster_poster(
     poster_rgba: &[u8],
     width: u32,
     height: u32,
+    w_color: f32,
+    w_texture: f32,
+    w_spatial: f32,
+    max_capacity: u32,
+) -> Result<JsValue, JsValue> {
+    analyze_and_cluster_poster_grid(
+        poster_rgba,
+        width,
+        height,
+        POSTER_TOTAL_COLS,
+        POSTER_TOTAL_ROWS,
+        w_color,
+        w_texture,
+        w_spatial,
+        max_capacity,
+    )
+}
+
+/// WASM entrypoint for arbitrary puzzle grid dimensions
+#[wasm_bindgen]
+pub fn analyze_and_cluster_poster_grid(
+    poster_rgba: &[u8],
+    width: u32,
+    height: u32,
+    cols: u32,
+    rows: u32,
     w_color: f32,
     w_texture: f32,
     w_spatial: f32,
@@ -2462,10 +2635,12 @@ pub fn analyze_and_cluster_poster(
         .map(|p| p.now())
         .unwrap_or(0.0);
 
-    let mut result = analyze_and_cluster_poster_internal(
+    let mut result = analyze_and_cluster_poster_grid_internal(
         poster_rgba,
         width,
         height,
+        cols,
+        rows,
         w_color,
         w_texture,
         w_spatial,

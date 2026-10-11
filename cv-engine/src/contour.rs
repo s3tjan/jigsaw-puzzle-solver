@@ -821,8 +821,13 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         }
         samples.push(contour[end_i]);
 
-        let p_start = contour[start_i];
-        let p_end = contour[end_i];
+        let p_start = corners[e];
+        let p_end = corners[(e + 1) % 4];
+        if !samples.is_empty() {
+            samples[0] = p_start;
+            let last = samples.len() - 1;
+            samples[last] = p_end;
+        }
         let base_dx = p_end.x - p_start.x;
         let base_dy = p_end.y - p_start.y;
         let base_len = (base_dx * base_dx + base_dy * base_dy).sqrt().max(1.0);
@@ -974,52 +979,10 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
     let is_corner = flat_count == 2;
     let is_border = flat_count == 1;
 
-    let edges = [
-        {
-            let mut e0 = edges_vec[0].clone();
-            e0.start_corner = corners[0];
-            e0.end_corner = corners[1];
-            if !e0.curve_samples.is_empty() {
-                e0.curve_samples[0] = corners[0];
-                let last = e0.curve_samples.len() - 1;
-                e0.curve_samples[last] = corners[1];
-            }
-            e0
-        },
-        {
-            let mut e1 = edges_vec[1].clone();
-            e1.start_corner = corners[1];
-            e1.end_corner = corners[2];
-            if !e1.curve_samples.is_empty() {
-                e1.curve_samples[0] = corners[1];
-                let last = e1.curve_samples.len() - 1;
-                e1.curve_samples[last] = corners[2];
-            }
-            e1
-        },
-        {
-            let mut e2 = edges_vec[2].clone();
-            e2.start_corner = corners[2];
-            e2.end_corner = corners[3];
-            if !e2.curve_samples.is_empty() {
-                e2.curve_samples[0] = corners[2];
-                let last = e2.curve_samples.len() - 1;
-                e2.curve_samples[last] = corners[3];
-            }
-            e2
-        },
-        {
-            let mut e3 = edges_vec[3].clone();
-            e3.start_corner = corners[3];
-            e3.end_corner = corners[0];
-            if !e3.curve_samples.is_empty() {
-                e3.curve_samples[0] = corners[3];
-                let last = e3.curve_samples.len() - 1;
-                e3.curve_samples[last] = corners[0];
-            }
-            e3
-        },
-    ];
+    let edges: [PieceEdge; 4] = match edges_vec.try_into() {
+        Ok(arr) => arr,
+        Err(_) => return None,
+    };
 
     let canonical_theta = if theta < 0.0 { theta + std::f32::consts::PI } else { theta };
 

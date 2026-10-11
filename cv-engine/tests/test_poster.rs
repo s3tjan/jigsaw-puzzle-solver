@@ -416,4 +416,38 @@ fn test_tray_export_format() {
     assert_eq!(parsed.trays.len(), 8);
 }
 
+#[test]
+fn test_arbitrary_grid_clustering() {
+    use cv_engine::poster::analyze_and_cluster_poster_grid_internal;
+
+    let cols = 20u32;
+    let rows = 15u32;
+    let total = cols * rows; // 300
+    let border = (cols * 2) + (rows - 2) * 2; // 40 + 26 = 66
+    let interior = total - border; // 234
+
+    let w = 400;
+    let h = 300;
+    let poster_rgba = vec![140u8; (w * h * 4) as usize];
+
+    let result = analyze_and_cluster_poster_grid_internal(
+        &poster_rgba,
+        w,
+        h,
+        cols,
+        rows,
+        0.40,
+        0.30,
+        0.30,
+        50,
+    );
+
+    assert_eq!(result.slots.len(), total as usize);
+    assert_eq!(result.stats.total_pieces, total);
+    assert_eq!(result.stats.border_pieces, border);
+    assert_eq!(result.stats.interior_pieces, interior);
+    assert_eq!(result.trays.len(), 8);
+}
+
+
 

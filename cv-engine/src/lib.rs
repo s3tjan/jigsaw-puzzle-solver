@@ -362,11 +362,31 @@ pub fn analyze_staged_piece(
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// Classification of a puzzle piece cardinal edge polarity
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum EdgePolarity {
+    Tab,
+    Hole,
+    Flat,
+}
+
+impl From<contour::EdgeType> for EdgePolarity {
+    #[inline]
+    fn from(t: contour::EdgeType) -> Self {
+        match t {
+            contour::EdgeType::Tab => EdgePolarity::Tab,
+            contour::EdgeType::Hole => EdgePolarity::Hole,
+            contour::EdgeType::Flat => EdgePolarity::Flat,
+        }
+    }
+}
+
 /// Ingestion result returned from cv-engine to web-app
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct IngestedPieceResult {
     pub success: bool,
-    pub polarities: [String; 4], // ["TAB", "HOLE", "FLAT", "TAB"]
+    pub polarities: [EdgePolarity; 4], // ["TAB", "HOLE", "FLAT", "TAB"]
     pub tab_width_mm: f32,
     pub confidence: f32,
     pub tray_id: u8,             // 0 for border, 1..8 for interior trays
@@ -428,7 +448,7 @@ pub fn ingest_mat_piece_internal(
     if src_pixels.len() < expected_src_len {
         return IngestedPieceResult {
             success: false,
-            polarities: ["FLAT".into(), "FLAT".into(), "FLAT".into(), "FLAT".into()],
+            polarities: [EdgePolarity::Flat; 4],
             tab_width_mm: 0.0,
             confidence: 0.0,
             tray_id: 0,
@@ -465,7 +485,7 @@ pub fn ingest_mat_piece_internal(
         Some(mat) => mat,
         None => return IngestedPieceResult {
             success: false,
-            polarities: ["FLAT".into(), "FLAT".into(), "FLAT".into(), "FLAT".into()],
+            polarities: [EdgePolarity::Flat; 4],
             tab_width_mm: 0.0,
             confidence: 0.0,
             tray_id: 0,
@@ -483,7 +503,7 @@ pub fn ingest_mat_piece_internal(
         Some(mat) => mat,
         None => return IngestedPieceResult {
             success: false,
-            polarities: ["FLAT".into(), "FLAT".into(), "FLAT".into(), "FLAT".into()],
+            polarities: [EdgePolarity::Flat; 4],
             tab_width_mm: 0.0,
             confidence: 0.0,
             tray_id: 0,
@@ -505,7 +525,7 @@ pub fn ingest_mat_piece_internal(
         Ok(s) => s,
         Err(err_msg) => return IngestedPieceResult {
             success: false,
-            polarities: ["FLAT".into(), "FLAT".into(), "FLAT".into(), "FLAT".into()],
+            polarities: [EdgePolarity::Flat; 4],
             tab_width_mm: 0.0,
             confidence: 0.0,
             tray_id: 0,
@@ -526,7 +546,7 @@ pub fn ingest_mat_piece_internal(
         Some(sp) => sp,
         None => return IngestedPieceResult {
             success: false,
-            polarities: ["FLAT".into(), "FLAT".into(), "FLAT".into(), "FLAT".into()],
+            polarities: [EdgePolarity::Flat; 4],
             tab_width_mm: 0.0,
             confidence: 0.0,
             tray_id: 0,
@@ -541,26 +561,10 @@ pub fn ingest_mat_piece_internal(
     };
 
     let polarities = [
-        match scanned_piece.edges[0].edge_type {
-            contour::EdgeType::Tab => "TAB".to_string(),
-            contour::EdgeType::Hole => "HOLE".to_string(),
-            contour::EdgeType::Flat => "FLAT".to_string(),
-        },
-        match scanned_piece.edges[1].edge_type {
-            contour::EdgeType::Tab => "TAB".to_string(),
-            contour::EdgeType::Hole => "HOLE".to_string(),
-            contour::EdgeType::Flat => "FLAT".to_string(),
-        },
-        match scanned_piece.edges[2].edge_type {
-            contour::EdgeType::Tab => "TAB".to_string(),
-            contour::EdgeType::Hole => "HOLE".to_string(),
-            contour::EdgeType::Flat => "FLAT".to_string(),
-        },
-        match scanned_piece.edges[3].edge_type {
-            contour::EdgeType::Tab => "TAB".to_string(),
-            contour::EdgeType::Hole => "HOLE".to_string(),
-            contour::EdgeType::Flat => "FLAT".to_string(),
-        },
+        scanned_piece.edges[0].edge_type.into(),
+        scanned_piece.edges[1].edge_type.into(),
+        scanned_piece.edges[2].edge_type.into(),
+        scanned_piece.edges[3].edge_type.into(),
     ];
 
     // Compute average tab width in mm (96px = 25mm metric anchor)

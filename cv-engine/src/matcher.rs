@@ -2,6 +2,18 @@ use crate::contour::{EdgeType, PieceEdge};
 use crate::homography::Point2D;
 use wasm_bindgen::prelude::*;
 
+/// Maximum allowable L2 curve difference for genuine cardboard die-cut interlock
+pub const CARDBOARD_MATE_L2_TOLERANCE: f32 = 0.045;
+
+/// Candidate L2 curve residual ceiling for coarse matching
+pub const CANDIDATE_MATE_L2_CEILING: f32 = 0.070;
+
+/// Chebyshev Linf collision threshold above which physical puzzle pieces physically collide
+pub const CARDBOARD_COLLISION_LINF_CEILING: f32 = 0.120;
+
+/// CIELAB MGC seam color discontinuity threshold for adjacent die cuts
+pub const MAX_SEAM_INK_DISCONTINUITY: f32 = 0.30;
+
 /// Result of evaluating pairwise compatibility between two piece edges
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct PairwiseMatchResult {
@@ -205,7 +217,7 @@ pub fn evaluate_pairwise_edge_compatibility(
     // L2 >= 0.080 represents distinct non-matching curve shapes.
     let max_threshold = 0.075f32;
     let confidence = ((1.0 - (l2_dist / max_threshold)).max(0.0) * 100.0).min(100.0);
-    let is_compatible = l2_dist <= 0.045;
+    let is_compatible = l2_dist <= CARDBOARD_MATE_L2_TOLERANCE;
 
     PairwiseMatchResult {
         is_compatible,
@@ -213,7 +225,7 @@ pub fn evaluate_pairwise_edge_compatibility(
         alignment_offset: best_shift,
         confidence,
         rejection_reason: if is_compatible { None } else {
-            Some(format!("Curve profile L2 mismatch: {:.4} (threshold 0.0450)", l2_dist))
+            Some(format!("Curve profile L2 mismatch: {:.4} (threshold {:.4})", l2_dist, CARDBOARD_MATE_L2_TOLERANCE))
         },
     }
 }
@@ -412,17 +424,28 @@ pub fn check_step1_border_topology(
     piece_b: &IndexedPieceData,
     edge_b_idx: usize,
 ) -> bool {
-    let a_flat_indices: Vec<usize> = piece_a.edges.iter().enumerate()
-        .filter_map(|(i, e)| if e.edge_type == EdgeType::Flat { Some(i) } else { None })
-        .collect();
-    let b_flat_indices: Vec<usize> = piece_b.edges.iter().enumerate()
-        .filter_map(|(i, e)| if e.edge_type == EdgeType::Flat { Some(i) } else { None })
-        .collect();
+    let mut a_flat_idx = None;
+    let mut a_flat_count = 0;
+    for (i, e) in piece_a.edges.iter().enumerate() {
+        if e.edge_type == EdgeType::Flat {
+            a_flat_idx = Some(i);
+            a_flat_count += 1;
+        }
+    }
+
+    let mut b_flat_idx = None;
+    let mut b_flat_count = 0;
+    for (i, e) in piece_b.edges.iter().enumerate() {
+        if e.edge_type == EdgeType::Flat {
+            b_flat_idx = Some(i);
+            b_flat_count += 1;
+        }
+    }
 
     // If both pieces are Border pieces (exactly 1 flat edge)
-    if a_flat_indices.len() == 1 && b_flat_indices.len() == 1 {
-        let a_flat = a_flat_indices[0];
-        let b_flat = b_flat_indices[0];
+    if a_flat_count == 1 && b_flat_count == 1 {
+        let a_flat = a_flat_idx.unwrap();
+        let b_flat = b_flat_idx.unwrap();
 
         // The edge opposite to the flat edge is the interior edge
         let a_interior = (a_flat + 2) % 4;
@@ -618,8 +641,8 @@ pub fn check_step4_subpixel_contour(
     // L2 < 0.045: genuine physical mate on cardboard
     // L2 > 0.070: rejected mechanical mismatch
     // Linf > 0.120: rejected physical collision / excessive penetration gap
-    let max_l2_tolerance = 0.070f32;
-    let max_linf_tolerance = 0.120f32;
+    let max_l2_tolerance = CANDIDATE_MATE_L2_CEILING;
+    let max_linf_tolerance = CARDBOARD_COLLISION_LINF_CEILING;
     let is_physically_compatible = l2_dist <= max_l2_tolerance && linf_dist <= max_linf_tolerance;
     let score = (1.0 - (l2_dist / max_l2_tolerance)).clamp(0.0, 1.0);
 
