@@ -16,11 +16,16 @@ export class KeyboardNavService {
         return;
       }
 
-      // Close transient UI on Escape
+      // Close transient UI or reset scan on Escape
       if (event.key === 'Escape') {
         if (this.appModeStore.isCommandPaletteOpen()) {
           event.preventDefault();
           this.appModeStore.closeCommandPalette();
+          return;
+        }
+        if (this.appModeStore.activeMode() === 'INGESTION') {
+          event.preventDefault();
+          this.appModeStore.triggerScanReset();
           return;
         }
       }

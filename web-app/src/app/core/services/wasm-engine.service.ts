@@ -2,6 +2,7 @@ import { Injectable, signal } from '@angular/core';
 import init, {
   analyze_and_cluster_poster,
   ingest_mat_piece,
+  analyze_staged_piece,
   snap_fiducial_corner,
   dewarp_quad,
   measure_stage_focus
@@ -29,6 +30,14 @@ export interface IngestedPiecePayload {
   corners: number[];
   normalizedProfiles: number[][];
   error?: string;
+}
+
+export interface StagedPieceAnalysis {
+  binaryMask: Uint8Array;
+  fgPixels: number;
+  thresholdUsed: number;
+  bgMeanRgb: [number, number, number];
+  piece?: any;
 }
 
 interface RustSlotFeature {
@@ -253,6 +262,28 @@ export class WasmEngineService {
       };
     } catch (err) {
       console.error('WasmEngineService: ingest_mat_piece failed:', err);
+      return null;
+    }
+  }
+
+  analyzeStagedPiece(
+    dewarpedRgba: Uint8Array,
+    width: number = 384,
+    height: number = 384,
+    sensitivity: number = 25.0
+  ): StagedPieceAnalysis | null {
+    if (!this._isReady()) return null;
+    try {
+      const raw = analyze_staged_piece(dewarpedRgba, width, height, sensitivity);
+      if (!raw) return null;
+      return {
+        binaryMask: raw.binary_mask,
+        fgPixels: raw.fg_pixels || 0,
+        thresholdUsed: raw.threshold_used || 128,
+        bgMeanRgb: raw.bg_mean_rgb || [250, 250, 250],
+        piece: raw.piece
+      };
+    } catch {
       return null;
     }
   }

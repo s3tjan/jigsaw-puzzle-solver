@@ -1,27 +1,36 @@
 <div class="scanner-root">
-  <!-- Peripheral Flash Overlay for Eyes-Free Sorting (ING-03) -->
-  @if (activeFlashColor(); as color) {
-    <div class="peripheral-flash" [style.background-color]="color">
-      <div class="flash-banner font-mono">
-        <span class="flash-text">{{ flashMessage() }}</span>
-      </div>
-    </div>
-  }
-
   <!-- Hidden camera video feed element running in background for stage dewarping -->
   <video #videoRef autoplay playsinline muted class="hidden-video"></video>
 
-  <!-- Left Control & Ingestion Queue Rail (Collapsible with Alt+B) -->
+  <!-- ========================================================================= -->
+  <!-- 1. LEFT RAIL (280px): SENSOR STATUS, TRAY FILL GAUGES & INGESTION QUEUE   -->
+  <!-- ========================================================================= -->
   @if (!appModeStore.isLeftRailCollapsed()) {
     <aside class="scanner-rail border-r">
       <div class="inverted-header">
-        <span>CONTINUOUS MAT INGESTION</span>
+        <span>STAGE &amp; INGESTION CONTROL</span>
         <span class="font-mono">ING-02</span>
       </div>
 
-      <!-- Action Panel & Operational Trigger -->
+      <!-- Sensor Acquisition Status & Action Trigger -->
       <div class="rail-section border-b">
-        <div class="section-title">INGESTION TRIGGER</div>
+        <div class="section-title">SENSOR &amp; LIVE ACQUISITION</div>
+        <div class="source-info font-mono camera-select-row">
+          <span class="label">SENSOR CAM:</span>
+          <select 
+            id="camera-select"
+            class="camera-select font-mono" 
+            [value]="cameraService.selectedDeviceId() || ''" 
+            (change)="onCameraChange($event)"
+            title="Select video input device"
+          >
+            @for (dev of cameraService.availableDevices(); track dev.deviceId) {
+              <option [value]="dev.deviceId" [selected]="dev.deviceId === cameraService.selectedDeviceId()">
+                {{ dev.label }}
+              </option>
+            }
+          </select>
+        </div>
         <div class="source-info font-mono">
           <span class="label">STAGE SENSOR:</span>
           <span class="val" [class.ok]="cameraService.isStreaming()" [class.error]="!cameraService.isStreaming()">
@@ -29,146 +38,530 @@
           </span>
         </div>
         <div class="source-info font-mono">
-          <span class="label">RESOLUTION:</span>
+          <span class="label">STAGE PIECE:</span>
+          <span class="val" [class.ok]="livePieceDetected()" [class.stale]="!livePieceDetected()">
+            {{ livePieceDetected() ? 'DETECTED' : 'STAGE CLEAR' }}
+          </span>
+        </div>
+        <div class="source-info font-mono">
+          <span class="label">STREAM RES:</span>
           <span class="val">{{ cameraService.activeResolution().width }}×{{ cameraService.activeResolution().height }}</span>
         </div>
 
-        <div class="action-row">
+        <div class="action-grid">
           <button 
             id="scan-drop-btn" 
             type="button" 
-            class="rail-btn active font-mono" 
-            (click)="triggerScan()" 
-            [disabled]="!cameraService.isStreaming() || isProcessing()"
+            class="control-btn primary font-mono" 
+            [class.ready-btn]="livePieceDetected()"
+            (click)="captureCurrentPiece()" 
+            [disabled]="!cameraService.isStreaming() || isProcessing() || !livePieceDetected()"
+            title="Commit live detected piece to inventory [Space]"
           >
-            {{ isProcessing() ? 'PROCESSING...' : 'DROP PIECE [SPACE]' }}
+            @if (isProcessing()) {
+              COMMITTING...
+            } @else if (livePieceDetected()) {
+              CAPTURE PIECE #{{ livePieceState()?.pieceIdPreview }} [SPACE]
+            } @else {
+              STAGE EMPTY &middot; PLACE PIECE
+            }
           </button>
-          <button type="button" class="rail-btn" (click)="retryCamera()">
-            RECONNECT
-          </button>
+          <div class="dual-btn-row">
+            <button type="button" class="control-btn" (click)="retryCamera()">RECONNECT</button>
+            <button type="button" class="control-btn" (click)="clearArtifacts()">CLEAR [ESC]</button>
+          </div>
         </div>
 
         @if (scanStatusMessage(); as msg) {
-          <div class="status-msg font-mono" [class.error-msg]="msg.includes('EMPTY') || msg.includes('OBSTRUCTED')">
+          <div class="status-msg font-mono" [class.error-msg]="msg.includes('EMPTY') || msg.includes('CANNOT') || msg.includes('FAILED')">
             {{ msg }}
           </div>
         }
       </div>
 
-      <!-- Ingested Piece Telemetry & Cardinal Edge Polarities -->
-      <div class="inverted-header">
-        <span>DETECTED PIECE TELEMETRY</span>
-      </div>
-      <div class="rail-section border-b">
-        @if (lastPiece(); as piece) {
-          <table class="data-table">
-            <tbody>
-              <tr>
-                <td class="prop-key">PIECE ID</td>
-                <td class="prop-val font-mono">#{{ piece.id }}</td>
-              </tr>
-              <tr>
-                <td class="prop-key">ROUTED TRAY</td>
-                <td class="prop-val font-mono">
-                  @if (piece.trayId === 0) {
-                    <span class="tray-chip border-chip"></span>
-                    BORDER TRAY
-                  } @else {
-                    <span class="tray-chip" [style.background-color]="posterStore.getTray(piece.trayId)?.color"></span>
-                    0{{ piece.trayId }} &middot; {{ posterStore.getTray(piece.trayId)?.name }}
-                  }
-                </td>
-              </tr>
-              <tr>
-                <td class="prop-key">TAB WIDTH</td>
-                <td class="prop-val font-mono">{{ piece.tabWidthMm.toFixed(2) }} MM</td>
-              </tr>
-              <tr>
-                <td class="prop-key">NORTH / EAST</td>
-                <td class="prop-val font-mono">{{ piece.polarities[0] }} / {{ piece.polarities[1] }}</td>
-              </tr>
-              <tr>
-                <td class="prop-key">SOUTH / WEST</td>
-                <td class="prop-val font-mono">{{ piece.polarities[2] }} / {{ piece.polarities[3] }}</td>
-              </tr>
-              <tr>
-                <td class="prop-key">CONFIDENCE</td>
-                <td class="prop-val font-mono">{{ (piece.confidence * 100).toFixed(0) }}%</td>
-              </tr>
-            </tbody>
-          </table>
-        } @else {
-          <div class="empty-state font-mono">
-            DROP PIECE ON MAT &amp; PRESS SPACE
-          </div>
-        }
-      </div>
-
-      <!-- Sorting Trays Volume Breakdown -->
+      <!-- Sorting Trays Volume Breakdown (Initially Empty, Fills Dynamically) -->
       <div class="inverted-header">
         <span>SORTING TRAYS FILL</span>
-        <span class="font-mono">8 TRAYS</span>
+        <span class="font-mono tabular-nums">{{ inventoryStore.totalIngested() }} / {{ inventoryStore.targetTotal }}</span>
       </div>
-      <div class="tray-mini-list">
+      <div class="tray-mini-list border-b">
         @for (tray of inventoryStore.trays(); track tray.id) {
           <div class="tray-mini-row border-b">
             <div class="tray-mini-header">
-              <span class="tray-chip" [style.background-color]="posterStore.getTray(tray.id)?.color"></span>
+              <span class="tray-chip" [class.border-chip]="tray.id === 0" [style.background-color]="tray.id === 0 ? '#111111' : (posterStore.getTray(tray.id)?.color || tray.color || '#525252')"></span>
               <span class="tray-mini-name">0{{ tray.id }} &middot; {{ tray.name }}</span>
               <span class="tray-mini-count font-mono tabular-nums">{{ tray.count }}/{{ tray.maxCapacity }}</span>
             </div>
             <div class="gauge-track">
-              <div class="gauge-fill" [style.width.%]="(tray.count / tray.maxCapacity) * 100"></div>
+              <div class="gauge-fill" [style.width.%]="(tray.count / (tray.maxCapacity || 1)) * 100"></div>
             </div>
           </div>
         }
       </div>
 
-      <!-- Quick Link to Calibration Optics -->
-      <div class="rail-section">
-        <button type="button" class="rail-btn font-mono" (click)="appModeStore.setMode('OPTICS')">
-          TUNE MAT OPTICS [Alt+2]
-        </button>
+      <!-- Recent Ingestion Queue (Starts from Piece #1) -->
+      <div class="inverted-header">
+        <span>INGESTION QUEUE</span>
+        <span class="font-mono tabular-nums">{{ recentPieces().length }} RECORDED</span>
+      </div>
+      <div class="queue-list">
+        @for (item of recentPieces(); track item.id) {
+          <div 
+            class="queue-row border-b font-mono tabular-nums" 
+            [class.selected]="selectedPiece()?.id === item.id"
+            (click)="selectPieceForInspection(item)"
+            title="Click to inspect Piece #{{ item.id }}"
+          >
+            <span class="queue-id">#{{ item.id }}</span>
+            <span class="queue-tray">
+              @if (item.trayId === 0) {
+                <span class="tray-chip border-chip"></span> BDR
+              } @else {
+                <span class="tray-chip" [style.background-color]="posterStore.getTray(item.trayId)?.color"></span> T-0{{ item.trayId }}
+              }
+            </span>
+            <span class="queue-pols">[{{ item.polarities[0][0] }}/{{ item.polarities[1][0] }}/{{ item.polarities[2][0] }}/{{ item.polarities[3][0] }}]</span>
+            <span class="queue-time">{{ (item.confidence * 100).toFixed(0) }}%</span>
+            <button 
+              type="button" 
+              class="queue-del-btn" 
+              (click)="deleteCapturedPiece(item.id, $event)"
+              title="Delete and retake Piece #{{ item.id }}"
+            >
+              &times;
+            </button>
+          </div>
+        } @empty {
+          <div class="empty-state font-mono">NO PIECES INGESTED YET</div>
+        }
       </div>
     </aside>
   } @else {
     <div class="rail-collapsed-strip" (click)="appModeStore.toggleLeftRail()" title="Click or press [Alt+B] to expand">
       <span class="collapsed-glyph">&#9654;</span>
-      <span class="collapsed-label font-mono">INGESTION</span>
+      <span class="collapsed-label font-mono">INGESTION RAIL</span>
     </div>
   }
 
-  <!-- Center Viewport: The Rectified 96mm x 96mm Staging Arena -->
-  <main class="viewport-main">
-    <div class="viewport-header border-b">
-      <span class="header-title">RECTIFIED PIECE STAGING ARENA</span>
-      <span class="header-meta font-mono">ORTHOGRAPHIC 384×384 (96MM &times; 96MM) &middot; 96PX = 25MM</span>
-    </div>
+  <!-- ========================================================================= -->
+  <!-- 2. WORKSPACE CENTER & RIGHT WRAPPER (VIEWPORT-FIT)                         -->
+  <!-- ========================================================================= -->
+  <div class="scanner-body">
+    <!-- CENTER WORKSPACE -->
+    <main class="viewport-main">
+      <!-- Top Viewport Utility Header (28px) -->
+      <div class="viewport-header border-b">
+        <div class="header-left">
+          <span class="header-title">LIVE STAGING ARENA</span>
+          @if (captureNotice(); as notice) {
+            <span class="notice-badge font-mono">{{ notice }}</span>
+          } @else {
+            @if (livePieceState(); as live) {
+              <span class="routing-badge font-mono">
+                <span class="tray-chip" [style.background-color]="live.assignedTrayColor"></span>
+                ROUTING: {{ live.assignedTrayName }} &middot; {{(live.confidence * 100).toFixed(0)}}%
+              </span>
+            }
+          }
+        </div>
+        <div class="header-controls font-mono">
+          <span class="control-label">LAYERS:</span>
+          <button type="button" class="tool-btn" [class.active]="showEdges()" (click)="toggleLayer('edges')">
+            [EDGES: {{ showEdges() ? 'ON' : 'OFF' }}]
+          </button>
+          <button type="button" class="tool-btn" [class.active]="showChords()" (click)="toggleLayer('chords')">
+            [CHORDS: {{ showChords() ? 'ON' : 'OFF' }}]
+          </button>
+          <button type="button" class="tool-btn" [class.active]="showCorners()" (click)="toggleLayer('corners')">
+            [CORNERS: {{ showCorners() ? 'ON' : 'OFF' }}]
+          </button>
+          <button type="button" class="tool-btn" [class.active]="showBadges()" (click)="toggleLayer('badges')">
+            [BADGES: {{ showBadges() ? 'ON' : 'OFF' }}]
+          </button>
+          <button type="button" class="tool-btn" [class.active]="showReticle()" (click)="toggleLayer('reticle')">
+            [RETICLE: {{ showReticle() ? 'ON' : 'OFF' }}]
+          </button>
+        </div>
+      </div>
 
-    <div class="stage-container">
-      <div class="stage-frame">
-        <!-- Dewarped 384x384 canvas directly rendering piece pixels -->
-        <canvas #stageCanvas width="384" height="384" class="stage-canvas"></canvas>
-
-        <!-- Overlay canvas rendering detected contour and 4 corner brackets -->
-        <canvas #stageOverlayCanvas width="384" height="384" class="stage-overlay"></canvas>
-
-        @if (!cameraService.isStreaming()) {
-          <div class="camera-offline font-mono">
-            <span>NO SENSOR STREAM DETECTED</span>
-            <button type="button" class="rail-btn" (click)="retryCamera()">CONNECT SENSOR</button>
+      <!-- Dual Stage Arenas (Side-by-Side: Viewport A & Viewport B) -->
+      <div class="dual-arenas-container border-b">
+        <!-- Viewport A: Rectified 384x384 96mm Staging Arena -->
+        <div class="arena-pane border-r">
+          <div class="arena-pane-header border-b">
+            <span class="arena-label">VIEWPORT A: ORTHOGRAPHIC 96MM STAGE</span>
+            <span class="arena-meta font-mono">384×384 (3.84 PX/MM)</span>
           </div>
+          <div class="canvas-wrapper">
+            <div class="stage-frame">
+              <canvas #stageCanvas width="384" height="384" class="stage-canvas"></canvas>
+              <canvas #stageOverlayCanvas width="384" height="384" class="stage-overlay"></canvas>
+              @if (!cameraService.isStreaming()) {
+                <div class="sensor-offline-banner font-mono">
+                  <span>SENSOR STREAM OFFLINE</span>
+                  <button type="button" class="control-btn" (click)="retryCamera()">CONNECT SENSOR</button>
+                </div>
+              }
+            </div>
+          </div>
+          <div class="arena-telemetry-bar border-t font-mono">
+            <span>STAGE: 96.0×96.0 MM</span>
+            <span>GROUNDING: 96PX = 25MM</span>
+            @if (livePieceDetected()) {
+              <span class="highlight">PIECE DETECTED &middot; READY TO CAPTURE [SPACE]</span>
+            } @else {
+              <span>STAGE CLEAR</span>
+            }
+          </div>
+        </div>
+
+        <!-- Viewport B: Secondary CV Diagnostics (Dissected Edges / Waveforms / Binary Mask) -->
+        <div class="arena-pane">
+          <div class="arena-pane-header border-b">
+            <span class="arena-label">VIEWPORT B: EDGE DIAGNOSTICS</span>
+            <div class="view-switch font-mono">
+              <button 
+                type="button" 
+                class="tool-btn" 
+                [class.active]="viewBMode() === 'DISSECT'" 
+                (click)="setViewBMode('DISSECT')"
+                title="Dissected view of all 4 borders (Flat cuts, Tabs, Holes)"
+              >
+                [DISSECTED EDGES]
+              </button>
+              <button 
+                type="button" 
+                class="tool-btn" 
+                [class.active]="viewBMode() === 'PROFILES'" 
+                (click)="setViewBMode('PROFILES')"
+                title="Plot 4 normalized edge baseline profile curves"
+              >
+                [PROFILES]
+              </button>
+              <button 
+                type="button" 
+                class="tool-btn" 
+                [class.active]="viewBMode() === 'MASK'" 
+                (click)="setViewBMode('MASK')"
+                title="Show Otsu binary threshold segmentation mask"
+              >
+                [MASK]
+              </button>
+            </div>
+          </div>
+          <div class="canvas-wrapper">
+            <div class="stage-frame">
+              <canvas #diagCanvas width="384" height="384" class="stage-canvas"></canvas>
+            </div>
+          </div>
+          <div class="arena-telemetry-bar border-t font-mono">
+            @if (viewBMode() === 'DISSECT') {
+              <span>4-BORDER DISSECTED EDGE ANALYSIS (NORTH · EAST · SOUTH · WEST)</span>
+              <span>1:1 METRIC BASELINES</span>
+            } @else if (viewBMode() === 'PROFILES') {
+              <span>4-CHANNEL NORMALIZED BASELINE OSCILLOSCOPE</span>
+              <span>100 PTS / EDGE</span>
+            } @else {
+              <span>OTSU BINARY THRESHOLD PREVIEW</span>
+              @if (livePieceState(); as s) {
+                <span>THRESH: {{ s.thresholdUsed }}/255 &middot; FG: {{ s.fgPixels }} PX</span>
+              } @else {
+                <span>AWAITING PIECE</span>
+              }
+            }
+          </div>
+        </div>
+      </div>
+
+      <!-- Diagnostic Event Log Stream Pane (Refined, Filterable) -->
+      <section class="log-stream-pane">
+        <div class="log-stream-header border-b">
+          <div class="log-title">
+            <span>INGESTION DIAGNOSTIC LOG STREAM</span>
+            <span class="font-mono count">{{ filteredLogs().length }} EVENTS</span>
+          </div>
+          <div class="log-controls font-mono">
+            <span class="control-label">FILTER:</span>
+            <button type="button" class="tool-btn" [class.active]="logFilter() === 'ALL'" (click)="setLogFilter('ALL')">[ALL]</button>
+            <button type="button" class="tool-btn" [class.active]="logFilter() === 'DETECT'" (click)="setLogFilter('DETECT')">[DETECT]</button>
+            <button type="button" class="tool-btn" [class.active]="logFilter() === 'EDGE'" (click)="setLogFilter('EDGE')">[EDGE]</button>
+            <button type="button" class="tool-btn" [class.active]="logFilter() === 'ROUTE'" (click)="setLogFilter('ROUTE')">[ROUTE]</button>
+            <button type="button" class="tool-btn" [class.active]="logFilter() === 'COMMIT'" (click)="setLogFilter('COMMIT')">[COMMIT]</button>
+            <button type="button" class="tool-btn" [class.active]="autoScrollLogs()" (click)="toggleAutoScroll()">
+              [AUTO-SCROLL: {{ autoScrollLogs() ? 'ON' : 'OFF' }}]
+            </button>
+            <button type="button" class="tool-btn" (click)="clearLogs()">[CLEAR]</button>
+          </div>
+        </div>
+        <div #logContainerRef class="log-stream-body font-mono">
+          @for (log of filteredLogs(); track $index) {
+            <div class="log-row">
+              <span class="log-ts tabular-nums">{{ log.timestamp }}</span>
+              <span class="log-sev" [class]="'sev-' + log.severity">[{{ log.severity }}]</span>
+              <span class="log-msg">{{ log.message }}</span>
+            </div>
+          } @empty {
+            <div class="log-empty font-mono">LOG STREAM READY &middot; PLACE PIECE ON MAT</div>
+          }
+        </div>
+      </section>
+    </main>
+
+    <!-- ========================================================================= -->
+    <!-- 3. RIGHT INSPECTOR PANE (340px): EXTENDED TELEMETRY & RETAKE ACTION       -->
+    <!-- ========================================================================= -->
+    <aside class="inspector-pane border-l">
+      <!-- Inspector Header & Target Scope -->
+      <div class="inverted-header">
+        @if (livePieceState(); as live) {
+          <span>LIVE PIECE TELEMETRY</span>
+          <span class="font-mono status-tag live-tag">LIVE PREVIEW</span>
+        } @else {
+          @if (selectedPiece(); as sel) {
+            <span>INSPECTING PIECE #{{ sel.id }}</span>
+            <span class="font-mono status-tag saved-tag">COMMITTED</span>
+          } @else {
+            <span>PIECE TELEMETRY</span>
+            <span class="font-mono status-tag">—</span>
+          }
         }
       </div>
 
-      <!-- Metric Dimension Rulers (96mm square stage) -->
-      <div class="stage-telemetry-bar font-mono">
-        <div class="metric-badge">STAGE: 96.0 MM &times; 96.0 MM</div>
-        <div class="metric-badge">SCALE: 3.84 PX / MM</div>
-        @if (lastPiece(); as piece) {
-          <div class="metric-badge highlight">PIECE #{{ piece.id }} PROCESSED</div>
+      <!-- Action: Delete & Retake Piece -->
+      @if (selectedPiece(); as sel) {
+        <div class="retake-strip border-b">
+          <span class="retake-meta font-mono">COMMITTED PIECE #{{ sel.id }}</span>
+          <button type="button" class="retake-btn font-mono" (click)="deleteCapturedPiece(sel.id)">
+            DELETE &amp; RETAKE [DEL]
+          </button>
+        </div>
+      }
+
+      <!-- Detailed Key-Value Telemetry Properties Calculated by cv-engine -->
+      <div class="inspector-section border-b">
+        @if (livePieceState(); as s) {
+          <table class="data-table">
+            <tbody>
+              <tr>
+                <td class="prop-key">STATUS</td>
+                <td class="prop-val font-mono ok-val">LIVE ON MAT</td>
+              </tr>
+              <tr>
+                <td class="prop-key">ROUTED TRAY</td>
+                <td class="prop-val font-mono">
+                  @if (s.assignedTrayId === 0) {
+                    <span class="tray-chip border-chip"></span> BORDER TRAY
+                  } @else {
+                    <span class="tray-chip" [style.background-color]="s.assignedTrayColor"></span>
+                    0{{ s.assignedTrayId }} &middot; {{ s.assignedTrayName }}
+                  }
+                </td>
+              </tr>
+              <tr>
+                <td class="prop-key">CONFIDENCE</td>
+                <td class="prop-val font-mono tabular-nums">{{ (s.confidence * 100).toFixed(1) }}%</td>
+              </tr>
+              <tr>
+                <td class="prop-key">CLASSIFICATION</td>
+                <td class="prop-val font-mono">
+                  @if (s.isCorner) { CORNER PIECE }
+                  @else if (s.isBorder) { BORDER PIECE }
+                  @else { INTERIOR PIECE }
+                </td>
+              </tr>
+              <tr>
+                <td class="prop-key">BOUNDING BOX</td>
+                <td class="prop-val font-mono tabular-nums">{{ s.boundingWidthMm.toFixed(1) }} × {{ s.boundingHeightMm.toFixed(1) }} MM</td>
+              </tr>
+              <tr>
+                <td class="prop-key">SURFACE AREA</td>
+                <td class="prop-val font-mono tabular-nums">{{ s.areaMm2.toFixed(1) }} MM² ({{ s.fgPixels }} PX)</td>
+              </tr>
+              <tr>
+                <td class="prop-key">PERIMETER</td>
+                <td class="prop-val font-mono tabular-nums">{{ s.perimeterMm.toFixed(1) }} MM</td>
+              </tr>
+              <tr>
+                <td class="prop-key">TAB WIDTH</td>
+                <td class="prop-val font-mono tabular-nums">{{ s.tabWidthMm.toFixed(2) }} MM</td>
+              </tr>
+              <tr>
+                <td class="prop-key">ORIENTATION</td>
+                <td class="prop-val font-mono tabular-nums">{{ s.rotationAngleDeg > 0 ? '+' : '' }}{{ s.rotationAngleDeg.toFixed(1) }}°</td>
+              </tr>
+              <tr>
+                <td class="prop-key">ASPECT RATIO</td>
+                <td class="prop-val font-mono tabular-nums">{{ s.aspectRatio.toFixed(2) }}</td>
+              </tr>
+              <tr>
+                <td class="prop-key">CIELAB [L*,a*,b*]</td>
+                <td class="prop-val font-mono tabular-nums">[{{ s.meanLab[0].toFixed(1) }}, {{ s.meanLab[1].toFixed(1) }}, {{ s.meanLab[2].toFixed(1) }}]</td>
+              </tr>
+              <tr>
+                <td class="prop-key">CORE RGB</td>
+                <td class="prop-val font-mono">
+                  <span class="color-swatch" [style.background-color]="'rgb(' + s.meanRgb[0] + ',' + s.meanRgb[1] + ',' + s.meanRgb[2] + ')'"></span>
+                  {{ s.meanRgb[0] }},{{ s.meanRgb[1] }},{{ s.meanRgb[2] }}
+                </td>
+              </tr>
+              <tr>
+                <td class="prop-key">SOBEL TEXTURE</td>
+                <td class="prop-val font-mono tabular-nums">{{ s.textureGradient.toFixed(3) }}</td>
+              </tr>
+              <tr>
+                <td class="prop-key">OTSU THRESH</td>
+                <td class="prop-val font-mono tabular-nums">{{ s.thresholdUsed }} / 255</td>
+              </tr>
+            </tbody>
+          </table>
+        } @else {
+          @if (selectedPiece(); as p) {
+            <table class="data-table">
+              <tbody>
+                <tr>
+                  <td class="prop-key">PIECE ID</td>
+                  <td class="prop-val font-mono">#{{ p.id }}</td>
+                </tr>
+                <tr>
+                  <td class="prop-key">ROUTED TRAY</td>
+                  <td class="prop-val font-mono">
+                    @if (p.trayId === 0) {
+                      <span class="tray-chip border-chip"></span> BORDER TRAY
+                    } @else {
+                      <span class="tray-chip" [style.background-color]="posterStore.getTray(p.trayId)?.color"></span>
+                      0{{ p.trayId }} &middot; {{ posterStore.getTray(p.trayId)?.name }}
+                    }
+                  </td>
+                </tr>
+                <tr>
+                  <td class="prop-key">TAB WIDTH</td>
+                  <td class="prop-val font-mono tabular-nums">{{ p.tabWidthMm.toFixed(2) }} MM</td>
+                </tr>
+                <tr>
+                  <td class="prop-key">CONFIDENCE</td>
+                  <td class="prop-val font-mono tabular-nums">{{ (p.confidence * 100).toFixed(1) }}%</td>
+                </tr>
+                <tr>
+                  <td class="prop-key">NORTH / EAST</td>
+                  <td class="prop-val font-mono">{{ p.polarities[0] }} / {{ p.polarities[1] }}</td>
+                </tr>
+                <tr>
+                  <td class="prop-key">SOUTH / WEST</td>
+                  <td class="prop-val font-mono">{{ p.polarities[2] }} / {{ p.polarities[3] }}</td>
+                </tr>
+                <tr>
+                  <td class="prop-key">TIMESTAMP</td>
+                  <td class="prop-val font-mono tabular-nums">{{ p.timestamp | date:'HH:mm:ss' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          } @else {
+            <div class="empty-state font-mono">
+              PLACE PIECE ON MAT FOR LIVE TELEMETRY
+            </div>
+          }
         }
       </div>
-    </div>
-  </main>
+
+      <!-- Cardinal Edges Geometry Table -->
+      <div class="inverted-header">
+        <span>CARDINAL EDGES GEOMETRY</span>
+        <span class="font-mono">4 EDGES</span>
+      </div>
+      <div class="inspector-section border-b">
+        @if (livePieceState(); as s) {
+          <table class="grid-table font-mono tabular-nums">
+            <thead>
+              <tr>
+                <th class="th-left">EDGE</th>
+                <th class="th-left">POL</th>
+                <th class="th-right">DEPTH</th>
+                <th class="th-right">CHORD</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (edge of s.edges; track edge.index) {
+                <tr>
+                  <td class="td-left">{{ edge.name }}</td>
+                  <td class="td-left">
+                    <span 
+                      class="pol-badge" 
+                      [class.pol-tab]="edge.polarity === 'TAB'"
+                      [class.pol-hole]="edge.polarity === 'HOLE'"
+                      [class.pol-flat]="edge.polarity === 'FLAT'"
+                    >
+                      {{ edge.polarity }}
+                    </span>
+                  </td>
+                  <td class="td-right">
+                    @if (edge.polarity === 'FLAT') { 0.0 MM }
+                    @else { {{ edge.depthMm > 0 ? '+' : '' }}{{ edge.depthMm.toFixed(2) }} MM }
+                  </td>
+                  <td class="td-right">{{ edge.chordLengthMm.toFixed(2) }} MM</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        } @else {
+          @if (selectedPiece(); as p) {
+            <table class="grid-table font-mono tabular-nums">
+              <thead>
+                <tr>
+                  <th class="th-left">EDGE</th>
+                  <th class="th-left">POLARITY</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td class="td-left">NORTH (E0)</td><td class="td-left"><span class="pol-badge">{{ p.polarities[0] }}</span></td></tr>
+                <tr><td class="td-left">EAST (E1)</td><td class="td-left"><span class="pol-badge">{{ p.polarities[1] }}</span></td></tr>
+                <tr><td class="td-left">SOUTH (E2)</td><td class="td-left"><span class="pol-badge">{{ p.polarities[2] }}</span></td></tr>
+                <tr><td class="td-left">WEST (E3)</td><td class="td-left"><span class="pol-badge">{{ p.polarities[3] }}</span></td></tr>
+              </tbody>
+            </table>
+          } @else {
+            <div class="empty-state font-mono">AWAITING PIECE ON MAT</div>
+          }
+        }
+      </div>
+
+      <!-- Nearest Tray Centroid Distance Rankings -->
+      <div class="inverted-header">
+        <span>TRAY CENTROID DISTANCES</span>
+        <span class="font-mono">8 CANDIDATES</span>
+      </div>
+      <div class="inspector-section">
+        @if (livePieceState(); as s) {
+          <table class="grid-table font-mono tabular-nums">
+            <thead>
+              <tr>
+                <th class="th-left">TRAY</th>
+                <th class="th-right">L2 DIST</th>
+                <th class="th-right">MATCH</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (cand of s.trayRankings; track cand.trayId) {
+                <tr [class.assigned-row]="cand.isAssigned">
+                  <td class="td-left">
+                    <span class="tray-chip" [style.background-color]="cand.color"></span>
+                    0{{ cand.trayId }} &middot; {{ cand.trayName }}
+                  </td>
+                  <td class="td-right">{{ cand.distSq.toFixed(3) }}</td>
+                  <td class="td-right">
+                    @if (cand.isAssigned) {
+                      <span class="assigned-label">ASSIGNED</span>
+                    } @else {
+                      <span class="muted-label">—</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        } @else {
+          <div class="empty-state font-mono">AWAITING LIVE PIECE COLOR MATCH</div>
+        }
+      </div>
+    </aside>
+  </div>
 </div>

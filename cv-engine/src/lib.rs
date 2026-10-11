@@ -622,36 +622,71 @@ pub fn ingest_mat_piece_internal(
         4.80 // standard jigsaw tab width fallback
     };
 
-    // 4. Sample piece core CIELAB and Sobel gradient texture
+    // 4. Sample piece full foreground CIELAB, color variance, and Sobel gradient texture
     let w = dst_w as usize;
-    let min_x = (scanned_piece.center.x - 12.0).clamp(0.0, dst_w as f32 - 1.0) as usize;
-    let max_x = (scanned_piece.center.x + 12.0).clamp(0.0, dst_w as f32 - 1.0) as usize;
-    let min_y = (scanned_piece.center.y - 12.0).clamp(0.0, dst_h as f32 - 1.0) as usize;
-    let max_y = (scanned_piece.center.y + 12.0).clamp(0.0, dst_h as f32 - 1.0) as usize;
+    let h = dst_h as usize;
 
     let mut sum_r = 0u64;
     let mut sum_g = 0u64;
     let mut sum_b = 0u64;
-    let mut core_pix_count = 0u32;
+    let mut sum_sq_r = 0u64;
+    let mut sum_sq_g = 0u64;
+    let mut sum_sq_b = 0u64;
+    let mut fg_pix_count = 0u32;
 
-    for y in min_y..=max_y {
-        for x in min_x..=max_x {
+    let mut chrom_sum_l = 0.0f32;
+    let mut chrom_sum_a = 0.0f32;
+    let mut chrom_sum_b = 0.0f32;
+    let mut chrom_count = 0u32;
+
+    let mut grad_sum = 0.0f32;
+    let mut grad_count = 0u32;
+    let get_lum = |buf: &[u8], idx: usize| -> f32 {
+        poster::rgb_to_luminance(buf[idx], buf[idx + 1], buf[idx + 2]) as f32
+    };
+
+    for y in 1..(h - 1) {
+        for x in 1..(w - 1) {
             let idx = y * w + x;
             if closed_binary[idx] > 128 {
                 let b_idx = idx * 4;
-                sum_r += dewarped_buffer[b_idx] as u64;
-                sum_g += dewarped_buffer[b_idx + 1] as u64;
-                sum_b += dewarped_buffer[b_idx + 2] as u64;
-                core_pix_count += 1;
+                let r = dewarped_buffer[b_idx] as u64;
+                let g = dewarped_buffer[b_idx + 1] as u64;
+                let b = dewarped_buffer[b_idx + 2] as u64;
+                sum_r += r;
+                sum_g += g;
+                sum_b += b;
+                sum_sq_r += r * r;
+                sum_sq_g += g * g;
+                sum_sq_b += b * b;
+                fg_pix_count += 1;
+
+                let pix_lab = poster::rgb_to_cielab(r as u8, g as u8, b as u8);
+                let chroma = (pix_lab[1] * pix_lab[1] + pix_lab[2] * pix_lab[2]).sqrt();
+                if chroma >= 14.0 {
+                    chrom_sum_l += pix_lab[0];
+                    chrom_sum_a += pix_lab[1];
+                    chrom_sum_b += pix_lab[2];
+                    chrom_count += 1;
+                }
+
+                let p_l = get_lum(&dewarped_buffer, (y * w + (x - 1)) * 4);
+                let p_r = get_lum(&dewarped_buffer, (y * w + (x + 1)) * 4);
+                let p_u = get_lum(&dewarped_buffer, ((y - 1) * w + x) * 4);
+                let p_d = get_lum(&dewarped_buffer, ((y + 1) * w + x) * 4);
+                let gx = (p_r - p_l) * 0.5;
+                let gy = (p_d - p_u) * 0.5;
+                grad_sum += (gx * gx + gy * gy).sqrt();
+                grad_count += 1;
             }
         }
     }
 
-    let (mean_r, mean_g, mean_b) = if core_pix_count > 0 {
+    let (mean_r, mean_g, mean_b) = if fg_pix_count > 0 {
         (
-            (sum_r / core_pix_count as u64) as u8,
-            (sum_g / core_pix_count as u64) as u8,
-            (sum_b / core_pix_count as u64) as u8,
+            (sum_r / fg_pix_count as u64) as u8,
+            (sum_g / fg_pix_count as u64) as u8,
+            (sum_b / fg_pix_count as u64) as u8,
         )
     } else {
         (128, 128, 128)
@@ -659,31 +694,39 @@ pub fn ingest_mat_piece_internal(
 
     let mean_lab = poster::rgb_to_cielab(mean_r, mean_g, mean_b);
 
-    // Compute core Sobel texture
-    let mut core_grad_sum = 0.0f32;
-    let mut core_grad_count = 0u32;
-    let get_lum = |buf: &[u8], idx: usize| -> f32 {
-        poster::rgb_to_luminance(buf[idx], buf[idx + 1], buf[idx + 2]) as f32
+    let piece_color_std = if fg_pix_count > 1 {
+        let n_f = fg_pix_count as f64;
+        let var_r = (sum_sq_r as f64 / n_f) - (sum_r as f64 / n_f).powi(2);
+        let var_g = (sum_sq_g as f64 / n_f) - (sum_g as f64 / n_f).powi(2);
+        let var_b = (sum_sq_b as f64 / n_f) - (sum_b as f64 / n_f).powi(2);
+        let mean_var = ((var_r.max(0.0) + var_g.max(0.0) + var_b.max(0.0)) / 3.0).sqrt();
+        ((mean_var as f32) / 64.0).min(1.0)
+    } else {
+        0.10
     };
-    for y in (min_y + 1)..max_y {
-        for x in (min_x + 1)..max_x {
-            let idx = y * w + x;
-            if closed_binary[idx] > 128 {
-                let p_l = get_lum(&dewarped_buffer, (y * w + (x - 1)) * 4);
-                let p_r = get_lum(&dewarped_buffer, (y * w + (x + 1)) * 4);
-                let p_u = get_lum(&dewarped_buffer, ((y - 1) * w + x) * 4);
-                let p_d = get_lum(&dewarped_buffer, ((y + 1) * w + x) * 4);
-                let gx = (p_r - p_l) * 0.5;
-                let gy = (p_d - p_u) * 0.5;
-                core_grad_sum += (gx * gx + gy * gy).sqrt();
-                core_grad_count += 1;
-            }
-        }
-    }
-    let piece_gradient = if core_grad_count > 0 {
-        (core_grad_sum / (core_grad_count as f32 * 50.0)).clamp(0.0, 1.0)
+
+    let piece_gradient = if grad_count > 0 {
+        (grad_sum / (grad_count as f32 * 50.0)).clamp(0.0, 1.0)
     } else {
         0.0
+    };
+
+    let has_chromatic = fg_pix_count > 0 && (chrom_count as f32 / fg_pix_count as f32) >= 0.05;
+    let chrom_lab = if has_chromatic {
+        [chrom_sum_l / chrom_count as f32, chrom_sum_a / chrom_count as f32, chrom_sum_b / chrom_count as f32]
+    } else {
+        mean_lab
+    };
+    let piece_chroma = (chrom_lab[1] * chrom_lab[1] + chrom_lab[2] * chrom_lab[2]).sqrt();
+
+    let target_lab = if has_chromatic && piece_chroma >= 15.0 {
+        [
+            mean_lab[0] * 0.35 + chrom_lab[0] * 0.65,
+            mean_lab[1] * 0.30 + chrom_lab[1] * 0.70,
+            mean_lab[2] * 0.30 + chrom_lab[2] * 0.70,
+        ]
+    } else {
+        mean_lab
     };
 
     // 5. Match against active poster tray centroids
@@ -694,15 +737,23 @@ pub fn ingest_mat_piece_internal(
         && let Some(centroids) = parse_or_get_cached_centroids(centroids_json)
             && !centroids.is_empty() {
                 for (idx, centroid) in centroids.iter().enumerate() {
-                    let dl = (mean_lab[0] - centroid.lab[0]) * 0.5; // glare damping
-                    let da = mean_lab[1] - centroid.lab[1];
-                    let db = mean_lab[2] - centroid.lab[2];
+                    let cent_chroma = (centroid.lab[1] * centroid.lab[1] + centroid.lab[2] * centroid.lab[2]).sqrt();
+                    let dl = (target_lab[0] - centroid.lab[0]) * 0.5; // glare damping
+                    let da = target_lab[1] - centroid.lab[1];
+                    let db = target_lab[2] - centroid.lab[2];
                     let norm_color_sq = (dl * dl + da * da + db * db) / 900.0;
 
                     let d_grad = piece_gradient - centroid.gradient;
-                    let d_texture_sq = d_grad * d_grad;
+                    let d_std = piece_color_std - centroid.color_std;
+                    let d_texture_sq = 0.55 * (d_grad * d_grad) + 0.45 * (d_std * d_std);
 
-                    let dist_sq = w_color * norm_color_sq + w_texture * d_texture_sq;
+                    let achromatic_penalty = if piece_chroma > 15.0 && cent_chroma < 8.0 {
+                        0.35
+                    } else {
+                        0.0
+                    };
+
+                    let dist_sq = w_color * norm_color_sq + w_texture * d_texture_sq + achromatic_penalty;
                     if dist_sq < best_dist_sq {
                         best_dist_sq = dist_sq;
                         assigned_tray = (idx + 1) as u8;

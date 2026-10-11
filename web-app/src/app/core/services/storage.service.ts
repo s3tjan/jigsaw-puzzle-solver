@@ -11,6 +11,7 @@ export interface StoredPiece {
   contourPoints?: [number, number][];
   // 4 edges x 100 normalized baseline profile points for FCQL matching
   normalizedProfiles?: number[][];
+  meanLab?: [number, number, number];
   // Data URL thumbnail of the piece
   thumbnailDataUrl?: string;
 }
@@ -119,6 +120,20 @@ export class StorageService {
       const tx = db.transaction(STORE_PIECES, 'readwrite');
       const store = tx.objectStore(STORE_PIECES);
       const req = store.put(piece);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /**
+   * Deletes a piece from IndexedDB by ID
+   */
+  async deletePiece(pieceId: number): Promise<void> {
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_PIECES, 'readwrite');
+      const store = tx.objectStore(STORE_PIECES);
+      const req = store.delete(pieceId);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });

@@ -43,4 +43,11 @@ export class AppModeStore {
   triggerScanDrop(): void {
     this.scanTrigger.update(n => n + 1);
   }
+
+  // Transient trigger for resetting scan artifacts / clear
+  readonly scanResetTrigger = signal<number>(0);
+
+  triggerScanReset(): void {
+    this.scanResetTrigger.update(n => n + 1);
+  }
 }
