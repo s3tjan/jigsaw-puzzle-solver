@@ -85,3 +85,48 @@ fn test_ingest_mat_piece_synthetic_piece_detection_and_tray_routing() {
     assert!(result.tab_width_mm >= 0.0);
 }
 
+#[test]
+fn test_parse_or_get_cached_centroids() {
+    use cv_engine::parse_or_get_cached_centroids;
+
+    let c1 = vec![
+        Centroid {
+            lab: [50.0, 10.0, 20.0],
+            gradient: 0.2,
+            color_std: 0.1,
+            r_norm: 0.2,
+            c_norm: 0.3,
+        },
+    ];
+    let json1 = serde_json::to_string(&c1).unwrap();
+
+    let parsed1 = parse_or_get_cached_centroids(&json1);
+    assert!(parsed1.is_some());
+    assert_eq!(parsed1.as_ref().unwrap().len(), 1);
+
+    // Call again with identical JSON string -> cache hit
+    let parsed2 = parse_or_get_cached_centroids(&json1);
+    assert!(parsed2.is_some());
+    assert_eq!(parsed2.unwrap()[0].lab, [50.0, 10.0, 20.0]);
+
+    // Call with different JSON -> cache update
+    let c2 = vec![
+        Centroid {
+            lab: [80.0, -5.0, 15.0],
+            gradient: 0.5,
+            color_std: 0.3,
+            r_norm: 0.8,
+            c_norm: 0.9,
+        },
+    ];
+    let json2 = serde_json::to_string(&c2).unwrap();
+    let parsed3 = parse_or_get_cached_centroids(&json2);
+    assert!(parsed3.is_some());
+    assert_eq!(parsed3.unwrap()[0].lab, [80.0, -5.0, 15.0]);
+
+    // Empty or whitespace JSON returns None
+    assert!(parse_or_get_cached_centroids("").is_none());
+    assert!(parse_or_get_cached_centroids("   ").is_none());
+}
+
+

@@ -801,6 +801,7 @@ pub fn precompute_poster_slots(
     let cell_h = (poster_h as f32 / rows as f32).round() as usize;
 
     let mut descriptors: Vec<PrecomputedSlotDescriptor> = Vec::with_capacity((cols * rows) as usize);
+    let mut slot_rgba = Vec::with_capacity(cell_w * cell_h * 4);
 
     for r in 0..rows {
         for c in 0..cols {
@@ -823,10 +824,11 @@ pub fn precompute_poster_slots(
                 continue;
             }
 
-            let mut slot_rgba = vec![0u8; sub_w * sub_h * 4];
+            let needed = sub_w * sub_h * 4;
+            slot_rgba.resize(needed, 0);
             for sy in 0..sub_h {
                 let src_idx = ((y0 + sy) * (poster_w as usize) + x0) * 4;
-                let dst_idx = (sy * sub_w) * 4;
+                let dst_idx = sy * sub_w * 4;
                 let len = sub_w * 4;
                 if src_idx + len <= poster_rgba.len() {
                     slot_rgba[dst_idx..dst_idx + len].copy_from_slice(&poster_rgba[src_idx..src_idx + len]);

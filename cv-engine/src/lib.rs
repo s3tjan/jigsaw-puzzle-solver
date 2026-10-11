@@ -195,49 +195,51 @@ pub fn segment_rectified_stage_binary(
 
     // 1. Robust Background Sampling from the 4 outer peripheral margins
     let margin_px = ((w.min(h) as f32) * 0.05).max(8.0) as usize;
-    
-    let mut top_pixels = Vec::with_capacity(w * margin_px);
-    let mut bottom_pixels = Vec::with_capacity(w * margin_px);
-    let mut left_pixels = Vec::with_capacity(h * margin_px);
-    let mut right_pixels = Vec::with_capacity(h * margin_px);
+    let step_x = ((w - 2 * margin_px) / 64).max(1);
+    let step_y = (margin_px.saturating_sub(2) / 6).max(1);
 
-    for x in margin_px..(w - margin_px) {
-        for y in 2..margin_px {
+    let mut top_pixels = Vec::with_capacity(128);
+    let mut bottom_pixels = Vec::with_capacity(128);
+    let mut left_pixels = Vec::with_capacity(128);
+    let mut right_pixels = Vec::with_capacity(128);
+
+    for x in (margin_px..(w - margin_px)).step_by(step_x) {
+        for y in (2..margin_px).step_by(step_y) {
             let idx = (y * w + x) * 4;
             let r = dewarped_pixels[idx];
             let g = dewarped_pixels[idx + 1];
             let b = dewarped_pixels[idx + 2];
-            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
+            let lum = poster::rgb_to_luminance(r, g, b);
             top_pixels.push((r, g, b, lum));
         }
     }
-    for x in margin_px..(w - margin_px) {
-        for y in (h - margin_px)..(h - 2) {
+    for x in (margin_px..(w - margin_px)).step_by(step_x) {
+        for y in ((h - margin_px)..(h - 2)).step_by(step_y) {
             let idx = (y * w + x) * 4;
             let r = dewarped_pixels[idx];
             let g = dewarped_pixels[idx + 1];
             let b = dewarped_pixels[idx + 2];
-            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
+            let lum = poster::rgb_to_luminance(r, g, b);
             bottom_pixels.push((r, g, b, lum));
         }
     }
-    for y in margin_px..(h - margin_px) {
-        for x in 2..margin_px {
+    for y in (margin_px..(h - margin_px)).step_by(step_x) {
+        for x in (2..margin_px).step_by(step_y) {
             let idx = (y * w + x) * 4;
             let r = dewarped_pixels[idx];
             let g = dewarped_pixels[idx + 1];
             let b = dewarped_pixels[idx + 2];
-            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
+            let lum = poster::rgb_to_luminance(r, g, b);
             left_pixels.push((r, g, b, lum));
         }
     }
-    for y in margin_px..(h - margin_px) {
-        for x in (w - margin_px)..(w - 2) {
+    for y in (margin_px..(h - margin_px)).step_by(step_x) {
+        for x in ((w - margin_px)..(w - 2)).step_by(step_y) {
             let idx = (y * w + x) * 4;
             let r = dewarped_pixels[idx];
             let g = dewarped_pixels[idx + 1];
             let b = dewarped_pixels[idx + 2];
-            let lum = ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000) as u8;
+            let lum = poster::rgb_to_luminance(r, g, b);
             right_pixels.push((r, g, b, lum));
         }
     }
@@ -267,8 +269,10 @@ pub fn segment_rectified_stage_binary(
     let bg_g = bg_ref.1 as f32;
     let bg_b = bg_ref.2 as f32;
 
-    // 2. Perceptual color distance
-    let mut delta_img = vec![0u8; total_pixels];
+    // 2. Perceptual color distance & thresholding with buffer reuse
+    let mut buf_a = vec![0u8; total_pixels]; // delta_img, then binary
+    let mut buf_b = vec![0u8; total_pixels]; // smoothed_delta, then morphology scratch
+
     for i in 0..total_pixels {
         let r = dewarped_pixels[i * 4] as f32;
         let g = dewarped_pixels[i * 4 + 1] as f32;
@@ -277,31 +281,31 @@ pub fn segment_rectified_stage_binary(
         let dg = g - bg_g;
         let db = b - bg_b;
         let dist = (dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114).sqrt();
-        delta_img[i] = dist.clamp(0.0, 255.0) as u8;
+        buf_a[i] = dist.clamp(0.0, 255.0) as u8;
     }
 
-    let mut smoothed_delta = vec![0u8; total_pixels];
-    contour::gaussian_blur_3x3(&delta_img, width, height, &mut smoothed_delta);
+    contour::gaussian_blur_3x3(&buf_a, width, height, &mut buf_b);
 
     let sens = sensitivity.clamp(10.0, 60.0);
     let thresh_val = (48.0 - sens * 0.55).clamp(12.0, 48.0) as u8;
 
-    let mut binary = vec![0u8; total_pixels];
     let mut foreground_count = 0;
     let border_cut = 3usize;
 
+    // Reuse buf_a as binary image: clear border cut and threshold interior from smoothed buf_b
+    buf_a.fill(0);
     for y in border_cut..(h - border_cut) {
         for x in border_cut..(w - border_cut) {
             let idx = y * w + x;
-            if smoothed_delta[idx] >= thresh_val {
-                binary[idx] = 255;
+            if buf_b[idx] >= thresh_val {
+                buf_a[idx] = 255;
                 foreground_count += 1;
             }
         }
     }
 
     let mut closed_binary = vec![0u8; total_pixels];
-    contour::morphological_close_3x3(&binary, width, height, &mut closed_binary);
+    contour::morphological_close_3x3_with_scratch(&buf_a, width, height, &mut closed_binary, &mut buf_b);
 
     // Topological stage isolation test:
     let stage_border_margin = ((w.min(h) as f32 * 0.015) as usize).clamp(3, 6);
@@ -397,6 +401,36 @@ pub struct IngestedPieceResult {
     pub corners: Vec<f32>,
     pub normalized_profiles: Vec<Vec<f32>>, // 4 x 100 normalized baseline chord profile points
     pub error: Option<String>,
+}
+
+/// Thread-safe centroid cache avoiding per-frame JSON deserialization during camera streaming
+static CENTROID_CACHE: std::sync::Mutex<Option<(u64, Vec<poster::Centroid>)>> = std::sync::Mutex::new(None);
+
+pub fn parse_or_get_cached_centroids(json_str: &str) -> Option<Vec<poster::Centroid>> {
+    if json_str.trim().is_empty() {
+        return None;
+    }
+    let mut hash = 0xcbf29ce484222325u64;
+    for &b in json_str.as_bytes() {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+
+    if let Ok(guard) = CENTROID_CACHE.lock()
+        && let Some((cached_hash, ref cached_centroids)) = *guard
+        && cached_hash == hash
+    {
+        return Some(cached_centroids.clone());
+    }
+
+    if let Ok(parsed) = serde_json::from_str::<Vec<poster::Centroid>>(json_str) {
+        if let Ok(mut guard) = CENTROID_CACHE.lock() {
+            *guard = Some((hash, parsed.clone()));
+        }
+        return Some(parsed);
+    }
+
+    None
 }
 
 /// Continuous Mat Ingestion Bridge (Task ING-02B)
@@ -629,7 +663,7 @@ pub fn ingest_mat_piece_internal(
     let mut core_grad_sum = 0.0f32;
     let mut core_grad_count = 0u32;
     let get_lum = |buf: &[u8], idx: usize| -> f32 {
-        buf[idx] as f32 * 0.299 + buf[idx + 1] as f32 * 0.587 + buf[idx + 2] as f32 * 0.114
+        poster::rgb_to_luminance(buf[idx], buf[idx + 1], buf[idx + 2]) as f32
     };
     for y in (min_y + 1)..max_y {
         for x in (min_x + 1)..max_x {
@@ -657,7 +691,7 @@ pub fn ingest_mat_piece_internal(
     let mut best_dist_sq = f32::MAX;
 
     if !scanned_piece.is_border && !scanned_piece.is_corner
-        && let Ok(centroids) = serde_json::from_str::<Vec<poster::Centroid>>(centroids_json)
+        && let Some(centroids) = parse_or_get_cached_centroids(centroids_json)
             && !centroids.is_empty() {
                 for (idx, centroid) in centroids.iter().enumerate() {
                     let dl = (mean_lab[0] - centroid.lab[0]) * 0.5; // glare damping

@@ -110,17 +110,25 @@ pub fn gaussian_blur_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8
     }
 }
 
-/// Applies a 3x3 morphological closing (dilation followed by erosion) to fuse small dropouts
-pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8]) {
+/// Applies a 3x3 morphological closing with a caller-provided scratch buffer, eliminating heap allocations
+pub fn morphological_close_3x3_with_scratch(
+    input: &[u8],
+    width: u32,
+    height: u32,
+    output: &mut [u8],
+    scratch: &mut [u8],
+) {
     if width == 0 || height == 0 {
         return;
     }
     let w = width as i32;
     let h = height as i32;
     let total = (width * height) as usize;
-    let mut dilated = vec![0u8; total];
+    if scratch.len() < total || output.len() < total {
+        return;
+    }
 
-    // 1. Dilation
+    // 1. Dilation into scratch buffer
     for y in 0..h {
         for x in 0..w {
             let mut max_val = 0u8;
@@ -136,11 +144,11 @@ pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &m
                 }
                 if max_val == 255 { break; }
             }
-            dilated[(y * w + x) as usize] = max_val;
+            scratch[(y * w + x) as usize] = max_val;
         }
     }
 
-    // 2. Erosion
+    // 2. Erosion from scratch buffer into output
     for y in 0..h {
         for x in 0..w {
             let mut min_val = 255u8;
@@ -148,7 +156,7 @@ pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &m
                 for kx in -1..=1 {
                     let px = (x + kx).clamp(0, w - 1) as usize;
                     let py = (y + ky).clamp(0, h - 1) as usize;
-                    let val = dilated[py * width as usize + px];
+                    let val = scratch[py * width as usize + px];
                     if val < min_val {
                         min_val = val;
                         if min_val == 0 { break; }
@@ -159,6 +167,16 @@ pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &m
             output[(y * w + x) as usize] = min_val;
         }
     }
+}
+
+/// Applies a 3x3 morphological closing (dilation followed by erosion) to fuse small dropouts
+pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8]) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    let total = (width * height) as usize;
+    let mut scratch = vec![0u8; total];
+    morphological_close_3x3_with_scratch(input, width, height, output, &mut scratch);
 }
 
 /// Smooths a closed contour polygon using an iterated Gaussian moving window to eliminate discrete raster steps

@@ -109,6 +109,15 @@ pub fn compute_focus_mtf(
 
     let rad = 14i32;
 
+    let get_lum = |px: i32, py: i32| -> f64 {
+        let idx = ((py * w + px) * 4) as usize;
+        if idx + 2 < pixels.len() {
+            crate::poster::rgb_to_luminance(pixels[idx], pixels[idx + 1], pixels[idx + 2]) as f64
+        } else {
+            0.0
+        }
+    };
+
     for pt in &sample_points {
         let x_min = (pt.x as i32 - rad).clamp(2, w - 3);
         let x_max = (pt.x as i32 + rad).clamp(2, w - 3);
@@ -117,15 +126,6 @@ pub fn compute_focus_mtf(
 
         for y in y_min..=y_max {
             for x in x_min..=x_max {
-                let get_lum = |px: i32, py: i32| -> f64 {
-                    let idx = ((py * w + px) * 4) as usize;
-                    if idx + 2 < pixels.len() {
-                        crate::poster::rgb_to_luminance(pixels[idx], pixels[idx + 1], pixels[idx + 2]) as f64
-                    } else {
-                        0.0
-                    }
-                };
-
                 let lap = -4.0 * get_lum(x, y)
                     + get_lum(x - 1, y)
                     + get_lum(x + 1, y)
