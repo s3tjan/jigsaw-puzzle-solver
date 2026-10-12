@@ -400,7 +400,7 @@ pub fn analyze_staged_piece(
     centroids_json: &str,
 ) -> Result<JsValue, JsValue> {
     let result = analyze_staged_piece_internal(dewarped_pixels, width, height, sensitivity, centroids_json)
-        .map_err(|e| JsValue::from_str(e))?;
+        .map_err(JsValue::from_str)?;
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
@@ -721,10 +721,9 @@ pub fn build_piece_analysis(
         }
     }
 
-    if !is_border_or_corner {
-        if let Some(assigned_row) = tray_rankings.iter_mut().find(|r| r.tray_id == best_tray_id) {
+    if !is_border_or_corner
+        && let Some(assigned_row) = tray_rankings.iter_mut().find(|r| r.tray_id == best_tray_id) {
             assigned_row.is_assigned = true;
-        }
     }
 
     tray_rankings.sort_by(|a, b| a.dist_sq.partial_cmp(&b.dist_sq).unwrap_or(std::cmp::Ordering::Equal));
