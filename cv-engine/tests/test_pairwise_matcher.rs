@@ -39,7 +39,6 @@ fn test_exact_complementary_tab_and_hole_matching() {
         curvature_depth: 25.0,
         curve_samples: vec![],
         normalized_profile: tab_profile,
-        fourier_descriptor: [0.0; 16],
     };
 
     let edge_b = PieceEdge {
@@ -49,7 +48,6 @@ fn test_exact_complementary_tab_and_hole_matching() {
         curvature_depth: -25.0,
         curve_samples: vec![],
         normalized_profile: hole_profile,
-        fourier_descriptor: [0.0; 16],
     };
 
     let result = evaluate_pairwise_edge_compatibility(&edge_a, &edge_b);

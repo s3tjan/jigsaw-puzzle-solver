@@ -129,4 +129,72 @@ fn test_parse_or_get_cached_centroids() {
     assert!(parse_or_get_cached_centroids("   ").is_none());
 }
 
+#[test]
+fn test_analyze_staged_piece_produces_presentation_ready_telemetry() {
+    use cv_engine::analyze_staged_piece_internal;
+
+    let w = 384u32;
+    let h = 384u32;
+    let mut pixels = vec![250u8; (w * h * 4) as usize];
+
+    // Draw a dark green piece in the center [140..240, 140..240]
+    for y in 140..240 {
+        for x in 140..240 {
+            let idx = ((y * w + x) * 4) as usize;
+            pixels[idx] = 20;     // R
+            pixels[idx + 1] = 130; // G
+            pixels[idx + 2] = 40;  // B (Meadow green)
+            pixels[idx + 3] = 255;
+        }
+    }
+
+    let centroids = vec![
+        Centroid {
+            lab: [50.0, -35.0, 30.0], // Meadow Green
+            gradient: 0.1,
+            color_std: 0.1,
+            r_norm: 0.5,
+            c_norm: 0.5,
+        },
+        Centroid {
+            lab: [80.0, 10.0, -40.0],  // Blue Sky
+            gradient: 0.1,
+            color_std: 0.1,
+            r_norm: 0.5,
+            c_norm: 0.5,
+        },
+    ];
+    let centroids_json = serde_json::to_string(&centroids).unwrap();
+
+    let res = analyze_staged_piece_internal(&pixels, w, h, 25.0, &centroids_json);
+    assert!(res.is_ok(), "Expected piece analysis to succeed");
+
+    let analysis = res.unwrap();
+    assert_eq!(analysis.binary_mask.len(), (w * h) as usize);
+    assert!(analysis.fg_pixels > 0);
+    assert!(analysis.piece.is_some(), "Piece should be detected");
+
+    let p = analysis.piece.unwrap();
+    // Verify physical metrics are populated
+    assert!(p.bounding_width_mm > 0.0);
+    assert!(p.bounding_height_mm > 0.0);
+    assert!(p.perimeter_mm > 0.0);
+    assert!(p.area_mm2 > 0.0);
+    assert!(p.tab_width_mm > 0.0);
+    assert_eq!(p.edges.len(), 4);
+
+    // Verify 4 edges have names, directions, and millimeter metrics
+    assert_eq!(p.edges[0].name, "E0 · NORTH");
+    assert_eq!(p.edges[0].direction, "N");
+    assert!(p.edges[0].chord_length_mm > 0.0);
+
+    // Verify CIELAB and RGB color science
+    assert!(p.mean_rgb[1] > p.mean_rgb[0]); // Green channel dominant
+    assert!(p.mean_lab[0] > 0.0);
+
+    // Verify tray ranking and routing
+    assert!(!p.tray_rankings.is_empty());
+    assert!(p.confidence >= 0.50 && p.confidence <= 1.0);
+}
+
 

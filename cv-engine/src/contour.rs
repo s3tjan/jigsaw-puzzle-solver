@@ -16,7 +16,6 @@ pub struct PieceEdge {
     pub curvature_depth: f32, // Positive = Tab, Negative = Hole, ~0 = Flat
     pub curve_samples: Vec<Point2D>, // Dense smoothed contour points
     pub normalized_profile: Vec<f32>, // 100 equidistant points normalized relative to baseline chord
-    pub fourier_descriptor: [f32; 16], // 16 scale- and rotation-invariant Fourier coefficients
 }
 
 /// Complete geometric profile of a scanned puzzle piece
@@ -34,51 +33,6 @@ pub struct ScannedPiece {
     pub is_border: bool,
 }
 
-/// Automatic Otsu threshold calculation
-pub fn compute_otsu_threshold(grayscale: &[u8]) -> u8 {
-    let mut histogram = [0u32; 256];
-    for &val in grayscale {
-        histogram[val as usize] += 1;
-    }
-
-    let total = grayscale.len() as f64;
-    if total == 0.0 {
-        return 128;
-    }
-
-    let mut sum_all: f64 = 0.0;
-    for (t, &count) in histogram.iter().enumerate() {
-        sum_all += t as f64 * count as f64;
-    }
-
-    let mut sum_bg: f64 = 0.0;
-    let mut weight_bg: f64 = 0.0;
-    let mut max_variance: f64 = 0.0;
-    let mut best_thresh: u8 = 128;
-
-    for (t, &count) in histogram.iter().enumerate() {
-        weight_bg += count as f64;
-        if weight_bg == 0.0 {
-            continue;
-        }
-        let weight_fg = total - weight_bg;
-        if weight_fg == 0.0 {
-            break;
-        }
-
-        sum_bg += t as f64 * count as f64;
-        let mean_bg = sum_bg / weight_bg;
-        let mean_fg = (sum_all - sum_bg) / weight_fg;
-
-        let var_between = weight_bg * weight_fg * (mean_bg - mean_fg) * (mean_bg - mean_fg);
-        if var_between > max_variance {
-            max_variance = var_between;
-            best_thresh = t as u8;
-        }
-    }
-
-    best_thresh
-}
 
 /// Applies a 3x3 Gaussian smoothing kernel on grayscale to eliminate cardboard fiber noise
 pub fn gaussian_blur_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8]) {
@@ -109,76 +63,6 @@ pub fn gaussian_blur_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8
         }
     }
 }
-
-/// Applies a 3x3 morphological closing with a caller-provided scratch buffer, eliminating heap allocations
-pub fn morphological_close_3x3_with_scratch(
-    input: &[u8],
-    width: u32,
-    height: u32,
-    output: &mut [u8],
-    scratch: &mut [u8],
-) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    let w = width as i32;
-    let h = height as i32;
-    let total = (width * height) as usize;
-    if scratch.len() < total || output.len() < total {
-        return;
-    }
-
-    // 1. Dilation into scratch buffer
-    for y in 0..h {
-        for x in 0..w {
-            let mut max_val = 0u8;
-            for ky in -1..=1 {
-                for kx in -1..=1 {
-                    let px = (x + kx).clamp(0, w - 1) as usize;
-                    let py = (y + ky).clamp(0, h - 1) as usize;
-                    let val = input[py * width as usize + px];
-                    if val > max_val {
-                        max_val = val;
-                        if max_val == 255 { break; }
-                    }
-                }
-                if max_val == 255 { break; }
-            }
-            scratch[(y * w + x) as usize] = max_val;
-        }
-    }
-
-    // 2. Erosion from scratch buffer into output
-    for y in 0..h {
-        for x in 0..w {
-            let mut min_val = 255u8;
-            for ky in -1..=1 {
-                for kx in -1..=1 {
-                    let px = (x + kx).clamp(0, w - 1) as usize;
-                    let py = (y + ky).clamp(0, h - 1) as usize;
-                    let val = scratch[py * width as usize + px];
-                    if val < min_val {
-                        min_val = val;
-                        if min_val == 0 { break; }
-                    }
-                }
-                if min_val == 0 { break; }
-            }
-            output[(y * w + x) as usize] = min_val;
-        }
-    }
-}
-
-/// Applies a 3x3 morphological closing (dilation followed by erosion) to fuse small dropouts
-pub fn morphological_close_3x3(input: &[u8], width: u32, height: u32, output: &mut [u8]) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    let total = (width * height) as usize;
-    let mut scratch = vec![0u8; total];
-    morphological_close_3x3_with_scratch(input, width, height, output, &mut scratch);
-}
-
 /// Smooths a closed contour polygon using an iterated Gaussian moving window to eliminate discrete raster steps
 pub fn smooth_contour_points(points: &[Point2D]) -> Vec<Point2D> {
     let n = points.len();
@@ -886,19 +770,6 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             norm_profile.push(dist_to_chord / base_len);
         }
 
-        // 16 Fourier Descriptors
-        let mut fourier = [0.0f32; 16];
-        for k in 1..=16 {
-            let mut re = 0.0f32;
-            let mut im = 0.0f32;
-            for (m, &val) in norm_profile.iter().enumerate() {
-                let angle = 2.0 * std::f32::consts::PI * (k as f32) * (m as f32) / 100.0;
-                re += val * angle.cos();
-                im -= val * angle.sin();
-            }
-            fourier[k - 1] = (re * re + im * im).sqrt() / 100.0;
-        }
-
         edges_vec.push(PieceEdge {
             edge_type: EdgeType::Tab, // placeholder, resolved in Pass 2 below
             start_corner: p_start,
@@ -906,7 +777,6 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
             curvature_depth: max_signed_dist,
             curve_samples: samples,
             normalized_profile: norm_profile,
-            fourier_descriptor: fourier,
         });
     }
 
@@ -1019,3 +889,4 @@ pub fn partition_edges_and_classify(contour: &[Point2D]) -> Option<ScannedPiece>
         is_border,
     })
 }
+

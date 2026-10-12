@@ -8,13 +8,12 @@
   @if (!appModeStore.isLeftRailCollapsed()) {
     <aside class="scanner-rail border-r">
       <div class="inverted-header">
-        <span>STAGE &amp; INGESTION CONTROL</span>
-        <span class="font-mono">ING-02</span>
+        <span>INGESTION CONTROLS</span>
       </div>
 
       <!-- Sensor Acquisition Status & Action Trigger -->
       <div class="rail-section border-b">
-        <div class="section-title">SENSOR &amp; LIVE ACQUISITION</div>
+        <div class="section-title">STAGE SENSOR</div>
         <div class="source-info font-mono camera-select-row">
           <span class="label">SENSOR CAM:</span>
           <select 
@@ -54,21 +53,25 @@
             type="button" 
             class="control-btn primary font-mono" 
             [class.ready-btn]="livePieceDetected()"
-            (click)="captureCurrentPiece()" 
-            [disabled]="!cameraService.isStreaming() || isProcessing() || !livePieceDetected()"
-            title="Commit live detected piece to inventory [Space]"
+            (click)="handlePrimaryAction()" 
+            [disabled]="!cameraService.isStreaming() || isProcessing()"
+            title="Scan piece or commit staged piece to inventory [Space]"
           >
             @if (isProcessing()) {
-              COMMITTING...
+              PROCESSING...
             } @else if (livePieceDetected()) {
-              CAPTURE PIECE #{{ livePieceState()?.pieceIdPreview }} [SPACE]
+              COMMIT PIECE #{{ livePieceState()?.pieceIdPreview }} &rarr; {{ livePieceState()?.assignedTrayName }} [SPACE]
             } @else {
-              STAGE EMPTY &middot; PLACE PIECE
+              SCAN PIECE [SPACE]
             }
           </button>
           <div class="dual-btn-row">
-            <button type="button" class="control-btn" (click)="retryCamera()">RECONNECT</button>
-            <button type="button" class="control-btn" (click)="clearArtifacts()">CLEAR [ESC]</button>
+            @if (livePieceDetected()) {
+              <button type="button" class="control-btn" (click)="scanCurrentPiece()" title="Re-scan current piece">RE-SCAN</button>
+            } @else {
+              <button type="button" class="control-btn" (click)="retryCamera()">RECONNECT</button>
+            }
+            <button type="button" class="control-btn" (click)="clearArtifacts()" title="Clear stage overlay [ESC]">CLEAR [ESC]</button>
           </div>
         </div>
 
@@ -208,17 +211,17 @@
             <span>STAGE: 96.0×96.0 MM</span>
             <span>GROUNDING: 96PX = 25MM</span>
             @if (livePieceDetected()) {
-              <span class="highlight">PIECE DETECTED &middot; READY TO CAPTURE [SPACE]</span>
+              <span class="highlight">PIECE SCANNED &middot; PRESS [SPACE] TO COMMIT TO TRAY</span>
             } @else {
-              <span>STAGE CLEAR</span>
+              <span>PLACE PIECE ON MAT &middot; PRESS [SPACE] TO SCAN</span>
             }
           </div>
         </div>
 
-        <!-- Viewport B: Secondary CV Diagnostics (Dissected Edges / Waveforms / Binary Mask) -->
+        <!-- Viewport B: Secondary CV Diagnostics (Dissected Edges / Solid Binary Mask) -->
         <div class="arena-pane">
           <div class="arena-pane-header border-b">
-            <span class="arena-label">VIEWPORT B: EDGE DIAGNOSTICS</span>
+            <span class="arena-label">VIEWPORT B: DIAGNOSTICS</span>
             <div class="view-switch font-mono">
               <button 
                 type="button" 
@@ -232,18 +235,9 @@
               <button 
                 type="button" 
                 class="tool-btn" 
-                [class.active]="viewBMode() === 'PROFILES'" 
-                (click)="setViewBMode('PROFILES')"
-                title="Plot 4 normalized edge baseline profile curves"
-              >
-                [PROFILES]
-              </button>
-              <button 
-                type="button" 
-                class="tool-btn" 
                 [class.active]="viewBMode() === 'MASK'" 
                 (click)="setViewBMode('MASK')"
-                title="Show Otsu binary threshold segmentation mask"
+                title="Show solid binary segmentation mask"
               >
                 [MASK]
               </button>
@@ -258,11 +252,8 @@
             @if (viewBMode() === 'DISSECT') {
               <span>4-BORDER DISSECTED EDGE ANALYSIS (NORTH · EAST · SOUTH · WEST)</span>
               <span>1:1 METRIC BASELINES</span>
-            } @else if (viewBMode() === 'PROFILES') {
-              <span>4-CHANNEL NORMALIZED BASELINE OSCILLOSCOPE</span>
-              <span>100 PTS / EDGE</span>
             } @else {
-              <span>OTSU BINARY THRESHOLD PREVIEW</span>
+              <span>SOLID BINARY SEGMENTATION MASK</span>
               @if (livePieceState(); as s) {
                 <span>THRESH: {{ s.thresholdUsed }}/255 &middot; FG: {{ s.fgPixels }} PX</span>
               } @else {
@@ -319,21 +310,58 @@
         } @else {
           @if (selectedPiece(); as sel) {
             <span>INSPECTING PIECE #{{ sel.id }}</span>
-            <span class="font-mono status-tag saved-tag">COMMITTED</span>
+            <button type="button" class="tool-btn close-inspect-btn font-mono" (click)="closeQueueInspection()" title="Close inspection and return to live feed">
+              ✕ RETURN TO LIVE
+            </button>
           } @else {
-            <span>PIECE TELEMETRY</span>
-            <span class="font-mono status-tag">—</span>
+            <span>STAGE TELEMETRY</span>
+            <span class="font-mono status-tag">STANDBY</span>
           }
         }
       </div>
 
-      <!-- Action: Delete & Retake Piece -->
-      @if (selectedPiece(); as sel) {
-        <div class="retake-strip border-b">
-          <span class="retake-meta font-mono">COMMITTED PIECE #{{ sel.id }}</span>
-          <button type="button" class="retake-btn font-mono" (click)="deleteCapturedPiece(sel.id)">
-            DELETE &amp; RETAKE [DEL]
-          </button>
+      <!-- Action Panel for Selected Stored Piece (From Queue) -->
+      @if (!livePieceState() && selectedPiece(); as sel) {
+        <!-- Stored Piece Photo Preview -->
+        @if (sel.thumbnailDataUrl) {
+          <div class="stored-photo-panel border-b">
+            <div class="photo-wrapper">
+              <img [src]="sel.thumbnailDataUrl" alt="Piece #{{ sel.id }}" class="stored-piece-img" />
+            </div>
+            <div class="photo-caption font-mono">STAGE CAPTURE &middot; PIECE #{{ sel.id }}</div>
+          </div>
+        }
+
+        <!-- Interactive Tray Reassignment Bar -->
+        <div class="reassign-tray-panel border-b">
+          <div class="reassign-title font-mono">REASSIGN TRAY:</div>
+          <div class="tray-reassign-grid font-mono">
+            <button 
+              type="button" 
+              class="reassign-chip" 
+              [class.active-tray]="sel.trayId === 0"
+              (click)="reassignPieceTray(sel.id, 0)"
+              title="Move to Tray 00 (Border & Corners)"
+            >
+              00 BDR
+            </button>
+            @for (t of posterStore.trays(); track t.id) {
+              <button 
+                type="button" 
+                class="reassign-chip" 
+                [class.active-tray]="sel.trayId === t.id"
+                (click)="reassignPieceTray(sel.id, t.id)"
+                title="Move to Tray 0{{ t.id }} ({{ t.name }})"
+              >
+                0{{ t.id }} {{ t.name }}
+              </button>
+            }
+          </div>
+          <div class="retake-action-row">
+            <button type="button" class="retake-btn font-mono" (click)="deleteCapturedPiece(sel.id)">
+              DELETE &amp; RETAKE [DEL]
+            </button>
+          </div>
         </div>
       }
 
@@ -457,7 +485,7 @@
             </table>
           } @else {
             <div class="empty-state font-mono">
-              PLACE PIECE ON MAT FOR LIVE TELEMETRY
+              STAGE CLEAR &middot; PLACE PIECE ON SENSOR MAT
             </div>
           }
         }
@@ -465,7 +493,7 @@
 
       <!-- Cardinal Edges Geometry Table -->
       <div class="inverted-header">
-        <span>CARDINAL EDGES GEOMETRY</span>
+        <span>CARDINAL EDGES</span>
         <span class="font-mono">4 EDGES</span>
       </div>
       <div class="inspector-section border-b">
@@ -519,7 +547,7 @@
               </tbody>
             </table>
           } @else {
-            <div class="empty-state font-mono">AWAITING PIECE ON MAT</div>
+            <div class="empty-state font-mono">STAGE CLEAR · PLACE PIECE ON SENSOR MAT</div>
           }
         }
       </div>
@@ -527,7 +555,7 @@
       <!-- Nearest Tray Centroid Distance Rankings -->
       <div class="inverted-header">
         <span>TRAY CENTROID DISTANCES</span>
-        <span class="font-mono">8 CANDIDATES</span>
+        <span class="font-mono">{{ (livePieceState() ? livePieceState()!.trayRankings.length : selectedPieceRankings().length) || 9 }} CANDIDATES</span>
       </div>
       <div class="inspector-section">
         @if (livePieceState(); as s) {
@@ -544,7 +572,7 @@
                 <tr [class.assigned-row]="cand.isAssigned">
                   <td class="td-left">
                     <span class="tray-chip" [style.background-color]="cand.color"></span>
-                    0{{ cand.trayId }} &middot; {{ cand.trayName }}
+                    {{ cand.trayName }}
                   </td>
                   <td class="td-right">{{ cand.distSq.toFixed(3) }}</td>
                   <td class="td-right">
@@ -559,7 +587,44 @@
             </tbody>
           </table>
         } @else {
-          <div class="empty-state font-mono">AWAITING LIVE PIECE COLOR MATCH</div>
+          @if (selectedPiece(); as sel) {
+            <table class="grid-table font-mono tabular-nums">
+              <thead>
+                <tr>
+                  <th class="th-left">TRAY</th>
+                  <th class="th-right">L2 DIST</th>
+                  <th class="th-right">ACTION</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (cand of selectedPieceRankings(); track cand.trayId) {
+                  <tr [class.assigned-row]="cand.isAssigned">
+                    <td class="td-left">
+                      <span class="tray-chip" [style.background-color]="cand.color"></span>
+                      {{ cand.trayName }}
+                    </td>
+                    <td class="td-right">{{ cand.distSq.toFixed(3) }}</td>
+                    <td class="td-right">
+                      @if (cand.isAssigned) {
+                        <span class="assigned-label">ASSIGNED</span>
+                      } @else {
+                        <button 
+                          type="button" 
+                          class="reassign-inline-btn font-mono" 
+                          (click)="reassignPieceTray(sel.id, cand.trayId)"
+                          title="Move piece to this tray"
+                        >
+                          MOVE
+                        </button>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          } @else {
+            <div class="empty-state font-mono">STAGE CLEAR &middot; AWAITING PIECE ON SENSOR MAT</div>
+          }
         }
       </div>
     </aside>

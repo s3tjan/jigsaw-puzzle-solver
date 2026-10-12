@@ -32,13 +32,56 @@ export interface IngestedPiecePayload {
   error?: string;
 }
 
+export interface WasmEdgeAnalysis {
+  index: number;
+  name: string;
+  direction: 'N' | 'E' | 'S' | 'W';
+  polarity: 'TAB' | 'HOLE' | 'FLAT';
+  depthMm: number;
+  chordLengthMm: number;
+  startCorner: { x: number; y: number };
+  endCorner: { x: number; y: number };
+  midPoint: { x: number; y: number };
+  curvePoints: Array<{ x: number; y: number }>;
+  normalizedProfile: number[];
+}
+
+export interface WasmTrayRanking {
+  trayId: number;
+  distSq: number;
+  isAssigned: boolean;
+}
+
+export interface WasmPieceAnalysis {
+  center: { x: number; y: number };
+  rotationAngleDeg: number;
+  boundingWidthMm: number;
+  boundingHeightMm: number;
+  perimeterMm: number;
+  areaMm2: number;
+  aspectRatio: number;
+  tabWidthMm: number;
+  isBorder: boolean;
+  isCorner: boolean;
+  meanRgb: [number, number, number];
+  meanLab: [number, number, number];
+  textureGradient: number;
+  confidence: number;
+  assignedTrayId: number;
+  trayRankings: WasmTrayRanking[];
+  edges: WasmEdgeAnalysis[];
+  corners: Array<{ x: number; y: number }>;
+  contourPoints: Array<{ x: number; y: number }>;
+}
+
 export interface StagedPieceAnalysis {
   binaryMask: Uint8Array;
   fgPixels: number;
   thresholdUsed: number;
   bgMeanRgb: [number, number, number];
-  piece?: any;
+  piece?: WasmPieceAnalysis;
 }
+
 
 interface RustSlotFeature {
   r: number;
@@ -270,23 +313,25 @@ export class WasmEngineService {
     dewarpedRgba: Uint8Array,
     width: number = 384,
     height: number = 384,
-    sensitivity: number = 25.0
+    sensitivity: number = 25.0,
+    centroidsJson: string = ''
   ): StagedPieceAnalysis | null {
     if (!this._isReady()) return null;
     try {
-      const raw = analyze_staged_piece(dewarpedRgba, width, height, sensitivity);
+      const raw = analyze_staged_piece(dewarpedRgba, width, height, sensitivity, centroidsJson);
       if (!raw) return null;
       return {
-        binaryMask: raw.binary_mask,
-        fgPixels: raw.fg_pixels || 0,
-        thresholdUsed: raw.threshold_used || 128,
-        bgMeanRgb: raw.bg_mean_rgb || [250, 250, 250],
+        binaryMask: raw.binaryMask || raw.binary_mask,
+        fgPixels: raw.fgPixels ?? raw.fg_pixels ?? 0,
+        thresholdUsed: raw.thresholdUsed ?? raw.threshold_used ?? 128,
+        bgMeanRgb: raw.bgMeanRgb || raw.bg_mean_rgb || [250, 250, 250],
         piece: raw.piece
       };
     } catch {
       return null;
     }
   }
+
 
   private mapRustResult(raw: RustClusteringResult): ClusteringResult {
     const slots: PosterSlotFeature[] = raw.slots.map(s => ({

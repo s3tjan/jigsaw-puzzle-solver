@@ -60,10 +60,82 @@ pub fn measure_stage_focus(
     fiducial::compute_focus_mtf(pixels, width, height, &corners)
 }
 
+/// Classification of a puzzle piece cardinal edge polarity
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum EdgePolarity {
+    Tab,
+    Hole,
+    Flat,
+}
+
+impl From<contour::EdgeType> for EdgePolarity {
+    #[inline]
+    fn from(t: contour::EdgeType) -> Self {
+        match t {
+            contour::EdgeType::Tab => EdgePolarity::Tab,
+            contour::EdgeType::Hole => EdgePolarity::Hole,
+            contour::EdgeType::Flat => EdgePolarity::Flat,
+        }
+    }
+}
+
+/// Detailed classification and geometry of one of the 4 cardinal edges
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct EdgeAnalysis {
+    pub index: usize,
+    pub name: String,
+    pub direction: String, // "N", "E", "S", "W"
+    pub polarity: EdgePolarity,
+    pub depth_mm: f32,
+    pub chord_length_mm: f32,
+    pub start_corner: Point2D,
+    pub end_corner: Point2D,
+    pub mid_point: Point2D,
+    pub curve_points: Vec<Point2D>,
+    pub normalized_profile: Vec<f32>,
+}
+
+/// Distance metric ranking for a specific tray
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayRankingAnalysis {
+    pub tray_id: u8,
+    pub dist_sq: f32,
+    pub is_assigned: bool,
+}
+
+/// Comprehensive, presentation-ready telemetry and classification for a scanned piece
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PieceAnalysis {
+    pub center: Point2D,
+    pub rotation_angle_deg: f32,
+    pub bounding_width_mm: f32,
+    pub bounding_height_mm: f32,
+    pub perimeter_mm: f32,
+    pub area_mm2: f32,
+    pub aspect_ratio: f32,
+    pub tab_width_mm: f32,
+    pub is_border: bool,
+    pub is_corner: bool,
+    pub mean_rgb: [u8; 3],
+    pub mean_lab: [f32; 3],
+    pub texture_gradient: f32,
+    pub confidence: f32,
+    pub assigned_tray_id: u8,
+    pub tray_rankings: Vec<TrayRankingAnalysis>,
+    pub edges: Vec<EdgeAnalysis>,
+    pub corners: Vec<Point2D>,
+    pub contour_points: Vec<Point2D>,
+}
+
 /// Result of staged piece analysis
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct AnalysisResult {
-    pub piece: Option<ScannedPiece>,
+    pub piece: Option<PieceAnalysis>,
     pub binary_mask: Vec<u8>,
     pub bg_mean_rgb: [u8; 3],
     pub fg_pixels: usize,
@@ -172,7 +244,7 @@ pub fn map_dewarped_points_to_camera(
 /// Robust against white bond paper background: pieces have distinct contrast from the white floor.
 #[derive(Clone, Debug)]
 pub struct StageSegmentationOutput {
-    pub closed_binary: Vec<u8>,
+    pub binary: Vec<u8>,
     pub bg_rgb: [u8; 3],
     pub foreground_count: usize,
     pub thresh_val: u8,
@@ -269,9 +341,9 @@ pub fn segment_rectified_stage_binary(
     let bg_g = bg_ref.1 as f32;
     let bg_b = bg_ref.2 as f32;
 
-    // 2. Perceptual color distance & thresholding with buffer reuse
-    let mut buf_a = vec![0u8; total_pixels]; // delta_img, then binary
-    let mut buf_b = vec![0u8; total_pixels]; // smoothed_delta, then morphology scratch
+    // 2. Perceptual color distance & thresholding
+    let mut buf_a = vec![0u8; total_pixels];
+    let mut buf_b = vec![0u8; total_pixels];
 
     for i in 0..total_pixels {
         let r = dewarped_pixels[i * 4] as f32;
@@ -292,7 +364,6 @@ pub fn segment_rectified_stage_binary(
     let mut foreground_count = 0;
     let border_cut = 3usize;
 
-    // Reuse buf_a as binary image: clear border cut and threshold interior from smoothed buf_b
     buf_a.fill(0);
     for y in border_cut..(h - border_cut) {
         for x in border_cut..(w - border_cut) {
@@ -304,35 +375,15 @@ pub fn segment_rectified_stage_binary(
         }
     }
 
-    let mut closed_binary = vec![0u8; total_pixels];
-    contour::morphological_close_3x3_with_scratch(&buf_a, width, height, &mut closed_binary, &mut buf_b);
+    let binary = buf_a;
 
-    // Topological stage isolation test:
-    let stage_border_margin = ((w.min(h) as f32 * 0.015) as usize).clamp(3, 6);
-    let mut border_intrusion_count = 0usize;
-    for x in border_cut..(w - border_cut) {
-        for y in border_cut..stage_border_margin {
-            if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
-            if closed_binary[(h - 1 - y) * w + x] > 0 { border_intrusion_count += 1; }
-        }
-    }
-    for y in stage_border_margin..(h - stage_border_margin) {
-        for x in border_cut..stage_border_margin {
-            if closed_binary[y * w + x] > 0 { border_intrusion_count += 1; }
-            if closed_binary[y * w + (w - 1 - x)] > 0 { border_intrusion_count += 1; }
-        }
-    }
-    let total_border_samples = (stage_border_margin - border_cut).max(1) * (w - 2 * border_cut) * 2
-        + (stage_border_margin - border_cut).max(1) * (h - 2 * stage_border_margin) * 2;
-    let touches_stage_border = border_intrusion_count > (total_border_samples * 10 / 100);
-
-    let is_obstructed = touches_stage_border || foreground_count > (total_pixels * 55 / 100);
+    let is_obstructed = foreground_count > (total_pixels * 55 / 100);
     if is_obstructed || foreground_count < total_pixels / 300 {
         return Err("Stage empty or obstructed by hand");
     }
 
     Ok(StageSegmentationOutput {
-        closed_binary,
+        binary,
         bg_rgb: [bg_r as u8, bg_g as u8, bg_b as u8],
         foreground_count,
         thresh_val,
@@ -346,44 +397,47 @@ pub fn analyze_staged_piece(
     width: u32,
     height: u32,
     sensitivity: f32,
+    centroids_json: &str,
 ) -> Result<JsValue, JsValue> {
-    let seg = match segment_rectified_stage_binary(dewarped_pixels, width, height, sensitivity) {
-        Ok(s) => s,
-        Err(e) => return Err(JsValue::from_str(e)),
-    };
-
-    let piece_profile = trace_piece_contour(&seg.closed_binary, width, height)
-        .and_then(|c| partition_edges_and_classify(&c));
-
-    let result = AnalysisResult {
-        piece: piece_profile,
-        binary_mask: seg.closed_binary,
-        bg_mean_rgb: seg.bg_rgb,
-        fg_pixels: seg.foreground_count,
-        threshold_used: seg.thresh_val,
-    };
-
+    let result = analyze_staged_piece_internal(dewarped_pixels, width, height, sensitivity, centroids_json)
+        .map_err(|e| JsValue::from_str(e))?;
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// Classification of a puzzle piece cardinal edge polarity
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum EdgePolarity {
-    Tab,
-    Hole,
-    Flat,
-}
+/// Internal testable implementation of staged piece analysis
+pub fn analyze_staged_piece_internal(
+    dewarped_pixels: &[u8],
+    width: u32,
+    height: u32,
+    sensitivity: f32,
+    centroids_json: &str,
+) -> Result<AnalysisResult, &'static str> {
+    let seg = segment_rectified_stage_binary(dewarped_pixels, width, height, sensitivity)?;
 
-impl From<contour::EdgeType> for EdgePolarity {
-    #[inline]
-    fn from(t: contour::EdgeType) -> Self {
-        match t {
-            contour::EdgeType::Tab => EdgePolarity::Tab,
-            contour::EdgeType::Hole => EdgePolarity::Hole,
-            contour::EdgeType::Flat => EdgePolarity::Flat,
-        }
-    }
+    let piece_profile = trace_piece_contour(&seg.binary, width, height)
+        .and_then(|c| partition_edges_and_classify(&c));
+
+    let piece_analysis = piece_profile.map(|sp| {
+        build_piece_analysis(
+            &sp,
+            dewarped_pixels,
+            &seg.binary,
+            width,
+            height,
+            seg.foreground_count,
+            centroids_json,
+            0.7,
+            0.2,
+        )
+    });
+
+    Ok(AnalysisResult {
+        piece: piece_analysis,
+        binary_mask: seg.binary,
+        bg_mean_rgb: seg.bg_rgb,
+        fg_pixels: seg.foreground_count,
+        threshold_used: seg.thresh_val,
+    })
 }
 
 /// Ingestion result returned from cv-engine to web-app
@@ -431,6 +485,279 @@ pub fn parse_or_get_cached_centroids(json_str: &str) -> Option<Vec<poster::Centr
     }
 
     None
+}
+
+/// Derives metric dimensions, CIELAB color, Sobel gradient texture, and poster tray distance rankings
+/// from a segmented piece contour and rectified image buffer.
+pub fn build_piece_analysis(
+    sp: &ScannedPiece,
+    dewarped_pixels: &[u8],
+    binary: &[u8],
+    width: u32,
+    height: u32,
+    fg_pixels: usize,
+    centroids_json: &str,
+    w_color: f32,
+    w_texture: f32,
+) -> PieceAnalysis {
+    let px_to_mm = 25.0 / 96.0;
+    let bounding_width_mm = ((sp.bounding_width * px_to_mm) * 10.0).round() / 10.0;
+    let bounding_height_mm = ((sp.bounding_height * px_to_mm) * 10.0).round() / 10.0;
+    let perimeter_mm = ((sp.perimeter_length * px_to_mm) * 10.0).round() / 10.0;
+    let area_mm2 = (((fg_pixels as f32) * (px_to_mm * px_to_mm)) * 10.0).round() / 10.0;
+    let aspect_ratio = if bounding_height_mm > 0.0 {
+        ((bounding_width_mm / bounding_height_mm) * 100.0).round() / 100.0
+    } else {
+        1.0
+    };
+    let rotation_angle_deg = (((sp.rotation_angle_rad * 180.0) / std::f32::consts::PI) * 10.0).round() / 10.0;
+
+    let edge_names = ["NORTH", "EAST", "SOUTH", "WEST"];
+    let directions = ["N", "E", "S", "W"];
+    let mut edges_analysis = Vec::with_capacity(4);
+    let mut tab_width_sum = 0.0f32;
+    let mut tab_count = 0u32;
+
+    for (idx, edge) in sp.edges.iter().enumerate() {
+        let chord_dx = edge.end_corner.x - edge.start_corner.x;
+        let chord_dy = edge.end_corner.y - edge.start_corner.y;
+        let chord_len_px = (chord_dx * chord_dx + chord_dy * chord_dy).sqrt();
+        let chord_length_mm = ((chord_len_px * px_to_mm) * 10.0).round() / 10.0;
+        let depth_mm = ((edge.curvature_depth * px_to_mm) * 10.0).round() / 10.0;
+        let mid_point = Point2D {
+            x: (edge.start_corner.x + edge.end_corner.x) * 0.5,
+            y: (edge.start_corner.y + edge.end_corner.y) * 0.5,
+        };
+
+        if edge.edge_type == contour::EdgeType::Tab || edge.edge_type == contour::EdgeType::Hole {
+            tab_width_sum += (chord_len_px * 0.32) * px_to_mm;
+            tab_count += 1;
+        }
+
+        edges_analysis.push(EdgeAnalysis {
+            index: idx,
+            name: format!("E{} · {}", idx, edge_names[idx]),
+            direction: directions[idx].to_string(),
+            polarity: edge.edge_type.into(),
+            depth_mm,
+            chord_length_mm,
+            start_corner: edge.start_corner,
+            end_corner: edge.end_corner,
+            mid_point,
+            curve_points: edge.curve_samples.clone(),
+            normalized_profile: edge.normalized_profile.clone(),
+        });
+    }
+
+    let tab_width_mm = if tab_count > 0 {
+        ((tab_width_sum / tab_count as f32) * 100.0).round() / 100.0
+    } else {
+        4.80
+    };
+
+    let w = width as usize;
+    let h = height as usize;
+    let mut sum_r = 0u64;
+    let mut sum_g = 0u64;
+    let mut sum_b = 0u64;
+    let mut sum_sq_r = 0u64;
+    let mut sum_sq_g = 0u64;
+    let mut sum_sq_b = 0u64;
+    let mut fg_count = 0u32;
+
+    let mut chrom_sum_l = 0.0f32;
+    let mut chrom_sum_a = 0.0f32;
+    let mut chrom_sum_b = 0.0f32;
+    let mut chrom_count = 0u32;
+
+    let mut grad_sum = 0.0f32;
+    let mut grad_sample_count = 0u32;
+
+    let get_lum = |buf: &[u8], idx: usize| -> f32 {
+        poster::rgb_to_luminance(buf[idx], buf[idx + 1], buf[idx + 2]) as f32
+    };
+
+    for y in 1..(h - 1) {
+        for x in 1..(w - 1) {
+            let idx = y * w + x;
+            if binary[idx] > 128 {
+                let b_idx = idx * 4;
+                let r = dewarped_pixels[b_idx] as u64;
+                let g = dewarped_pixels[b_idx + 1] as u64;
+                let b = dewarped_pixels[b_idx + 2] as u64;
+                sum_r += r;
+                sum_g += g;
+                sum_b += b;
+                sum_sq_r += r * r;
+                sum_sq_g += g * g;
+                sum_sq_b += b * b;
+                fg_count += 1;
+
+                let pix_lab = poster::rgb_to_cielab(r as u8, g as u8, b as u8);
+                let chroma = (pix_lab[1] * pix_lab[1] + pix_lab[2] * pix_lab[2]).sqrt();
+                if chroma >= 14.0 {
+                    chrom_sum_l += pix_lab[0];
+                    chrom_sum_a += pix_lab[1];
+                    chrom_sum_b += pix_lab[2];
+                    chrom_count += 1;
+                }
+
+                let p_l = get_lum(dewarped_pixels, (y * w + (x - 1)) * 4);
+                let p_r = get_lum(dewarped_pixels, (y * w + (x + 1)) * 4);
+                let p_u = get_lum(dewarped_pixels, ((y - 1) * w + x) * 4);
+                let p_d = get_lum(dewarped_pixels, ((y + 1) * w + x) * 4);
+                let gx = (p_r - p_l) * 0.5;
+                let gy = (p_d - p_u) * 0.5;
+                grad_sum += (gx * gx + gy * gy).sqrt();
+                grad_sample_count += 1;
+            }
+        }
+    }
+
+    let (mean_r, mean_g, mean_b) = if fg_count > 0 {
+        (
+            (sum_r / fg_count as u64) as u8,
+            (sum_g / fg_count as u64) as u8,
+            (sum_b / fg_count as u64) as u8,
+        )
+    } else {
+        (128, 128, 128)
+    };
+
+    let raw_lab = poster::rgb_to_cielab(mean_r, mean_g, mean_b);
+    let mean_lab = [
+        (raw_lab[0] * 10.0).round() / 10.0,
+        (raw_lab[1] * 10.0).round() / 10.0,
+        (raw_lab[2] * 10.0).round() / 10.0,
+    ];
+
+    let piece_color_std = if fg_count > 1 {
+        let n_f = fg_count as f64;
+        let var_r = (sum_sq_r as f64 / n_f) - (sum_r as f64 / n_f).powi(2);
+        let var_g = (sum_sq_g as f64 / n_f) - (sum_g as f64 / n_f).powi(2);
+        let var_b = (sum_sq_b as f64 / n_f) - (sum_b as f64 / n_f).powi(2);
+        let mean_var = ((var_r.max(0.0) + var_g.max(0.0) + var_b.max(0.0)) / 3.0).sqrt();
+        ((mean_var as f32) / 64.0).min(1.0)
+    } else {
+        0.10
+    };
+
+    let piece_gradient = if grad_sample_count > 0 {
+        (grad_sum / (grad_sample_count as f32 * 50.0)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    let has_chromatic = fg_count > 0 && (chrom_count as f32 / fg_count as f32) >= 0.05;
+    let chrom_lab = if has_chromatic {
+        [
+            chrom_sum_l / chrom_count as f32,
+            chrom_sum_a / chrom_count as f32,
+            chrom_sum_b / chrom_count as f32,
+        ]
+    } else {
+        raw_lab
+    };
+    let piece_chroma = (chrom_lab[1] * chrom_lab[1] + chrom_lab[2] * chrom_lab[2]).sqrt();
+
+    let target_lab = if has_chromatic && piece_chroma >= 15.0 {
+        [
+            raw_lab[0] * 0.35 + chrom_lab[0] * 0.65,
+            raw_lab[1] * 0.30 + chrom_lab[1] * 0.70,
+            raw_lab[2] * 0.30 + chrom_lab[2] * 0.70,
+        ]
+    } else {
+        raw_lab
+    };
+
+    let flat_edges = sp.edges.iter().filter(|e| e.edge_type == contour::EdgeType::Flat).count();
+    let is_border = flat_edges == 1 || sp.is_border;
+    let is_corner = flat_edges >= 2 || sp.is_corner;
+    let is_border_or_corner = is_border || is_corner;
+
+    let mut tray_rankings: Vec<TrayRankingAnalysis> = Vec::new();
+    let mut best_tray_id: u8 = if is_border_or_corner { 0 } else { 1 };
+    let mut min_distance = f32::MAX;
+
+    if is_border_or_corner {
+        tray_rankings.push(TrayRankingAnalysis {
+            tray_id: 0,
+            dist_sq: 0.0,
+            is_assigned: true,
+        });
+    }
+
+    if let Some(centroids) = parse_or_get_cached_centroids(centroids_json) {
+        for (i, c) in centroids.iter().enumerate() {
+            let t_id = (i + 1) as u8;
+            let cent_chroma = (c.lab[1] * c.lab[1] + c.lab[2] * c.lab[2]).sqrt();
+            let dl = (target_lab[0] - c.lab[0]) * 0.5; // glare damping
+            let da = target_lab[1] - c.lab[1];
+            let db = target_lab[2] - c.lab[2];
+            let norm_color_sq = (dl * dl + da * da + db * db) / 900.0;
+
+            let d_grad = piece_gradient - c.gradient;
+            let d_std = piece_color_std - c.color_std;
+            let d_texture_sq = 0.55 * (d_grad * d_grad) + 0.45 * (d_std * d_std);
+
+            let achromatic_penalty = if piece_chroma > 15.0 && cent_chroma < 8.0 {
+                0.35
+            } else {
+                0.0
+            };
+
+            let dist_sq = ((w_color * norm_color_sq + w_texture * d_texture_sq + achromatic_penalty) * 1000.0).round() / 1000.0;
+
+            if !is_border_or_corner && dist_sq < min_distance {
+                min_distance = dist_sq;
+                best_tray_id = t_id;
+            }
+
+            tray_rankings.push(TrayRankingAnalysis {
+                tray_id: t_id,
+                dist_sq,
+                is_assigned: false,
+            });
+        }
+    }
+
+    if !is_border_or_corner {
+        if let Some(assigned_row) = tray_rankings.iter_mut().find(|r| r.tray_id == best_tray_id) {
+            assigned_row.is_assigned = true;
+        }
+    }
+
+    tray_rankings.sort_by(|a, b| a.dist_sq.partial_cmp(&b.dist_sq).unwrap_or(std::cmp::Ordering::Equal));
+
+    let confidence = if is_border_or_corner {
+        0.98
+    } else if min_distance == f32::MAX {
+        0.50
+    } else {
+        ((1.0 - (min_distance * 0.4)).clamp(0.50, 0.99) * 100.0).round() / 100.0
+    };
+
+    PieceAnalysis {
+        center: sp.center,
+        rotation_angle_deg,
+        bounding_width_mm,
+        bounding_height_mm,
+        perimeter_mm,
+        area_mm2,
+        aspect_ratio,
+        tab_width_mm,
+        is_border,
+        is_corner,
+        mean_rgb: [mean_r, mean_g, mean_b],
+        mean_lab,
+        texture_gradient: (piece_gradient * 100.0).round() / 100.0,
+        confidence,
+        assigned_tray_id: best_tray_id,
+        tray_rankings,
+        edges: edges_analysis,
+        corners: sp.corners.to_vec(),
+        contour_points: sp.contour_points.clone(),
+    }
 }
 
 /// Continuous Mat Ingestion Bridge (Task ING-02B)
@@ -572,10 +899,10 @@ pub fn ingest_mat_piece_internal(
             error: Some(err_msg.into()),
         },
     };
-    let closed_binary = seg.closed_binary;
+    let binary = seg.binary;
 
     // 3. Trace contour and partition edges
-    let scanned_piece = match trace_piece_contour(&closed_binary, dst_w, dst_h)
+    let scanned_piece = match trace_piece_contour(&binary, dst_w, dst_h)
         .and_then(|c| partition_edges_and_classify(&c)) {
         Some(sp) => sp,
         None => return IngestedPieceResult {
@@ -594,202 +921,51 @@ pub fn ingest_mat_piece_internal(
         },
     };
 
+    let piece_analysis = build_piece_analysis(
+        &scanned_piece,
+        &dewarped_buffer,
+        &binary,
+        dst_w,
+        dst_h,
+        seg.foreground_count,
+        centroids_json,
+        w_color,
+        w_texture,
+    );
+
     let polarities = [
-        scanned_piece.edges[0].edge_type.into(),
-        scanned_piece.edges[1].edge_type.into(),
-        scanned_piece.edges[2].edge_type.into(),
-        scanned_piece.edges[3].edge_type.into(),
+        piece_analysis.edges[0].polarity,
+        piece_analysis.edges[1].polarity,
+        piece_analysis.edges[2].polarity,
+        piece_analysis.edges[3].polarity,
     ];
 
-    // Compute average tab width in mm (96px = 25mm metric anchor)
-    let px_to_mm = 25.0 / 96.0;
-    let mut tab_width_sum = 0.0f32;
-    let mut tab_count = 0u32;
-    for edge in &scanned_piece.edges {
-        if edge.edge_type == contour::EdgeType::Tab || edge.edge_type == contour::EdgeType::Hole {
-            let chord_dx = edge.end_corner.x - edge.start_corner.x;
-            let chord_dy = edge.end_corner.y - edge.start_corner.y;
-            let chord_len_px = (chord_dx * chord_dx + chord_dy * chord_dy).sqrt();
-            // Nominal puzzle tab width is approximately 0.28x to 0.35x chord length
-            let tab_width_mm = (chord_len_px * 0.32) * px_to_mm;
-            tab_width_sum += tab_width_mm;
-            tab_count += 1;
-        }
-    }
-    let measured_tab_width_mm = if tab_count > 0 {
-        tab_width_sum / tab_count as f32
-    } else {
-        4.80 // standard jigsaw tab width fallback
-    };
-
-    // 4. Sample piece full foreground CIELAB, color variance, and Sobel gradient texture
-    let w = dst_w as usize;
-    let h = dst_h as usize;
-
-    let mut sum_r = 0u64;
-    let mut sum_g = 0u64;
-    let mut sum_b = 0u64;
-    let mut sum_sq_r = 0u64;
-    let mut sum_sq_g = 0u64;
-    let mut sum_sq_b = 0u64;
-    let mut fg_pix_count = 0u32;
-
-    let mut chrom_sum_l = 0.0f32;
-    let mut chrom_sum_a = 0.0f32;
-    let mut chrom_sum_b = 0.0f32;
-    let mut chrom_count = 0u32;
-
-    let mut grad_sum = 0.0f32;
-    let mut grad_count = 0u32;
-    let get_lum = |buf: &[u8], idx: usize| -> f32 {
-        poster::rgb_to_luminance(buf[idx], buf[idx + 1], buf[idx + 2]) as f32
-    };
-
-    for y in 1..(h - 1) {
-        for x in 1..(w - 1) {
-            let idx = y * w + x;
-            if closed_binary[idx] > 128 {
-                let b_idx = idx * 4;
-                let r = dewarped_buffer[b_idx] as u64;
-                let g = dewarped_buffer[b_idx + 1] as u64;
-                let b = dewarped_buffer[b_idx + 2] as u64;
-                sum_r += r;
-                sum_g += g;
-                sum_b += b;
-                sum_sq_r += r * r;
-                sum_sq_g += g * g;
-                sum_sq_b += b * b;
-                fg_pix_count += 1;
-
-                let pix_lab = poster::rgb_to_cielab(r as u8, g as u8, b as u8);
-                let chroma = (pix_lab[1] * pix_lab[1] + pix_lab[2] * pix_lab[2]).sqrt();
-                if chroma >= 14.0 {
-                    chrom_sum_l += pix_lab[0];
-                    chrom_sum_a += pix_lab[1];
-                    chrom_sum_b += pix_lab[2];
-                    chrom_count += 1;
-                }
-
-                let p_l = get_lum(&dewarped_buffer, (y * w + (x - 1)) * 4);
-                let p_r = get_lum(&dewarped_buffer, (y * w + (x + 1)) * 4);
-                let p_u = get_lum(&dewarped_buffer, ((y - 1) * w + x) * 4);
-                let p_d = get_lum(&dewarped_buffer, ((y + 1) * w + x) * 4);
-                let gx = (p_r - p_l) * 0.5;
-                let gy = (p_d - p_u) * 0.5;
-                grad_sum += (gx * gx + gy * gy).sqrt();
-                grad_count += 1;
-            }
-        }
-    }
-
-    let (mean_r, mean_g, mean_b) = if fg_pix_count > 0 {
-        (
-            (sum_r / fg_pix_count as u64) as u8,
-            (sum_g / fg_pix_count as u64) as u8,
-            (sum_b / fg_pix_count as u64) as u8,
-        )
-    } else {
-        (128, 128, 128)
-    };
-
-    let mean_lab = poster::rgb_to_cielab(mean_r, mean_g, mean_b);
-
-    let piece_color_std = if fg_pix_count > 1 {
-        let n_f = fg_pix_count as f64;
-        let var_r = (sum_sq_r as f64 / n_f) - (sum_r as f64 / n_f).powi(2);
-        let var_g = (sum_sq_g as f64 / n_f) - (sum_g as f64 / n_f).powi(2);
-        let var_b = (sum_sq_b as f64 / n_f) - (sum_b as f64 / n_f).powi(2);
-        let mean_var = ((var_r.max(0.0) + var_g.max(0.0) + var_b.max(0.0)) / 3.0).sqrt();
-        ((mean_var as f32) / 64.0).min(1.0)
-    } else {
-        0.10
-    };
-
-    let piece_gradient = if grad_count > 0 {
-        (grad_sum / (grad_count as f32 * 50.0)).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-
-    let has_chromatic = fg_pix_count > 0 && (chrom_count as f32 / fg_pix_count as f32) >= 0.05;
-    let chrom_lab = if has_chromatic {
-        [chrom_sum_l / chrom_count as f32, chrom_sum_a / chrom_count as f32, chrom_sum_b / chrom_count as f32]
-    } else {
-        mean_lab
-    };
-    let piece_chroma = (chrom_lab[1] * chrom_lab[1] + chrom_lab[2] * chrom_lab[2]).sqrt();
-
-    let target_lab = if has_chromatic && piece_chroma >= 15.0 {
-        [
-            mean_lab[0] * 0.35 + chrom_lab[0] * 0.65,
-            mean_lab[1] * 0.30 + chrom_lab[1] * 0.70,
-            mean_lab[2] * 0.30 + chrom_lab[2] * 0.70,
-        ]
-    } else {
-        mean_lab
-    };
-
-    // 5. Match against active poster tray centroids
-    let mut assigned_tray: u8 = if scanned_piece.is_border || scanned_piece.is_corner { 0 } else { 1 };
-    let mut best_dist_sq = f32::MAX;
-
-    if !scanned_piece.is_border && !scanned_piece.is_corner
-        && let Some(centroids) = parse_or_get_cached_centroids(centroids_json)
-            && !centroids.is_empty() {
-                for (idx, centroid) in centroids.iter().enumerate() {
-                    let cent_chroma = (centroid.lab[1] * centroid.lab[1] + centroid.lab[2] * centroid.lab[2]).sqrt();
-                    let dl = (target_lab[0] - centroid.lab[0]) * 0.5; // glare damping
-                    let da = target_lab[1] - centroid.lab[1];
-                    let db = target_lab[2] - centroid.lab[2];
-                    let norm_color_sq = (dl * dl + da * da + db * db) / 900.0;
-
-                    let d_grad = piece_gradient - centroid.gradient;
-                    let d_std = piece_color_std - centroid.color_std;
-                    let d_texture_sq = 0.55 * (d_grad * d_grad) + 0.45 * (d_std * d_std);
-
-                    let achromatic_penalty = if piece_chroma > 15.0 && cent_chroma < 8.0 {
-                        0.35
-                    } else {
-                        0.0
-                    };
-
-                    let dist_sq = w_color * norm_color_sq + w_texture * d_texture_sq + achromatic_penalty;
-                    if dist_sq < best_dist_sq {
-                        best_dist_sq = dist_sq;
-                        assigned_tray = (idx + 1) as u8;
-                    }
-                }
-            }
-
-    let flat_edges = scanned_piece.edges.iter().filter(|e| e.edge_type == contour::EdgeType::Flat).count();
-    let is_border = flat_edges == 1;
-    let is_corner = flat_edges >= 2;
-
-    let contour_pts_flat: Vec<f32> = scanned_piece.contour_points.iter()
+    let contour_pts_flat: Vec<f32> = piece_analysis.contour_points.iter()
         .flat_map(|p| [p.x, p.y])
         .collect();
 
-    let corners_flat: Vec<f32> = scanned_piece.corners.iter()
+    let corners_flat: Vec<f32> = piece_analysis.corners.iter()
         .flat_map(|p| [p.x, p.y])
         .collect();
 
-    let normalized_profiles: Vec<Vec<f32>> = scanned_piece.edges.iter()
+    let normalized_profiles: Vec<Vec<f32>> = piece_analysis.edges.iter()
         .map(|e| e.normalized_profile.clone())
         .collect();
 
     IngestedPieceResult {
         success: true,
         polarities,
-        tab_width_mm: (measured_tab_width_mm * 100.0).round() / 100.0,
-        confidence: 0.95,
-        tray_id: assigned_tray,
-        is_border,
-        is_corner,
-        mean_lab,
+        tab_width_mm: piece_analysis.tab_width_mm,
+        confidence: piece_analysis.confidence,
+        tray_id: piece_analysis.assigned_tray_id,
+        is_border: piece_analysis.is_border,
+        is_corner: piece_analysis.is_corner,
+        mean_lab: piece_analysis.mean_lab,
         contour_points: contour_pts_flat,
         corners: corners_flat,
         normalized_profiles,
         error: None,
     }
 }
+
 

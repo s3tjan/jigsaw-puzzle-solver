@@ -2,7 +2,7 @@ use cv_engine::poster::downsample_2x;
 use cv_engine::fiducial::compute_focus_mtf;
 use cv_engine::homography::Point2D;
 use cv_engine::matcher::{evaluate_candidate_edge_pair, IndexedEdgeData};
-use cv_engine::contour::{gaussian_blur_3x3, morphological_close_3x3, trace_piece_contour, EdgeType};
+use cv_engine::contour::{gaussian_blur_3x3, trace_piece_contour, EdgeType};
 
 #[test]
 fn test_downsample_2x_landscape_regression() {
@@ -72,10 +72,9 @@ fn test_mgc_ink_score_no_inflation_on_sparse_samples() {
 }
 
 #[test]
-fn test_blur_and_close_zero_dimension_no_panic() {
+fn test_blur_zero_dimension_no_panic() {
     let mut out = Vec::new();
     gaussian_blur_3x3(&[], 0, 0, &mut out);
-    morphological_close_3x3(&[], 0, 0, &mut out);
 }
 
 #[test]

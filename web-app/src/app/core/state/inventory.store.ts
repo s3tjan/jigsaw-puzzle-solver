@@ -67,6 +67,20 @@ export class InventoryStore {
   }
 
   /**
+   * Reassigns a piece from one tray to another atomically
+   */
+  movePieceTray(fromTrayId: number, toTrayId: number): void {
+    if (fromTrayId === toTrayId) return;
+    this.trays.update(trays =>
+      trays.map(t => {
+        if (t.id === fromTrayId) return { ...t, count: Math.max(0, t.count - 1) };
+        if (t.id === toTrayId) return { ...t, count: t.count + 1 };
+        return t;
+      })
+    );
+  }
+
+  /**
    * Updates tray definitions and capacities from poster clustering results.
    * Sets maxCapacity for Trays 1-8 to the piece counts obtained from poster clustering (e.g. Forest: 90).
    * Sets Tray 0 maxCapacity to the border piece count (124).
