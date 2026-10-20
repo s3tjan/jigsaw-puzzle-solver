@@ -52,27 +52,46 @@
             id="scan-drop-btn" 
             type="button" 
             class="control-btn primary font-mono" 
-            [class.ready-btn]="livePieceDetected()"
+            [class.ready-btn]="livePieceDetected() || isGtMode()"
             (click)="handlePrimaryAction()" 
             [disabled]="!cameraService.isStreaming() || isProcessing()"
-            title="Scan piece or commit staged piece to inventory [Space]"
+            title="Scan piece, commit to tray, or save benchmark [Space]"
           >
             @if (isProcessing()) {
               PROCESSING...
+            } @else if (isGtMode()) {
+              SAVE BENCHMARK FIXTURE [SPACE]
             } @else if (livePieceDetected()) {
               COMMIT PIECE #{{ livePieceState()?.pieceIdPreview }} &rarr; {{ livePieceState()?.assignedTrayName }} [SPACE]
             } @else {
               SCAN PIECE [SPACE]
             }
           </button>
-          <div class="dual-btn-row">
+          @if (isGtMode()) {
+            <div class="dual-btn-row">
+              <button type="button" class="control-btn" (click)="exitGtMode()" title="Cancel Ground Truth labeling [ESC]">CANCEL [ESC]</button>
+              <button type="button" class="control-btn primary" (click)="saveGroundTruth()" title="Save ground truth benchmark">SAVE</button>
+            </div>
+          } @else {
+            <div class="dual-btn-row">
+              @if (livePieceDetected()) {
+                <button type="button" class="control-btn" (click)="scanCurrentPiece()" title="Re-scan current piece">RE-SCAN</button>
+              } @else {
+                <button type="button" class="control-btn" (click)="retryCamera()">RECONNECT</button>
+              }
+              <button type="button" class="control-btn" (click)="clearArtifacts()" title="Clear stage overlay [ESC]">CLEAR [ESC]</button>
+            </div>
             @if (livePieceDetected()) {
-              <button type="button" class="control-btn" (click)="scanCurrentPiece()" title="Re-scan current piece">RE-SCAN</button>
-            } @else {
-              <button type="button" class="control-btn" (click)="retryCamera()">RECONNECT</button>
+              <button 
+                type="button" 
+                class="control-btn font-mono" 
+                (click)="enterGtMode()" 
+                title="Enter Ground Truth Benchmark Workbench to inspect & export piece"
+              >
+                LABEL GROUND TRUTH
+              </button>
             }
-            <button type="button" class="control-btn" (click)="clearArtifacts()" title="Clear stage overlay [ESC]">CLEAR [ESC]</button>
-          </div>
+          }
         </div>
 
         @if (scanStatusMessage(); as msg) {
@@ -198,7 +217,17 @@
           <div class="canvas-wrapper">
             <div class="stage-frame">
               <canvas #stageCanvas width="384" height="384" class="stage-canvas"></canvas>
-              <canvas #stageOverlayCanvas width="384" height="384" class="stage-overlay"></canvas>
+              <canvas 
+                #stageOverlayCanvas 
+                width="384" 
+                height="384" 
+                class="stage-overlay"
+                [class.interactive-gt]="isGtMode()"
+                (pointerdown)="onStagePointerDown($event)"
+                (pointermove)="onStagePointerMove($event)"
+                (pointerup)="onStagePointerUp($event)"
+                (pointercancel)="onStagePointerUp($event)"
+              ></canvas>
               @if (!cameraService.isStreaming()) {
                 <div class="sensor-offline-banner font-mono">
                   <span>SENSOR STREAM OFFLINE</span>
@@ -210,7 +239,9 @@
           <div class="arena-telemetry-bar border-t font-mono">
             <span>STAGE: 96.0×96.0 MM</span>
             <span>GROUNDING: 96PX = 25MM</span>
-            @if (livePieceDetected()) {
+            @if (isGtMode()) {
+              <span class="highlight font-bold">GT WORKBENCH &middot; DRAG CORNERS C0-C3 ON CANVAS &middot; [SPACE] TO SAVE</span>
+            } @else if (livePieceDetected()) {
               <span class="highlight">PIECE SCANNED &middot; PRESS [SPACE] TO COMMIT TO TRAY</span>
             } @else {
               <span>PLACE PIECE ON MAT &middot; PRESS [SPACE] TO SCAN</span>
@@ -304,21 +335,115 @@
     <aside class="inspector-pane border-l">
       <!-- Inspector Header & Target Scope -->
       <div class="inverted-header">
-        @if (livePieceState(); as live) {
-          <span>LIVE PIECE TELEMETRY</span>
-          <span class="font-mono status-tag live-tag">LIVE PREVIEW</span>
+        @if (isGtMode()) {
+          <span>GROUND TRUTH BENCHMARK</span>
+          <span class="font-mono tabular-nums status-tag">FIXTURE #{{ gtSavedCount() + 1 }}</span>
         } @else {
-          @if (selectedPiece(); as sel) {
-            <span>INSPECTING PIECE #{{ sel.id }}</span>
-            <button type="button" class="tool-btn close-inspect-btn font-mono" (click)="closeQueueInspection()" title="Close inspection and return to live feed">
-              ✕ RETURN TO LIVE
-            </button>
+          @if (livePieceState(); as live) {
+            <span>LIVE PIECE TELEMETRY</span>
+            <span class="font-mono status-tag live-tag">LIVE PREVIEW</span>
           } @else {
-            <span>STAGE TELEMETRY</span>
-            <span class="font-mono status-tag">STANDBY</span>
+            @if (selectedPiece(); as sel) {
+              <span>INSPECTING PIECE #{{ sel.id }}</span>
+              <button type="button" class="tool-btn close-inspect-btn font-mono" (click)="closeQueueInspection()" title="Close inspection and return to live feed">
+                ✕ RETURN TO LIVE
+              </button>
+            } @else {
+              <span>STAGE TELEMETRY</span>
+              <span class="font-mono status-tag">STANDBY</span>
+            }
           }
         }
       </div>
+
+      <!-- Ground Truth Workbench Editor (Light Industrial Table-First Layout) -->
+      @if (isGtMode()) {
+        <!-- Edge Polarity Table -->
+        <div class="inverted-header">
+          <span>CARDINAL EDGES POLARITY</span>
+          <span class="font-mono">4 EDGES</span>
+        </div>
+        <div class="inspector-section border-b">
+          <table class="grid-table font-mono tabular-nums">
+            <thead>
+              <tr>
+                <th class="th-left">EDGE</th>
+                <th class="th-left">NODES</th>
+                <th class="th-right">CLASSIFICATION</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (edgeType of gtEdges(); track $index) {
+                <tr>
+                  <td class="td-left font-bold">EDGE {{ $index }}</td>
+                  <td class="td-left text-muted">C{{ $index }} &rarr; C{{ ($index + 1) % 4 }}</td>
+                  <td class="td-right">
+                    <div class="seg-btn-group">
+                      <button 
+                        type="button" 
+                        class="seg-btn" 
+                        [class.active]="edgeType === 'Tab'"
+                        (click)="toggleGtEdge($index, 'Tab')"
+                      >TAB</button>
+                      <button 
+                        type="button" 
+                        class="seg-btn" 
+                        [class.active]="edgeType === 'Hole'"
+                        (click)="toggleGtEdge($index, 'Hole')"
+                      >HOLE</button>
+                      <button 
+                        type="button" 
+                        class="seg-btn" 
+                        [class.active]="edgeType === 'Flat'"
+                        (click)="toggleGtEdge($index, 'Flat')"
+                      >FLAT</button>
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Verified Classification and Metric Coordinates -->
+        <div class="inverted-header">
+          <span>VERIFIED GEOMETRY</span>
+          <span class="font-mono">METRICS</span>
+        </div>
+        <div class="inspector-section border-b">
+          <table class="data-table font-mono tabular-nums">
+            <tbody>
+              <tr>
+                <td class="prop-key">VERIFIED TYPE</td>
+                <td class="prop-val font-bold">
+                  {{ gtVerifiedType() }}
+                </td>
+              </tr>
+              @for (c of gtCorners(); track $index) {
+                <tr>
+                  <td class="prop-key">CORNER C{{ $index }}</td>
+                  <td class="prop-val">({{ c.x.toFixed(1) }}, {{ c.y.toFixed(1) }})</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        @if (gtSaveStatus(); as status) {
+          <div class="gt-status-strip font-mono" [class.ok-status]="status.startsWith('✓')">
+            {{ status }}
+          </div>
+        }
+
+        <div class="dual-btn-row border-b" style="padding: 6px 8px; background-color: #ffffff;">
+          <button type="button" class="control-btn" (click)="exitGtMode()" title="Exit without saving [ESC]">
+            CANCEL [ESC]
+          </button>
+          <button type="button" class="control-btn primary ready-btn" (click)="saveGroundTruth()" title="Save fixture to datasets/ground_truth/ [SPACE]">
+            SAVE BENCHMARK [SPACE]
+          </button>
+        </div>
+      }
 
       <!-- Action Panel for Selected Stored Piece (From Queue) -->
       @if (!livePieceState() && selectedPiece(); as sel) {

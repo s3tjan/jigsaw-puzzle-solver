@@ -182,6 +182,23 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   readonly isProcessing = signal<boolean>(false);
   readonly scanStatusMessage = signal<string | null>(null);
 
+  // Ground Truth Benchmark Workbench state
+  readonly isGtMode = signal<boolean>(false);
+  readonly gtCorners = signal<{ x: number; y: number }[] | null>(null);
+  readonly gtDetectedCorners = signal<{ x: number; y: number }[] | null>(null);
+  readonly gtEdges = signal<('Tab' | 'Hole' | 'Flat')[]>(['Tab', 'Tab', 'Tab', 'Tab']);
+  readonly draggingCornerIdx = signal<number | null>(null);
+  readonly gtSavedCount = signal<number>(0);
+  readonly gtSaveStatus = signal<string | null>(null);
+
+  readonly gtVerifiedType = computed<'Interior' | 'Border' | 'Corner'>(() => {
+    const edges = this.gtEdges();
+    const flatCount = edges.filter(e => e === 'Flat').length;
+    if (flatCount >= 2) return 'Corner';
+    if (flatCount === 1) return 'Border';
+    return 'Interior';
+  });
+
   private animFrameId: number | null = null;
   private lastDewarpedBuffer: Uint8Array | null = null;
 
@@ -222,6 +239,7 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   async ngOnInit(): Promise<void> {
     this.addLog('INFO', 'Ingestion workstation initializing...');
     this.loadCalibration();
+    this.fetchGtCount();
     // Sync tray capacities directly from poster clustering counts (e.g. Forest: 90 pcs, Border: 124 pcs)
     this.inventoryStore.syncFromPoster(this.posterStore.trays(), this.posterStore.stats().borderPieces);
     await this.initInventoryAndQueue();
@@ -319,6 +337,13 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
     const video = this.videoRef?.nativeElement;
     const canvas = this.stageCanvas?.nativeElement;
     if (!video || !canvas || !this.cameraService.isStreaming() || video.videoWidth === 0) {
+      this.drawStageOverlay();
+      this.drawDiagnosticsCanvas();
+      return;
+    }
+
+    if (this.isGtMode()) {
+      // In Ground Truth Labeling Mode, stage frame is frozen to prevent jitter while dragging pins
       this.drawStageOverlay();
       this.drawDiagnosticsCanvas();
       return;
@@ -492,7 +517,9 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
    */
   async handlePrimaryAction(): Promise<void> {
     if (this.isProcessing()) return;
-    if (this.livePieceDetected()) {
+    if (this.isGtMode()) {
+      await this.saveGroundTruth();
+    } else if (this.livePieceDetected()) {
       await this.captureCurrentPiece();
     } else {
       this.scanCurrentPiece();
@@ -510,6 +537,11 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
     if (!ctx) return;
 
     ctx.clearRect(0, 0, 384, 384);
+
+    if (this.isGtMode()) {
+      this.drawGroundTruthOverlay(ctx);
+      return;
+    }
 
     // 1. Stage Frame & 96mm Metric Grounding Rulers
     if (this.showReticle()) {
@@ -945,6 +977,11 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   }
 
   clearArtifacts(): void {
+    if (this.isGtMode()) {
+      this.exitGtMode();
+      this.addLog('INFO', 'Exited Ground Truth workbench [ESC]');
+      return;
+    }
     this.livePieceState.set(null);
     this.livePieceDetected.set(false);
     this.scanStatusMessage.set(null);
@@ -1028,5 +1065,373 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
         if (el) el.scrollTop = el.scrollHeight;
       }, 0);
     }
+  }
+
+  // =========================================================================
+  // GROUND TRUTH BENCHMARK WORKBENCH (Truthful Reporting & Offline Benchmarking)
+  // =========================================================================
+
+  /**
+   * Enters Ground Truth Benchmark Labeling mode.
+   * Freezes the currently staged piece for human verification without camera wobble.
+   * Preserves detected corners and polarities for editing and keeps raw CV detections.
+   */
+  enterGtMode(): void {
+    const state = this.livePieceState();
+    if (!state || state.corners.length < 4) {
+      this.scanStatusMessage.set('SCAN A PIECE FIRST BEFORE LABELING GROUND TRUTH');
+      return;
+    }
+
+    this.isGtMode.set(true);
+    this.gtCorners.set(state.corners.map(c => ({ x: c.x, y: c.y })));
+    this.gtDetectedCorners.set(state.corners.map(c => ({ x: c.x, y: c.y })));
+    this.gtEdges.set(state.edges.map(e => {
+      if (e.polarity === 'TAB') return 'Tab';
+      if (e.polarity === 'HOLE') return 'Hole';
+      return 'Flat';
+    }));
+    this.gtSaveStatus.set(null);
+    this.fetchGtCount();
+    this.addLog('INFO', 'Entered Ground Truth Workbench: drag corner pins & toggle edge polarities');
+    this.drawStageOverlay();
+  }
+
+  /**
+   * Exits Ground Truth Benchmark Labeling mode back to normal stage inspection.
+   */
+  exitGtMode(): void {
+    this.isGtMode.set(false);
+    this.gtCorners.set(null);
+    this.gtDetectedCorners.set(null);
+    this.draggingCornerIdx.set(null);
+    this.gtSaveStatus.set(null);
+    this.drawStageOverlay();
+  }
+
+  /**
+   * Toggles verified edge polarity between Tab, Hole, and Flat.
+   */
+  toggleGtEdge(edgeIdx: number, type: 'Tab' | 'Hole' | 'Flat'): void {
+    const current = [...this.gtEdges()];
+    current[edgeIdx] = type;
+    this.gtEdges.set(current);
+    this.drawStageOverlay();
+  }
+
+  /**
+   * Retrieves count of existing ground-truth fixtures from local server.
+   */
+  async fetchGtCount(): Promise<void> {
+    try {
+      const res = await fetch('/api/ground-truth-count');
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.count === 'number') this.gtSavedCount.set(data.count);
+        return;
+      }
+    } catch {}
+
+    try {
+      const res = await fetch('http://localhost:4201/api/ground-truth-count');
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.count === 'number') this.gtSavedCount.set(data.count);
+      }
+    } catch {}
+  }
+
+  /**
+   * Pointer down handler on Viewport A canvas for dragging GT corner pins.
+   */
+  onStagePointerDown(event: PointerEvent): void {
+    if (!this.isGtMode()) return;
+    const corners = this.gtCorners();
+    if (!corners || corners.length < 4) return;
+
+    const canvas = this.stageOverlayCanvas?.nativeElement;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+
+    for (let i = 0; i < corners.length; i++) {
+      const d = Math.hypot(corners[i].x - x, corners[i].y - y);
+      if (d < 22) {
+        this.draggingCornerIdx.set(i);
+        (event.target as HTMLElement).setPointerCapture(event.pointerId);
+        this.drawStageOverlay();
+        return;
+      }
+    }
+  }
+
+  /**
+   * Pointer move handler: drags pin and snaps to closest real contour point.
+   */
+  onStagePointerMove(event: PointerEvent): void {
+    const dragIdx = this.draggingCornerIdx();
+    if (!this.isGtMode() || dragIdx === null) return;
+    const corners = this.gtCorners();
+    const state = this.livePieceState();
+    if (!corners || !state) return;
+
+    const canvas = this.stageOverlayCanvas?.nativeElement;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.max(0, Math.min(384, (event.clientX - rect.left) * (canvas.width / rect.width)));
+    const y = Math.max(0, Math.min(384, (event.clientY - rect.top) * (canvas.height / rect.height)));
+
+    // Snap to closest contour point within 40px radius
+    let bestPt = { x, y };
+    let minDist = 40.0;
+    for (const pt of state.contourPoints) {
+      const d = Math.hypot(pt.x - x, pt.y - y);
+      if (d < minDist) {
+        minDist = d;
+        bestPt = { x: pt.x, y: pt.y };
+      }
+    }
+
+    const updated = [...corners];
+    updated[dragIdx] = bestPt;
+    this.gtCorners.set(updated);
+    this.drawStageOverlay();
+  }
+
+  /**
+   * Pointer up handler: releases pin drag capture.
+   */
+  onStagePointerUp(event: PointerEvent): void {
+    if (this.draggingCornerIdx() !== null) {
+      this.draggingCornerIdx.set(null);
+      try {
+        (event.target as HTMLElement).releasePointerCapture(event.pointerId);
+      } catch {}
+      this.drawStageOverlay();
+    }
+  }
+
+  /**
+   * Saves ground truth benchmark fixture to datasets/ground_truth/
+   * Schema matches cv-engine/tests/test_ground_truth.rs exactly.
+   */
+  async saveGroundTruth(): Promise<void> {
+    const state = this.livePieceState();
+    const corners = this.gtCorners();
+    if (!state || !corners || corners.length < 4) return;
+
+    const stageCanvas = this.stageCanvas?.nativeElement;
+    const dataUrl = stageCanvas ? stageCanvas.toDataURL('image/jpeg', 0.85) : undefined;
+
+    const edges = this.gtEdges();
+    const verifiedType = this.gtVerifiedType();
+    const id = `piece_gt_${Date.now()}`;
+
+    const payload = {
+      id,
+      timestamp: new Date().toISOString(),
+      expected_type: verifiedType,
+      expected_edges: edges,
+      corners: corners.map(c => ({ x: c.x, y: c.y })),
+      detected_corners: (this.gtDetectedCorners() || state.corners).map(c => ({ x: c.x, y: c.y })),
+      contour_points: state.contourPoints.map(p => ({ x: p.x, y: p.y })),
+      imageJpegBase64: dataUrl,
+    };
+
+    this.gtSaveStatus.set('SAVING BENCHMARK FIXTURE...');
+
+    try {
+      let saved = false;
+      let savedFile = `${id}.json`;
+
+      // Try proxy / relative endpoint first
+      try {
+        const res = await fetch('/api/save-ground-truth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          const result = await res.json();
+          if (result.success) {
+            saved = true;
+            savedFile = result.file || savedFile;
+            if (typeof result.count === 'number') this.gtSavedCount.set(result.count);
+          }
+        }
+      } catch {
+        // Fallback to direct fixture-server port
+        try {
+          const res = await fetch('http://localhost:4201/api/save-ground-truth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+            const result = await res.json();
+            if (result.success) {
+              saved = true;
+              savedFile = result.file || savedFile;
+              if (typeof result.count === 'number') this.gtSavedCount.set(result.count);
+            }
+          }
+        } catch {}
+      }
+
+      if (!saved) {
+        // Browser download fallback
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${id}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        this.gtSaveStatus.set(`Downloaded ${id}.json (server offline)`);
+        this.addLog('INFO', `Benchmark fixture downloaded to browser: ${id}.json`);
+      } else {
+        this.gtSaveStatus.set(`✓ Saved as ${savedFile}`);
+        this.addLog('COMMIT', `Ground truth benchmark stored: datasets/ground_truth/${savedFile}`);
+      }
+
+      setTimeout(() => {
+        this.exitGtMode();
+      }, 1200);
+    } catch (err: any) {
+      this.gtSaveStatus.set(`Save error: ${err?.message || err}`);
+      this.addLog('ERR', `Failed to save ground truth: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Renders high-contrast Ground Truth overlay on Viewport A with draggable square corner pins.
+   * Adheres strictly to the light industrial theme (square reticles, 12px typography, zero neons).
+   */
+  private drawGroundTruthOverlay(ctx: CanvasRenderingContext2D): void {
+    const corners = this.gtCorners();
+    const edges = this.gtEdges();
+    const state = this.livePieceState();
+    if (!corners || corners.length < 4 || !state) return;
+
+    // 1. Stage Frame Reticle
+    if (this.showReticle()) {
+      ctx.strokeStyle = '#d4d4d4';
+      ctx.lineWidth = 1.0;
+      ctx.strokeRect(0.5, 0.5, 383, 383);
+    }
+
+    // 2. Raw Piece Contour Boundary (subtle neutral line for snapping reference)
+    if (state.contourPoints && state.contourPoints.length > 2) {
+      ctx.beginPath();
+      ctx.strokeStyle = '#525252';
+      ctx.lineWidth = 1.0;
+      ctx.moveTo(state.contourPoints[0].x, state.contourPoints[0].y);
+      for (let i = 1; i < state.contourPoints.length; i++) {
+        ctx.lineTo(state.contourPoints[i].x, state.contourPoints[i].y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    // 3. Ground-Truth Boundary Quad (1px dashed monochrome)
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(corners[0].x, corners[0].y);
+    for (let i = 1; i < 4; i++) {
+      ctx.lineTo(corners[i].x, corners[i].y);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+
+    // 4. Edge Midpoint Badges (E0..E3)
+    ctx.font = 'bold 12px ui-monospace, Menlo, Consolas, monospace';
+    for (let i = 0; i < 4; i++) {
+      const c1 = corners[i];
+      const c2 = corners[(i + 1) % 4];
+      const midX = (c1.x + c2.x) / 2;
+      const midY = (c1.y + c2.y) / 2;
+      const edgeType = edges[i] || 'Tab';
+
+      const toCX = midX - state.center.x;
+      const toCY = midY - state.center.y;
+      const dist = Math.hypot(toCX, toCY) || 1.0;
+      const badgeX = Math.round(midX + (toCX / dist) * 18);
+      const badgeY = Math.round(midY + (toCY / dist) * 18);
+
+      const label = `E${i}:${edgeType.toUpperCase()}`;
+      const tw = ctx.measureText(label).width;
+      const bw = tw + 8;
+      const bh = 18;
+
+      ctx.fillStyle = '#111111';
+      ctx.fillRect(Math.round(badgeX - bw / 2), Math.round(badgeY - bh / 2), bw, bh);
+
+      ctx.strokeStyle = '#d4d4d4';
+      ctx.lineWidth = 1.0;
+      ctx.strokeRect(Math.round(badgeX - bw / 2) + 0.5, Math.round(badgeY - bh / 2) + 0.5, bw - 1, bh - 1);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, badgeX, badgeY);
+    }
+
+    // 5. Interactive Square Corner Pins (C0..C3)
+    const dragIdx = this.draggingCornerIdx();
+    for (let i = 0; i < 4; i++) {
+      const c = corners[i];
+      const isDragging = dragIdx === i;
+      const cx = Math.round(c.x);
+      const cy = Math.round(c.y);
+
+      // Square reticle (10x10)
+      ctx.fillStyle = isDragging ? '#111111' : '#ffffff';
+      ctx.fillRect(cx - 5, cy - 5, 10, 10);
+      ctx.strokeStyle = '#111111';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx - 4.5, cy - 4.5, 9, 9);
+
+      // Center square pip
+      ctx.fillStyle = isDragging ? '#ffffff' : '#111111';
+      ctx.fillRect(cx - 1, cy - 1, 2, 2);
+
+      // Corner label badge C0..C3 offset outward
+      const toCX = c.x - state.center.x;
+      const toCY = c.y - state.center.y;
+      const dist = Math.hypot(toCX, toCY) || 1.0;
+      const tagX = Math.round(c.x + (toCX / dist) * 20);
+      const tagY = Math.round(c.y + (toCY / dist) * 20);
+
+      ctx.font = 'bold 12px ui-monospace, Menlo, Consolas, monospace';
+      ctx.fillStyle = '#111111';
+      ctx.fillRect(tagX - 12, tagY - 9, 24, 18);
+      ctx.strokeStyle = '#d4d4d4';
+      ctx.lineWidth = 1.0;
+      ctx.strokeRect(tagX - 11.5, tagY - 8.5, 23, 17);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`C${i}`, tagX, tagY);
+    }
+
+    // 6. Top Inverted Status Bar
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(0, 0, 384, 24);
+    ctx.strokeStyle = '#d4d4d4';
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.moveTo(0, 24.5); ctx.lineTo(384, 24.5); ctx.stroke();
+
+    ctx.fillStyle = '#f5f5f5';
+    ctx.font = 'bold 12px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillText('GROUND TRUTH BENCHMARK · DRAG C0-C3 · [SPACE] TO SAVE', 8, 12);
   }
 }

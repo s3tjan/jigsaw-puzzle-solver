@@ -32,7 +32,8 @@ build: build-web
 
 # Build cv-engine WASM and launch the Angular development server
 start: build-cv
-	@echo "==> Starting web-app development server..."
+	@echo "==> Starting ground-truth fixture server and web-app development server..."
+	@node scripts/fixture-server.mjs &
 	cd web-app && npm start
 
 serve: start

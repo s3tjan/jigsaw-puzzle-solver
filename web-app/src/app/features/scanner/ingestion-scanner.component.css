@@ -969,3 +969,66 @@
   color: #ffffff;
   border-color: #111111;
 }
+
+/* ========================================================================= */
+/* GROUND TRUTH BENCHMARK WORKBENCH STYLING (LIGHT INDUSTRIAL THEME)         */
+/* ========================================================================= */
+
+.stage-overlay.interactive-gt {
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* Segmented Edge Polarity Button Group */
+.seg-btn-group {
+  display: inline-flex;
+  border: 1px solid #d4d4d4;
+  border-radius: 0;
+}
+
+.seg-btn {
+  height: 22px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  background-color: #ffffff;
+  color: #525252;
+  border: none;
+  border-right: 1px solid #d4d4d4;
+  cursor: pointer;
+  border-radius: 0;
+  transition: none;
+}
+
+.seg-btn:last-child {
+  border-right: none;
+}
+
+.seg-btn:hover:not(.active) {
+  background-color: #e5e5e5;
+  color: #111111;
+}
+
+.seg-btn.active {
+  background-color: #111111;
+  color: #ffffff;
+}
+
+/* Ground Truth Feedback Strip */
+.gt-status-strip {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #111111;
+  background-color: #f5f5f5;
+  border-bottom: 1px solid #d4d4d4;
+  text-align: center;
+}
+
+.gt-status-strip.ok-status {
+  background-color: #f0fdf4;
+  color: #15803d;
+  font-weight: 700;
+}
+
