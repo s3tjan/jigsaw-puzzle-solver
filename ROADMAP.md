@@ -84,6 +84,7 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 | ING-02B| CNT-03, OPT-02 | `cv-engine/src/lib.rs` | `cargo test test_ingest_mat_piece` | **cv-engine WASM Ingestion Bridge**: Expose `ingest_mat_piece` WASM binding linking camera canvas frame to Rust homography unwarp, contour extraction, 4-edge polarity segmentation, and tray assignment. | DONE |
 | ING-03 | ING-02, TRY-05 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | Browser audio/visual inspection | Full-screen peripheral color flash (8 tray colors) and banner for eyes-free sorting. | DONE |
 | ING-04 | ING-02, ING-01 | `web-app/src/app/core/state/inventory.store.ts` | Browser drawer inspection | Index all 1,008 pieces with normalized contours, polarity masks, and transparent-masked thumbs. | DONE |
+| ING-05 | ING-02B, CNT-02 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | `cargo test test_ground_truth` | Interactive ground-truth benchmark workbench: draggable C0..C3 corner refinement, manual polarity overrides, and direct fixture export to `datasets/ground_truth/` adhering to light industrial design rules. | DONE |
 
 ### RET: Frontier Constraint Retrieval Engine (FCQL)
 

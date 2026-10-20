@@ -81,12 +81,11 @@ jigsaw-puzzle-solver/
 │   │   ├── app/features/      # Optics (Alt+2), Poster (Alt+1), Scanner (Alt+3), Workbench (Alt+4)
 │   │   └── pkg/               # wasm-pack generated ES module bindings
 │   └── public/                # WASM binary and static assets
+├── scripts/                   # Local development and utility scripts
+│   └── fixture-server.mjs     # Ground-truth JSON fixture server (datasets/ground_truth/)
 ├── docs/                      # Architecture Decision Records & Postmortems
 │   ├── ADR.md                 # Architecture Decision Records
 │   └── POSTMORTEM_CV_ENGINE.md# Technical postmortem of vision bug fixes
-├── generate_mat.py            # Calibration mat generator script
-└── ROADMAP.md                 # Project roadmap and milestone tracker
-```
 ├── generate_mat.py            # Calibration mat generator script
 └── ROADMAP.md                 # Project roadmap and milestone tracker
 ```
@@ -99,4 +98,5 @@ jigsaw-puzzle-solver/
   - **ADR-001**: Ground-truth strategy, edge-corner synchronization, and iterated Gaussian contour smoothing.
   - **ADR-002**: Spatial probability density heatmaps and tabletop assembly synergy (superseding automated 1D perimeter loop chaining).
   - **ADR-003**: Frontend architecture pivot to Angular (complete replacement of monolithic React client with enterprise standalone Angular services and signals).
+  - **ADR-004**: Strict Separation of CV Engine Logic from Presentation Layer & Ground-Truth Regression Workbench.
 - [CV Engine Postmortem](docs/POSTMORTEM_CV_ENGINE.md): Incident log and resolution breakdown for corner detection, optical noise deadband, and segmentation invariants.

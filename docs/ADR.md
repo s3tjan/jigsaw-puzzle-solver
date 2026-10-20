@@ -119,3 +119,34 @@ Physical tabletop validation revealed fundamental limitations in both automated 
 
 #### Trade-offs
 - Requires rewriting UI components (calibration modal, canvas pan/zoom renderer, and inventory drawer) in Angular.
+
+---
+
+## ADR-004: Zero-Logic Presentation Architecture, Deterministic Two-Step Ingestion & Ground-Truth Regression Tooling
+
+- **Status:** Accepted
+- **Date:** 2026-10-20
+- **Context:** Previous iterations permitted computer vision calculations (polarity estimation, chord length derivation, and piece classification) to bleed into the TypeScript UI layer. This created dual sources of truth, masked algorithm drift in the Rust engine, and left edge cases (such as high-contrast black/white pieces) without an objective regression test harness.
+
+### 1. Decisions & Implementation
+
+1. **Strict UI Presentation Boundary**:
+   - The Angular UI acts purely as an operator workstation and presentation layer. It performs zero geometric math, contour slicing, or polarity re-classification.
+   - All piece attributes (surface area, perimeter, chord lengths, depth, tab/hole polarities, CIELAB colors, tray assignments) are computed exclusively in Rust (`cv-engine`) and transmitted via typed WASM structs (`StagedPieceTelemetry`, `EdgeTelemetry`).
+   - If the engine produces an erroneous contour or misclassified edge, the UI renders the true state without masking defects.
+
+2. **Deterministic Two-Step Ingestion Model**:
+   - **Step 1 (Live Mat Observation)**: `analyze_staged_piece` processes video frames in real time, projecting pixel-snapped die-cut corners, cardinal edge dissections, and candidate tray routing onto Viewport A and Viewport B.
+   - **Step 2 (Commit & Ingestion)**: On operator confirmation (`[SPACE]`), `commit_staged_piece` locks the telemetry, persists the piece into IndexedDB, and updates the physical tray volume counter.
+
+3. **Interactive Ground-Truth Benchmark Tooling**:
+   - Integrated benchmark mode in `IngestionScannerComponent` allows freezing the camera feed on difficult physical pieces.
+   - Operators can visually align corner pins `C0..C3` with 40px contour snapping, set verified edge polarities (`[TAB | HOLE | FLAT]`), and save standardized benchmark fixtures to `cv-engine/datasets/ground_truth/`.
+   - Tooling strictly follows the Light Industrial Theme (`.agents/rules/senior-frontend.md`): table-first layout, 12px uniform typography, square 10×10 reticles, and zero SaaS/neon accents.
+
+### 2. Consequences
+
+#### Positive
+- **Objective Vision Benchmarking**: Automated regression suite (`cargo test test_ground_truth`) gates algorithm changes in `contour.rs` against real physical puzzle pieces.
+- **Clean Separation of Concerns**: Web frontend code remains lean, maintainable, and decoupled from CV algorithm changes.
+- **True Engine Telemetry**: What the operator sees in the Inspector Pane is the exact representation of `cv-engine` state.
