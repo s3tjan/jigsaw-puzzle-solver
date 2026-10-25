@@ -1,4 +1,4 @@
-.PHONY: all build-cv build-web build start serve test-cv test-web test clean
+.PHONY: all build-cv build-web build start serve test-cv test-web test clean deploy deploy-preview deploy-prod
 
 # Default: build cv-engine WASM and start web-app dev server
 all: start
@@ -46,3 +46,17 @@ clean:
 	rm -rf web-app/src/pkg
 	rm -rf web-app/dist
 	rm -f web-app/public/cv_engine_bg.wasm
+
+# Cloudflare Pages deployment targets
+CF_PROJECT ?= puzzinpieces
+DIST_BROWSER = web-app/dist/web-app/browser
+
+deploy-preview: build
+	@echo "==> Deploying preview to Cloudflare Pages (branch: review)..."
+	npx wrangler pages deploy $(DIST_BROWSER) --project-name=$(CF_PROJECT) --branch=review --commit-dirty=true
+
+deploy-prod: build
+	@echo "==> Deploying production to Cloudflare Pages (branch: main)..."
+	npx wrangler pages deploy $(DIST_BROWSER) --project-name=$(CF_PROJECT) --branch=main --commit-dirty=true
+
+deploy: deploy-preview
