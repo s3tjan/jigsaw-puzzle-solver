@@ -6,7 +6,7 @@ import { AppMode } from '../models/operator.model';
 })
 export class AppModeStore {
   // Current active operational mode
-  private readonly _activeMode = signal<AppMode>('WORKBENCH');
+  private readonly _activeMode = signal<AppMode>('POSTER');
   readonly activeMode = this._activeMode.asReadonly();
 
   // Workbench Left Rail collapse state (prevents visual crowding during F3 assembly)
