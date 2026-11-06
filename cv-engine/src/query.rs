@@ -54,12 +54,33 @@ pub fn rotate_tab_widths(widths: [f32; 4], rotation: u8) -> [f32; 4] {
 }
 
 /// Check if a rotated piece's world polarities satisfy a slot's polarity constraints.
+/// Enforces topological invariants:
+/// 1. An interior slot (0 required Flat edges) can NEVER accept a piece with any Flat edge.
+/// 2. A border slot (1 required Flat edge) can ONLY accept a piece with exactly 1 Flat edge aligned to the border.
+/// 3. A corner slot (2 required Flat edges) can ONLY accept a piece with exactly 2 Flat edges aligned to the corner.
+/// 4. Every non-Any cardinal requirement must match exactly.
 #[inline]
 pub fn test_polarities_satisfy_constraint(
     world_polarities: &[EdgePolarity; 4],
     constraint: &SlotPolarityConstraint,
 ) -> bool {
     let targets = constraint.as_array();
+    let slot_flat_count = constraint.flat_edge_count();
+
+    // Invariant: count how many Flat edges this candidate piece has in world space
+    let piece_flat_count = world_polarities
+        .iter()
+        .filter(|&&p| p == EdgePolarity::Flat)
+        .count();
+
+    // Piece flat edge count must match the slot's physical boundary requirement:
+    // - Interior slot (slot_flat_count == 0): piece cannot have any flat edge
+    // - Border slot (slot_flat_count == 1): piece must have exactly 1 flat edge
+    // - Corner slot (slot_flat_count == 2): piece must have exactly 2 flat edges
+    if piece_flat_count != slot_flat_count {
+        return false;
+    }
+
     for d in 0..4 {
         let req = targets[d];
         if req != EdgePolarity::Any && world_polarities[d] != req {

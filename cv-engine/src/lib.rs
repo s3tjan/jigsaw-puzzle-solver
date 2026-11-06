@@ -1065,6 +1065,7 @@ impl WasmBoardState {
     }
 
     /// Queries slot constraints at (r, c) and prunes a candidate pool of pieces by polarity.
+    /// Excludes pieces that are already placed on the board.
     /// Evaluates all 4 cardinal rotations and returns JSON-serialized array of `PolarityMatch` objects.
     #[wasm_bindgen]
     pub fn query_slot_polarity_candidates_json(
@@ -1079,8 +1080,14 @@ impl WasmBoardState {
         let candidates: Vec<CandidatePieceInput> = serde_json::from_str(candidates_json)
             .map_err(|e| JsValue::from_str(&format!("Invalid candidates JSON: {}", e)))?;
 
+        // Filter out any candidates that are already placed on the board
+        let available_candidates: Vec<CandidatePieceInput> = candidates
+            .into_iter()
+            .filter(|cand| !self.inner.is_piece_placed(cand.piece_id))
+            .collect();
+
         let (constraint, _, _) = self.inner.compute_slot_constraints(r, c);
-        let matches = prune_candidates_by_polarity(&candidates, &constraint);
+        let matches = prune_candidates_by_polarity(&available_candidates, &constraint);
 
         serde_json::to_string(&matches).map_err(|e| JsValue::from_str(&e.to_string()))
     }

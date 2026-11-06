@@ -6,7 +6,10 @@ use cv_engine::WasmBoardState;
 fn test_frontier_polarity_generation() {
     let mut board = BoardState::new(BOARD_ROWS, BOARD_COLS);
     assert_eq!(board.placed_count(), 0);
-    assert!(board.get_active_frontier().is_empty());
+    // On an empty board, the active frontier bootstraps with the 4 corners as initial anchor candidates
+    let initial_frontier = board.get_active_frontier();
+    assert_eq!(initial_frontier.len(), 4, "Empty board must recommend 4 corners as initial seeds");
+    assert!(initial_frontier.iter().all(|s| s.is_corner));
 
     // 1. Initial Outer Frame Boundary Test:
     // Slot (0, 0) should have North=Flat, West=Flat, East=Any, South=Any.
@@ -280,5 +283,35 @@ fn test_bitmask_polarity_pruning() {
         assert_eq!(m.world_polarities[0], EdgePolarity::Flat);
         assert_eq!(m.world_polarities[3], EdgePolarity::Hole);
     }
+
+    // 5. Invariant Test: Border pieces must NEVER match interior slots, even with unconstrained Any edges
+    let interior_constraint = SlotPolarityConstraint {
+        north: EdgePolarity::Hole,
+        east: EdgePolarity::Any,
+        south: EdgePolarity::Any,
+        west: EdgePolarity::Any,
+    };
+    let border_leak_test = find_piece_valid_rotations(&border_piece, &interior_constraint);
+    assert!(
+        border_leak_test.is_empty(),
+        "Border piece with a flat edge must NEVER match an interior slot (0 required flat edges)"
+    );
+
+    // 6. Invariant Test: Already placed piece must be excluded from WASM candidate queries
+    let already_placed_json = serde_json::to_string(&vec![
+        CandidatePieceInput {
+            piece_id: 1, // Piece 1 was already placed at (0, 0)
+            intrinsic_polarities: p_corner,
+            tab_widths_mm: w_corner,
+            is_border: true,
+            is_corner: true,
+        }
+    ]).unwrap();
+    let query_res = wasm_board.query_slot_polarity_candidates_json(0, 1, &already_placed_json).unwrap();
+    let placed_matches: Vec<PolarityMatch> = serde_json::from_str(&query_res).unwrap();
+    assert!(
+        placed_matches.is_empty(),
+        "Pieces already placed on the board must not be suggested again"
+    );
 }
 

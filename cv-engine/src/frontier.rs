@@ -109,6 +109,17 @@ impl SlotPolarityConstraint {
         if self.west != EdgePolarity::Any { count += 1; }
         count
     }
+
+    /// Count how many cardinal edges require Flat outer boundaries.
+    #[inline(always)]
+    pub fn flat_edge_count(&self) -> usize {
+        let mut count = 0;
+        if self.north == EdgePolarity::Flat { count += 1; }
+        if self.east == EdgePolarity::Flat { count += 1; }
+        if self.south == EdgePolarity::Flat { count += 1; }
+        if self.west == EdgePolarity::Flat { count += 1; }
+        count
+    }
 }
 
 /// Represents a piece already placed onto a board slot.
@@ -296,12 +307,48 @@ impl BoardState {
         (constraint, expected_widths, placed_neighbor_count)
     }
 
+    /// Check if a piece with `piece_id` is already placed anywhere on the board.
+    #[inline]
+    pub fn is_piece_placed(&self, piece_id: u32) -> bool {
+        self.grid.iter().any(|slot| {
+            if let Some(placed) = slot {
+                placed.piece_id == piece_id
+            } else {
+                false
+            }
+        })
+    }
+
     /// Retrieve all active frontier slots on the board.
-    /// An empty slot is considered part of the active frontier if:
-    /// - It has at least 1 placed direct neighbor, OR
-    /// - It is an empty border slot when any border pieces are placed.
+    /// - If the board is completely empty (0 pieces placed), surfaces the 4 corner slots
+    ///   `[(0, 0), (0, cols-1), (rows-1, 0), (rows-1, cols-1)]` as initial seed anchors.
+    /// - Otherwise, surfaces all empty slots adjacent to at least one placed piece, sorted
+    ///   by highest placed neighbor count (lowest entropy).
     pub fn get_active_frontier(&self) -> Vec<FrontierSlot> {
         let mut frontier = Vec::new();
+
+        // Empty Board Bootstrap: surface the 4 corners as initial anchor candidates
+        if self.placed_count() == 0 {
+            let corners = [
+                (0, 0),
+                (0, self.cols.saturating_sub(1)),
+                (self.rows.saturating_sub(1), 0),
+                (self.rows.saturating_sub(1), self.cols.saturating_sub(1)),
+            ];
+            for (r, c) in corners {
+                let (constraint, expected_widths, _) = self.compute_slot_constraints(r, c);
+                frontier.push(FrontierSlot {
+                    r,
+                    c,
+                    constraints: constraint,
+                    expected_tab_widths_mm: expected_widths,
+                    placed_neighbor_count: 0,
+                    is_border: true,
+                    is_corner: true,
+                });
+            }
+            return frontier;
+        }
 
         for r in 0..self.rows {
             for c in 0..self.cols {
@@ -312,8 +359,6 @@ impl BoardState {
                 let (constraint, expected_widths, placed_neighbors) = self.compute_slot_constraints(r, c);
                 let (is_border, is_corner) = self.classify_slot(r, c);
 
-                // Slot is on the active frontier if it has at least one placed neighbor,
-                // or if it's on the boundary and touches an anchor.
                 if placed_neighbors > 0 {
                     frontier.push(FrontierSlot {
                         r,
