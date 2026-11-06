@@ -12,19 +12,21 @@ A cyber-physical system for solving a 1,008-piece jigsaw puzzle (36 × 28 total 
   * Right border: 26 pieces (Rows 1..26, Col 35, excluding corners)
   * Total perimeter = 4 + 34 + 34 + 26 + 26 = 124 border pieces
 - **Interior Pieces**: 884 pieces (34 columns × 26 rows, Cols 1..34, Rows 1..26)
-  * Pre-sorted into 8 balanced physical trays (~110 pieces each, capacity capped at <= 125 pieces: 884 / 8 = 110.5 avg)
+  * Organized by physical polarity archetypes and single-layer flat trays to guarantee 0% sorting error.
 - **Total**: 124 border + 884 interior = 1,008 pieces
 
-### Core Operating Model
-1. Reverse Retrieval: The user anchors the 124 border pieces, selects an empty frontier slot `(R, C)`, and queries matching pieces from inventory.
-2. 8 Spatially-Bounded Physical Trays: Pieces are pre-sorted into 8 balanced physical containers (~110 pieces each, capacity capped at <= 125 pieces) based on poster clustering (spatial coordinates, CIELAB color, Sobel gradient density) during continuous mat ingestion.
-3. Minimal Cognitive Load: Ingestion uses whole-screen peripheral color flashes for eyes-free piece tossing; assembly spotting displays a piece thumbnail, tray color badge, and cardinal orientation arrow (e.g. "Tab Up").
-4. Metric Calibration: 100mm fiducial mat establishes an orthographic scale anchor (`96px = 25mm`) with K1 lens distortion correction.
-5. Hard Polarity Pruning: Discrete edge polarities (Flat=00, Tab=01, Hole=10) prune 75-90% of candidates via bitwise operations in <0.01ms before visual correlation.
-
-### Prior Art Differentiation
-- Forward vs. Reverse Paradigm: Academic solvers evaluate P(slot | random piece), failing on low-entropy regions (sky/foliage) and identical die-twin cuts. We invert to P(candidate | frontier slot), enforcing deterministic physical boundary conditions.
-- Cyber-Physical Search Friction: Existing systems ignore physical piece retrieval in the room. By deriving capacity-constrained physical trays (8 trays, <= 125 pcs) from poster analysis and using peripheral cues during continuous ingestion, physical search time is reduced from minutes in a 1,008-piece pile to seconds in a single-layer tray.
+### Core Operating Model (Polarity-First Directed Assembly)
+1. **Deterministic Ingestion & Archetype Sorting**: Pieces pass under the camera stage once. The CV engine extracts discrete 4-edge polarities (`Flat=00`, `Tab=01`, `Hole=10`), millimeter-calibrated tab dimensions, and contrast-boosted visual thumbnails. Pieces are stored in single-layer flat trays categorized by mechanical polarity archetype (100% deterministic, zero fuzzy color mis-routing).
+2. **Flexible Ground Anchoring**: The board can be anchored by anywhere from 1–4 corner pieces up to the full 124 border pieces.
+3. **Minimum-Entropy Wavefront Scheduling**: Rather than guessing loose pieces against 1,008 unknown poster cells, the engine identifies the highest-constraint frontier slot (slots flanked by 2 to 3 placed neighbors) for maximum pruning power.
+4. **Multi-Stage Physical Funnel**:
+   * **Stage 1 (Discrete Polarity)**: Bitmask match on complementary edges (`Tab` ↔ `Hole`, `Flat` ↔ `Flat`) across 4 cardinal rotations prunes 75–95% of candidates.
+   * **Stage 2 (Metric Micro-Geometry)**: Tab width and depth tolerances (±0.4mm) + piece aspect ratio prune to 2–5 candidates.
+   * **Stage 3 (Poster Visual Seam)**: Target cell CIELAB and Sobel gradients act as secondary tie-breakers among remaining candidates.
+5. **Physical Spotting HUD**: Since physical pieces do not have numbers, the HUD presents an unmistakable visual spotting card:
+   * **Exaggerated Silhouette**: Distinctive mechanical signature with millimeter callouts (e.g. "Wide Tab 5.4mm", "Off-center Tab +1.8mm").
+   * **Contrast-Enhanced Crop**: High-pass / dynamic-range boosted real piece photo revealing subtle ink gradients and textures.
+   * **Cardinal Orientation Arrow**: High-contrast directional banner (e.g. `▲ TAB UP (000°)`).
 
 ---
 
@@ -33,10 +35,10 @@ A cyber-physical system for solving a 1,008-piece jigsaw puzzle (36 × 28 total 
 Tasks are organized by functional subsystem and identified by namespace prefix:
 - `OPT`: Optical Calibration & Metric Grounding
 - `CNT`: Contour & Edge Classification
-- `TRY`: Poster Analysis & Dynamic Tray Studio
 - `ING`: Continuous Mat Ingestion & Inventory Storage
 - `RET`: Frontier Constraint Retrieval Engine (FCQL)
 - `HUD`: Assembly Workbench & Spotting HUD
+- `LEG`: Legacy Decommissioning & Technical Cleanup
 
 ### OPT: Optical Calibration & Metric Grounding
 
@@ -54,56 +56,43 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 | CNT-02 | CNT-01 | `cv-engine/src/contour.rs` | `cargo test test_ground_truth` | Arc-length turn-angle local maxima suppression detecting 4 physical corners on 90 fixtures. | DONE |
 | CNT-03 | CNT-02 | `cv-engine/src/matcher.rs` | `cargo test test_pairwise_matcher` | Segment 4 edges, classify polarities (Tab, Hole, Flat), measure tab width in mm. | DONE |
 
-### TRY: Poster Analysis & Dynamic Tray Studio
-
-| Task ID | Depends On | Target Path | Test Command | Description | Status |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| TRY-01 | - | `cv-engine/src/poster.rs` | `cargo test test_poster_grid_feature_vectors` | Extract 884 interior feature vectors `V(R, C) = [L, a, b, gradient, R, C]` (34×26 interior grid) in <5ms. | DONE |
-| TRY-02 | TRY-01 | `cv-engine/src/poster.rs` | `cargo test test_weighted_kmeans_clustering` | Weighted k-means clustering with configurable `w_color`, `w_texture`, `w_spatial` for K=8 trays (<20 iters). | DONE |
-| TRY-03 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_capacity_constrained_clustering` | Capacity penalty bounding cluster sizes to <= 125 pieces per tray (~110 pcs avg). | DONE |
-| TRY-04 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_seeded_kmeans_centroids` | Seed cluster centroids from 2x4 spatial grid with optional user landmark overrides. | DONE |
-| TRY-05 | TRY-03, TRY-04 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | Studio UI with weight sliders, 8-tray color assignments, volume meters, collapsible control rail (Alt+B), and keyboard navigation at 60 FPS. | DONE |
-| TRY-06 | TRY-05 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | Canvas tint overlay on poster grid slots matching assigned 8 tray color badges, with keyboard shortcuts ([1]-[4] modes, [G] grid, [0] fit). | DONE |
-| TRY-07 | TRY-02 | `cv-engine/src/poster.rs` | `cargo test test_landmark_fallback_routing` | Detect high internal-variance boundary cells bridging distinct color/spatial islands. | Planned |
-| TRY-08 | TRY-05 | `web-app/src/app/features/poster/tray-studio.component.ts` | Browser UI inspection | (Future UX) Capacity Balance slider: interpolate between loose natural boundaries (cap <= 125) and strict uniform trays (equal ~110 pcs). | Backlog |
-| TRY-09 | TRY-06 | `web-app/src/app/features/poster/poster-canvas.component.ts` | Browser UI inspection | (Future UX) Texture Heatmap ViewMode: visualize rotation-invariant core color variance (color_std) and Sobel energy. | Backlog |
-
-#### Future Candidate UX Knobs for Tray Studio (Reference)
-1. **Capacity Strictness Slider (`balance_strictness: 0.0 .. 1.0`)**:
-   - `0.0 (Loose)`: Allows trays to expand up to the hard ceiling of 125 pieces to respect color/feature boundaries.
-   - `1.0 (Strict)`: Applies steep progressive penalties above the target average (~110 pieces) to enforce near-identical tray counts.
-2. **Texture / Entropy Overlay (`PosterViewMode: 'TEXTURE'`)**:
-   - Renders a monochrome/heatmap overlay representing the fused rotation-invariant texture score `sqrt(0.55 * grad^2 + 0.45 * color_std^2)`, allowing the user to visually inspect why pieces are categorized as flat vs. patterned.
-
 ### ING: Continuous Mat Ingestion & Inventory Storage
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| ING-01 | - | `web-app/src/app/core/services/storage.service.ts` | Browser DevTools Application tab | Reactive IndexedDB schema for pieces, contours, assigned trays, and board state. | DONE |
+| ING-01 | - | `web-app/src/app/core/services/storage.service.ts` | Browser DevTools Application tab | Reactive IndexedDB schema for pieces, contours, polarity archetypes, and board state. | DONE |
 | ING-02 | OPT-01, ING-01 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | Browser mat drop test | Continuous mat ingestion UI with rectified 96mm stage arena, Space-bar drop triggering, and IndexedDB piece indexing. | DONE |
-| ING-02B| CNT-03, OPT-02 | `cv-engine/src/lib.rs` | `cargo test test_ingest_mat_piece` | **cv-engine WASM Ingestion Bridge**: Expose `ingest_mat_piece` WASM binding linking camera canvas frame to Rust homography unwarp, contour extraction, 4-edge polarity segmentation, and tray assignment. | DONE |
-| ING-03 | ING-02, TRY-05 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | Browser audio/visual inspection | Full-screen peripheral color flash (8 tray colors) and banner for eyes-free sorting. | DONE |
+| ING-02B| CNT-03, OPT-02 | `cv-engine/src/lib.rs` | `cargo test test_ingest_mat_piece` | **cv-engine WASM Ingestion Bridge**: Expose `ingest_mat_piece` WASM binding linking camera frame to Rust homography unwarp, contour extraction, 4-edge polarity segmentation, and mechanical archetype routing. | DONE |
+| ING-03 | ING-02 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | Browser audio/visual inspection | Ingestion feedback banner with polarity archetype badge (Border, 2-Tab Opp, 2-Tab Adj, etc.) for deterministic sorting. | DONE |
 | ING-04 | ING-02, ING-01 | `web-app/src/app/core/state/inventory.store.ts` | Browser drawer inspection | Index all 1,008 pieces with normalized contours, polarity masks, and transparent-masked thumbs. | DONE |
-| ING-05 | ING-02B, CNT-02 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | `cargo test test_ground_truth` | Interactive ground-truth benchmark workbench: draggable C0..C3 corner refinement, manual polarity overrides, and direct fixture export to `datasets/ground_truth/` adhering to light industrial design rules. | DONE |
+| ING-05 | ING-02B, CNT-02 | `web-app/src/app/features/scanner/ingestion-scanner.component.ts` | `cargo test test_ground_truth` | Interactive ground-truth benchmark workbench: draggable C0..C3 corner refinement, manual polarity overrides, and direct fixture export to `datasets/ground_truth/`. | DONE |
 
 ### RET: Frontier Constraint Retrieval Engine (FCQL)
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| RET-01 | ING-01 | `cv-engine/src/frontier.rs` | `cargo test test_frontier_polarity_generation` | Index active frontier slots and compile complementary neighbor edge polarities (initialized by 124 border). | Planned |
-| RET-02 | RET-01, CNT-03 | `cv-engine/src/frontier.rs` | `cargo test test_bitmask_polarity_pruning` | Bitmask polarity filter (00, 01, 10) across 4 rotations pruning 75-90% candidates (<0.01ms). | Planned |
-| RET-03 | RET-02 | `cv-engine/src/matcher.rs` | `cargo test test_metric_sizing_compatibility` | Soft score penalty for tab/hole width deviation beyond tolerance (+-0.4mm). | Planned |
-| RET-04 | RET-03, TRY-01 | `cv-engine/src/query.rs` | `cargo test test_target_slot_candidate_ranking` | Rank candidates against target poster cell via 4x4 spatial CIELAB and Sobel gradients (<2ms). | Planned |
-| RET-05 | RET-04 | `cv-engine/src/frontier.rs` | `cargo test test_frontier_entropy_scheduling` | Information gain scheduler identifying frontier slots with largest confidence gaps. | Planned |
+| RET-01 | ING-01 | `cv-engine/src/frontier.rs` | `cargo test test_frontier_polarity_generation` | 36×28 board representation, arbitrary anchor seeding, and dynamic compilation of complementary neighbor polarities (`Tab` ↔ `Hole`, `Flat` ↔ `Flat`). | Planned |
+| RET-02 | RET-01, CNT-03 | `cv-engine/src/frontier.rs` | `cargo test test_bitmask_polarity_pruning` | Bitmask polarity filter across 4 cardinal rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) pruning 75–95% of candidates (<0.01ms). | Planned |
+| RET-03 | RET-02 | `cv-engine/src/matcher.rs` | `cargo test test_metric_sizing_compatibility` | Micro-geometry filter evaluating tab width (±0.4mm), protrusion depth, and piece aspect ratio. | Planned |
+| RET-04 | RET-03 | `cv-engine/src/query.rs` | `cargo test test_target_slot_candidate_ranking` | Secondary candidate ranking against target poster cell via local CIELAB and Sobel gradients. | Planned |
+| RET-05 | RET-04 | `cv-engine/src/frontier.rs` | `cargo test test_frontier_entropy_scheduling` | Minimum-entropy scheduler prioritizing frontier slots with maximum neighbor constraints. | Planned |
 
 ### HUD: Assembly Workbench & Spotting HUD
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| HUD-01 | - | `web-app/src/app/features/workbench/components/workbench-canvas/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport (36×28 full grid / 1,008 slots) rendering grid boundaries and border piece anchors. | DONE |
-| HUD-02 | HUD-01, RET-04 | `web-app/src/app/features/workbench/workbench.component.ts` | Browser slot click inspection | Direct slot tap triggers query engine and displays top match in dedicated spotting inspector. | DONE |
-| HUD-03 | HUD-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.ts` | Browser card inspection | Spotting HUD showing piece ID, tray name/color badge, match score, tab width, and cardinal rotation label. | DONE |
-| HUD-04 | HUD-03, OPT-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Screen 1:1 physical calibration check | Render piece silhouette frame with metric grounding (25mm = 96px). | DONE |
-| HUD-05 | HUD-02 | `web-app/src/app/core/state/board.store.ts` | Browser confirm click inspection | Confirm placement action advances placed count, removes resolved slot from frontier queue, and advances active slot. | DONE |
+| HUD-01 | - | `web-app/src/app/features/workbench/components/workbench-canvas/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport (36×28 full grid / 1,008 slots) rendering grid boundaries, placed pieces, and active frontier slots. | DONE |
+| HUD-02 | HUD-01, RET-01 | `web-app/src/app/features/workbench/workbench.component.ts` | Browser slot click inspection | Active slot selection triggers FCQL retrieval engine and surfaces top matches. | DONE |
+| HUD-03 | HUD-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.ts` | Browser card inspection | Visual Spotting Card displaying piece photo, archetype badge, mm tab measurements, and cardinal orientation arrow (`▲ TAB UP`). | DONE |
+| HUD-04 | HUD-03, OPT-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Screen 1:1 physical calibration check | Render piece silhouette frame with metric grounding (25mm = 96px) and distinctive contour callouts. | DONE |
+| HUD-05 | HUD-02 | `web-app/src/app/core/state/board.store.ts` | Browser confirm click inspection | Confirm placement action commits piece, dynamically expands frontier queue, and recommends next lowest-entropy slot. | DONE |
 | HUD-06 | HUD-05 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Browser reject click inspection | Reject candidate button cycles candidate rankings for alternate piece selection. | DONE |
-| HUD-07 | HUD-05, ING-02 | `cv-engine/src/cluster_matcher.rs` | `cargo test test_cluster_matching` | Scan 2-3 piece sub-assemblies on mat, matching composite artwork to lock slots at once. | Planned |
+| HUD-07 | HUD-05, ING-02 | `cv-engine/src/cluster_matcher.rs` | `cargo test test_cluster_matching` | Scan 2-3 piece sub-assemblies on mat, matching composite geometry to lock multiple slots at once. | Planned |
+
+### LEG: Legacy Decommissioning & Technical Cleanup
+
+| Task ID | Depends On | Target Path | Test Command | Description | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| LEG-01 | RET-01 | `cv-engine/src/` | `cargo test` | Purge deprecated standalone poster-only global locator (`locate_piece_spatial` / `locate_piece_spatial_core`) that caused low-entropy collapse and false cosine inflation. | Planned |
+| LEG-02 | ING-02B | `cv-engine/src/lib.rs` | `cargo test test_ingest_mat_piece` | Remove fuzzy poster-color tray routing from `ingest_mat_piece` in favor of deterministic polarity archetype classification. | Planned |
+| LEG-03 | HUD-03 | `web-app/src/` | `ng test` | Remove obsolete tray clustering studio UI and obsolete color-only routing services (`PosterClusteringService`). | Planned |
