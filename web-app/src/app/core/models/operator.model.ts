@@ -6,11 +6,15 @@ export interface BoardSlot {
   isPlaced: boolean;
   pieceId?: number;
   entropy?: number;
+  placedNeighborCount?: number;
+  isBorder?: boolean;
+  isCorner?: boolean;
+  expectedTabWidthsMm?: [number, number, number, number];
   requiredPolarities?: {
-    north: 'TAB' | 'HOLE' | 'FLAT' | 'NONE';
-    east: 'TAB' | 'HOLE' | 'FLAT' | 'NONE';
-    south: 'TAB' | 'HOLE' | 'FLAT' | 'NONE';
-    west: 'TAB' | 'HOLE' | 'FLAT' | 'NONE';
+    north: 'TAB' | 'HOLE' | 'FLAT' | 'NONE' | 'ANY';
+    east: 'TAB' | 'HOLE' | 'FLAT' | 'NONE' | 'ANY';
+    south: 'TAB' | 'HOLE' | 'FLAT' | 'NONE' | 'ANY';
+    west: 'TAB' | 'HOLE' | 'FLAT' | 'NONE' | 'ANY';
   };
 }
 

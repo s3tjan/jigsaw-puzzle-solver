@@ -140,6 +140,20 @@ export class StorageService {
   }
 
   /**
+   * Retrieves a single stored piece by ID from IndexedDB
+   */
+  async getPiece(pieceId: number): Promise<StoredPiece | undefined> {
+    const db = await this.getDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_PIECES, 'readonly');
+      const store = tx.objectStore(STORE_PIECES);
+      const req = store.get(pieceId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /**
    * Retrieves all stored pieces from IndexedDB
    */
   async getAllPieces(): Promise<StoredPiece[]> {

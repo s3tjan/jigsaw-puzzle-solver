@@ -17,11 +17,12 @@ export class WorkbenchCanvasComponent implements AfterViewInit {
   private isViewInit = false;
 
   constructor() {
+    // Register reactive dependencies on BoardStore signals
     effect(() => {
-      // Register reactive dependencies on BoardStore signals
       this.boardStore.selectedSlot();
       this.boardStore.frontierSlots();
       this.boardStore.placedCount();
+      this.boardStore.placedPieces();
 
       if (this.isViewInit) {
         this.renderCanvas();
@@ -96,26 +97,31 @@ export class WorkbenchCanvasComponent implements AfterViewInit {
         const isBorder = (r === 0 || r === rows - 1 || c === 0 || c === cols - 1);
         const isSelected = selectedSlot?.r === r && selectedSlot?.c === c;
         const isFrontier = frontierSlots.some(s => s.r === r && s.c === c);
+        const isPlaced = this.boardStore.placedPieces().has(`${r},${c}`);
 
         ctx.strokeStyle = '#d4d4d4';
         ctx.lineWidth = 1;
         ctx.strokeRect(c * cellSize, r * cellSize, cellSize, cellSize);
 
-        if (isBorder) {
-          // Border pieces pre-placed
-          ctx.fillStyle = '#e5e5e5';
-          ctx.fillRect(c * cellSize + 1, r * cellSize + 1, cellSize - 2, cellSize - 2);
-        } else if (isSelected) {
+        if (isSelected) {
           // Selected frontier slot
           ctx.fillStyle = '#111111';
           ctx.fillRect(c * cellSize + 1, r * cellSize + 1, cellSize - 2, cellSize - 2);
+        } else if (isPlaced) {
+          // Explicitly placed pieces
+          ctx.fillStyle = '#22c55e'; // Green tint for placed pieces
+          ctx.fillRect(c * cellSize + 1, r * cellSize + 1, cellSize - 2, cellSize - 2);
         } else if (isFrontier) {
           // Active frontier candidate slot
-          ctx.fillStyle = '#f3f4f6';
+          ctx.fillStyle = '#e0f2fe'; // Light blue highlight for frontier
           ctx.fillRect(c * cellSize + 1, r * cellSize + 1, cellSize - 2, cellSize - 2);
-          ctx.strokeStyle = '#737373';
-          ctx.lineWidth = 1;
+          ctx.strokeStyle = '#0284c7';
+          ctx.lineWidth = 1.5;
           ctx.strokeRect(c * cellSize + 1.5, r * cellSize + 1.5, cellSize - 3, cellSize - 3);
+        } else if (isBorder) {
+          // Unplaced border slot
+          ctx.fillStyle = '#f5f5f5';
+          ctx.fillRect(c * cellSize + 1, r * cellSize + 1, cellSize - 2, cellSize - 2);
         }
       }
     }

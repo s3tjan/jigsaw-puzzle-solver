@@ -82,11 +82,11 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | HUD-01 | - | `web-app/src/app/features/workbench/components/workbench-canvas/workbench-canvas.component.ts` | Browser canvas pan/click inspection | 2D board canvas viewport (36×28 full grid / 1,008 slots) rendering grid boundaries, placed pieces, and active frontier slots. | DONE |
-| HUD-02 | HUD-01, RET-01 | `web-app/src/app/features/workbench/workbench.component.ts` | Browser slot click inspection | Active slot selection triggers FCQL retrieval engine and surfaces top matches. | DONE |
-| HUD-03 | HUD-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.ts` | Browser card inspection | Visual Spotting Card displaying piece photo, archetype badge, mm tab measurements, and cardinal orientation arrow (`▲ TAB UP`). | DONE |
-| HUD-04 | HUD-03, OPT-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Screen 1:1 physical calibration check | Render piece silhouette frame with metric grounding (25mm = 96px) and distinctive contour callouts. | DONE |
-| HUD-05 | HUD-02 | `web-app/src/app/core/state/board.store.ts` | Browser confirm click inspection | Confirm placement action commits piece, dynamically expands frontier queue, and recommends next lowest-entropy slot. | DONE |
-| HUD-06 | HUD-05 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Browser reject click inspection | Reject candidate button cycles candidate rankings for alternate piece selection. | DONE |
+| HUD-02 | HUD-01, RET-02 | `web-app/src/app/core/state/board.store.ts` | Browser slot click inspection | **WASM BoardStore Integration**: Wire `BoardStore` to instantiate `WasmBoardState`, pull dynamic frontier slots, and query live candidate pieces from IndexedDB using `query_slot_polarity_candidates_json`. | DONE |
+| HUD-03 | HUD-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.ts` | Browser card inspection | Visual Spotting Card displaying piece photo, archetype badge, mm tab measurements, and cardinal orientation arrow (`▲ TAB UP`). | Planned |
+| HUD-04 | HUD-03, OPT-02 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Screen 1:1 physical calibration check | Render piece silhouette frame with metric grounding (25mm = 96px) and distinctive contour callouts. | Planned |
+| HUD-05 | HUD-02 | `web-app/src/app/core/state/board.store.ts` | Browser confirm click inspection | Confirm placement action commits piece, dynamically expands frontier queue, and recommends next lowest-entropy slot. | Planned |
+| HUD-06 | HUD-05 | `web-app/src/app/features/workbench/components/spotting-hud/spotting-hud.component.html` | Browser reject click inspection | Reject candidate button cycles candidate rankings for alternate piece selection. | Planned |
 | HUD-07 | HUD-05, ING-02 | `cv-engine/src/cluster_matcher.rs` | `cargo test test_cluster_matching` | Scan 2-3 piece sub-assemblies on mat, matching composite geometry to lock multiple slots at once. | Planned |
 
 ### LEG: Legacy Decommissioning & Technical Cleanup

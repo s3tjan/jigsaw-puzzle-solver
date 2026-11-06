@@ -5,7 +5,8 @@ import init, {
   analyze_staged_piece,
   snap_fiducial_corner,
   dewarp_quad,
-  measure_stage_focus
+  measure_stage_focus,
+  WasmBoardState
 } from '../../../pkg/cv_engine';
 import {
   ClusteringResult,
@@ -50,6 +51,36 @@ export interface WasmTrayRanking {
   trayId: number;
   distSq: number;
   isAssigned: boolean;
+}
+
+export interface WasmFrontierSlot {
+  r: number;
+  c: number;
+  constraints: {
+    north: 'FLAT' | 'TAB' | 'HOLE' | 'ANY';
+    east: 'FLAT' | 'TAB' | 'HOLE' | 'ANY';
+    south: 'FLAT' | 'TAB' | 'HOLE' | 'ANY';
+    west: 'FLAT' | 'TAB' | 'HOLE' | 'ANY';
+  };
+  expected_tab_widths_mm: [number, number, number, number];
+  placed_neighbor_count: number;
+  is_border: boolean;
+  is_corner: boolean;
+}
+
+export interface WasmPolarityMatch {
+  piece_id: number;
+  rotation: 0 | 1 | 2 | 3; // 0=0°, 1=90°, 2=180°, 3=270°
+  world_polarities: ['FLAT' | 'TAB' | 'HOLE' | 'ANY', 'FLAT' | 'TAB' | 'HOLE' | 'ANY', 'FLAT' | 'TAB' | 'HOLE' | 'ANY', 'FLAT' | 'TAB' | 'HOLE' | 'ANY'];
+  world_tab_widths_mm: [number, number, number, number];
+}
+
+export interface WasmCandidatePieceInput {
+  piece_id: number;
+  intrinsic_polarities: ['FLAT' | 'TAB' | 'HOLE' | 'ANY', 'FLAT' | 'TAB' | 'HOLE' | 'ANY', 'FLAT' | 'TAB' | 'HOLE' | 'ANY', 'FLAT' | 'TAB' | 'HOLE' | 'ANY'];
+  tab_widths_mm: [number, number, number, number];
+  is_border: boolean;
+  is_corner: boolean;
 }
 
 export interface WasmPieceAnalysis {
@@ -406,5 +437,16 @@ export class WasmEngineService {
     };
 
     return [toSrgb(rLin), toSrgb(gLin), toSrgb(bLin)];
+  }
+
+  /**
+   * Factory method creating a native Rust WasmBoardState instance for 1008-piece puzzle.
+   */
+  createBoardState(rows = 28, cols = 36): WasmBoardState | null {
+    if (!this.isReady()) {
+      console.warn('WasmEngineService: cannot create WasmBoardState before WASM is initialized.');
+      return null;
+    }
+    return new WasmBoardState(rows, cols);
   }
 }
