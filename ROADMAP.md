@@ -71,7 +71,7 @@ Tasks are organized by functional subsystem and identified by namespace prefix:
 
 | Task ID | Depends On | Target Path | Test Command | Description | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| RET-01 | ING-01 | `cv-engine/src/frontier.rs` | `cargo test test_frontier_polarity_generation` | 36×28 board representation, arbitrary anchor seeding, and dynamic compilation of complementary neighbor polarities (`Tab` ↔ `Hole`, `Flat` ↔ `Flat`). | Planned |
+| RET-01 | ING-01 | `cv-engine/src/frontier.rs` | `cargo test test_frontier_polarity_generation` | 36×28 board representation, arbitrary anchor seeding, and dynamic compilation of complementary neighbor polarities (`Tab` ↔ `Hole`, `Flat` ↔ `Flat`). | DONE |
 | RET-02 | RET-01, CNT-03 | `cv-engine/src/frontier.rs` | `cargo test test_bitmask_polarity_pruning` | Bitmask polarity filter across 4 cardinal rotations ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) pruning 75–95% of candidates (<0.01ms). | Planned |
 | RET-03 | RET-02 | `cv-engine/src/matcher.rs` | `cargo test test_metric_sizing_compatibility` | Micro-geometry filter evaluating tab width (±0.4mm), protrusion depth, and piece aspect ratio. | Planned |
 | RET-04 | RET-03 | `cv-engine/src/query.rs` | `cargo test test_target_slot_candidate_ranking` | Secondary candidate ranking against target poster cell via local CIELAB and Sobel gradients. | Planned |

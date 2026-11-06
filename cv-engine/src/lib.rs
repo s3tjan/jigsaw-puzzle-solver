@@ -5,10 +5,16 @@ pub mod contour;
 pub mod homography;
 pub mod poster;
 pub mod matcher;
+pub mod frontier;
 
 use wasm_bindgen::prelude::*;
 use homography::{dewarp_image, Homography, Point2D};
 use contour::{trace_piece_contour, partition_edges_and_classify, ScannedPiece};
+pub use frontier::{
+    BoardState, EdgePolarity, CardinalDirection, SlotPolarityConstraint,
+    PlacedPiece, FrontierSlot,
+    BOARD_ROWS, BOARD_COLS, TOTAL_SLOTS, BORDER_SLOTS_COUNT, INTERIOR_SLOTS_COUNT,
+};
 pub use poster::{
     get_poster_grid_slots, get_slot_preview,
     init_master_poster_spatial, locate_piece_spatial, SpatialCell, SpatialSlotDescriptor,
@@ -60,25 +66,8 @@ pub fn measure_stage_focus(
     fiducial::compute_focus_mtf(pixels, width, height, &corners)
 }
 
-/// Classification of a puzzle piece cardinal edge polarity
-#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum EdgePolarity {
-    Tab,
-    Hole,
-    Flat,
-}
-
-impl From<contour::EdgeType> for EdgePolarity {
-    #[inline]
-    fn from(t: contour::EdgeType) -> Self {
-        match t {
-            contour::EdgeType::Tab => EdgePolarity::Tab,
-            contour::EdgeType::Hole => EdgePolarity::Hole,
-            contour::EdgeType::Flat => EdgePolarity::Flat,
-        }
-    }
-}
+// EdgePolarity is defined in crate::frontier with bitwise representations (Flat=00, Tab=01, Hole=10, Any=11)
+// and re-exported above.
 
 /// Detailed classification and geometry of one of the 4 cardinal edges
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -966,5 +955,109 @@ pub fn ingest_mat_piece_internal(
         error: None,
     }
 }
+
+#[wasm_bindgen]
+pub struct WasmBoardState {
+    inner: BoardState,
+}
+
+#[wasm_bindgen]
+impl WasmBoardState {
+    #[wasm_bindgen(constructor)]
+    pub fn new(rows: usize, cols: usize) -> Self {
+        Self {
+            inner: BoardState::new(rows, cols),
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn default_1008() -> Self {
+        Self {
+            inner: BoardState::default(),
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn place_piece(
+        &mut self,
+        r: usize,
+        c: usize,
+        piece_id: u32,
+        rotation: u8,
+        north: u8,
+        east: u8,
+        south: u8,
+        west: u8,
+        north_width_mm: f32,
+        east_width_mm: f32,
+        south_width_mm: f32,
+        west_width_mm: f32,
+    ) -> Result<(), JsValue> {
+        let decode_polarity = |val: u8| match val {
+            0 => EdgePolarity::Flat,
+            1 => EdgePolarity::Tab,
+            2 => EdgePolarity::Hole,
+            _ => EdgePolarity::Any,
+        };
+
+        let polarities = [
+            decode_polarity(north),
+            decode_polarity(east),
+            decode_polarity(south),
+            decode_polarity(west),
+        ];
+
+        let widths = [
+            north_width_mm,
+            east_width_mm,
+            south_width_mm,
+            west_width_mm,
+        ];
+
+        self.inner
+            .place_piece(r, c, piece_id, rotation, polarities, widths)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    #[wasm_bindgen]
+    pub fn remove_piece(&mut self, r: usize, c: usize) -> bool {
+        self.inner.remove_piece(r, c).is_some()
+    }
+
+    #[wasm_bindgen]
+    pub fn placed_count(&self) -> usize {
+        self.inner.placed_count()
+    }
+
+    /// Returns JSON-serialized array of active `FrontierSlot` objects.
+    #[wasm_bindgen]
+    pub fn get_active_frontier_json(&self) -> Result<String, JsValue> {
+        let frontier = self.inner.get_active_frontier();
+        serde_json::to_string(&frontier).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Returns JSON-serialized `FrontierSlot` for a specific coordinate (r, c).
+    #[wasm_bindgen]
+    pub fn get_slot_constraints_json(&self, r: usize, c: usize) -> Result<String, JsValue> {
+        if !self.inner.is_in_bounds(r, c) {
+            return Err(JsValue::from_str("Out of bounds"));
+        }
+        let (constraints, expected_widths, placed_neighbors) = self.inner.compute_slot_constraints(r, c);
+        let (is_border, is_corner) = self.inner.classify_slot(r, c);
+
+        let slot = FrontierSlot {
+            r,
+            c,
+            constraints,
+            expected_tab_widths_mm: expected_widths,
+            placed_neighbor_count: placed_neighbors,
+            is_border,
+            is_corner,
+        };
+
+        serde_json::to_string(&slot).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+}
+
 
 
