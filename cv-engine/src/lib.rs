@@ -6,6 +6,7 @@ pub mod homography;
 pub mod poster;
 pub mod matcher;
 pub mod frontier;
+pub mod query;
 
 use wasm_bindgen::prelude::*;
 use homography::{dewarp_image, Homography, Point2D};
@@ -14,6 +15,11 @@ pub use frontier::{
     BoardState, EdgePolarity, CardinalDirection, SlotPolarityConstraint,
     PlacedPiece, FrontierSlot,
     BOARD_ROWS, BOARD_COLS, TOTAL_SLOTS, BORDER_SLOTS_COUNT, INTERIOR_SLOTS_COUNT,
+};
+pub use query::{
+    PolarityMatch, CandidatePieceInput,
+    rotate_polarities, rotate_tab_widths, test_polarities_satisfy_constraint,
+    find_piece_valid_rotations, prune_candidates_by_polarity,
 };
 pub use poster::{
     get_poster_grid_slots, get_slot_preview,
@@ -1056,6 +1062,27 @@ impl WasmBoardState {
         };
 
         serde_json::to_string(&slot).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Queries slot constraints at (r, c) and prunes a candidate pool of pieces by polarity.
+    /// Evaluates all 4 cardinal rotations and returns JSON-serialized array of `PolarityMatch` objects.
+    #[wasm_bindgen]
+    pub fn query_slot_polarity_candidates_json(
+        &self,
+        r: usize,
+        c: usize,
+        candidates_json: &str,
+    ) -> Result<String, JsValue> {
+        if !self.inner.is_in_bounds(r, c) {
+            return Err(JsValue::from_str("Out of bounds"));
+        }
+        let candidates: Vec<CandidatePieceInput> = serde_json::from_str(candidates_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid candidates JSON: {}", e)))?;
+
+        let (constraint, _, _) = self.inner.compute_slot_constraints(r, c);
+        let matches = prune_candidates_by_polarity(&candidates, &constraint);
+
+        serde_json::to_string(&matches).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 

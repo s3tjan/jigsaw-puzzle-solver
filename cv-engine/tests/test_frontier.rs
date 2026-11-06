@@ -1,4 +1,5 @@
 use cv_engine::frontier::*;
+use cv_engine::query::*;
 use cv_engine::WasmBoardState;
 
 #[test]
@@ -131,5 +132,153 @@ fn test_wasm_board_state_interop() {
     assert_eq!(slot.r, 0);
     assert_eq!(slot.c, 1);
     assert_eq!(slot.constraints.west, EdgePolarity::Hole);
+}
+
+#[test]
+fn test_bitmask_polarity_pruning() {
+    // 1. Test Cardinal Rotation Logic
+    // Piece scanned at 0° with: Top: Flat, Right: Tab, Bottom: Hole, Left: Flat
+    let p_corner = [EdgePolarity::Flat, EdgePolarity::Tab, EdgePolarity::Hole, EdgePolarity::Flat];
+    let w_corner = [0.0, 4.5, 5.0, 0.0];
+
+    // Rotation 0 (0°): [Flat, Tab, Hole, Flat]
+    assert_eq!(rotate_polarities(p_corner, 0), p_corner);
+    assert_eq!(rotate_tab_widths(w_corner, 0), w_corner);
+
+    // Rotation 1 (90° CW): Left becomes Top, Top becomes Right, Right becomes Bottom, Bottom becomes Left
+    // [W, N, E, S] -> [Flat, Flat, Tab, Hole]
+    let r1 = rotate_polarities(p_corner, 1);
+    assert_eq!(r1, [EdgePolarity::Flat, EdgePolarity::Flat, EdgePolarity::Tab, EdgePolarity::Hole]);
+    let rw1 = rotate_tab_widths(w_corner, 1);
+    assert_eq!(rw1, [0.0, 0.0, 4.5, 5.0]);
+
+    // Rotation 2 (180° CW): [S, W, N, E] -> [Hole, Flat, Flat, Tab]
+    let r2 = rotate_polarities(p_corner, 2);
+    assert_eq!(r2, [EdgePolarity::Hole, EdgePolarity::Flat, EdgePolarity::Flat, EdgePolarity::Tab]);
+
+    // Rotation 3 (270° CW): [E, S, W, N] -> [Tab, Hole, Flat, Flat]
+    let r3 = rotate_polarities(p_corner, 3);
+    assert_eq!(r3, [EdgePolarity::Tab, EdgePolarity::Hole, EdgePolarity::Flat, EdgePolarity::Flat]);
+
+    // 2. Corner Constraint Pruning at (0, 0):
+    // Slot (0, 0) requires North: Flat, West: Flat, East: Any, South: Any
+    let corner_constraint = SlotPolarityConstraint {
+        north: EdgePolarity::Flat,
+        east: EdgePolarity::Any,
+        south: EdgePolarity::Any,
+        west: EdgePolarity::Flat,
+    };
+
+    let corner_piece = CandidatePieceInput {
+        piece_id: 1,
+        intrinsic_polarities: p_corner,
+        tab_widths_mm: w_corner,
+        is_border: true,
+        is_corner: true,
+    };
+
+    let corner_matches = find_piece_valid_rotations(&corner_piece, &corner_constraint);
+    assert_eq!(
+        corner_matches.len(),
+        1,
+        "A true corner piece must match exactly 1 unique rotation for (0, 0)"
+    );
+    assert_eq!(corner_matches[0].rotation, 0);
+
+    // Interior piece (0 flat edges):
+    let interior_piece = CandidatePieceInput {
+        piece_id: 2,
+        intrinsic_polarities: [EdgePolarity::Tab, EdgePolarity::Hole, EdgePolarity::Tab, EdgePolarity::Hole],
+        tab_widths_mm: [4.6, 4.8, 4.7, 4.9],
+        is_border: false,
+        is_corner: false,
+    };
+
+    let interior_matches = find_piece_valid_rotations(&interior_piece, &corner_constraint);
+    assert!(
+        interior_matches.is_empty(),
+        "Interior piece must be 100% rejected at corner slot (0, 0)"
+    );
+
+    // Border piece with only 1 flat edge:
+    let border_piece = CandidatePieceInput {
+        piece_id: 3,
+        intrinsic_polarities: [EdgePolarity::Flat, EdgePolarity::Tab, EdgePolarity::Hole, EdgePolarity::Tab],
+        tab_widths_mm: [0.0, 4.8, 5.0, 4.7],
+        is_border: true,
+        is_corner: false,
+    };
+
+    let border_matches = find_piece_valid_rotations(&border_piece, &corner_constraint);
+    assert!(
+        border_matches.is_empty(),
+        "Border piece with 1 flat edge cannot satisfy 2-flat corner constraint"
+    );
+
+    // 3. Flanked Interior Slot Pruning (2-Neighbor Convergence):
+    // Slot (1, 1) constrained by North: Hole, West: Tab, East: Any, South: Any
+    let flanked_constraint = SlotPolarityConstraint {
+        north: EdgePolarity::Hole,
+        east: EdgePolarity::Any,
+        south: EdgePolarity::Any,
+        west: EdgePolarity::Tab,
+    };
+
+    // Synthesize a representative pool of 16 interior pieces
+    let mut pool = Vec::new();
+    let mut id = 100;
+    for &n in &[EdgePolarity::Tab, EdgePolarity::Hole] {
+        for &e in &[EdgePolarity::Tab, EdgePolarity::Hole] {
+            for &s in &[EdgePolarity::Tab, EdgePolarity::Hole] {
+                for &w in &[EdgePolarity::Tab, EdgePolarity::Hole] {
+                    pool.push(CandidatePieceInput {
+                        piece_id: id,
+                        intrinsic_polarities: [n, e, s, w],
+                        tab_widths_mm: [4.8, 4.8, 4.8, 4.8],
+                        is_border: false,
+                        is_corner: false,
+                    });
+                    id += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(pool.len(), 16);
+
+    let pruned = prune_candidates_by_polarity(&pool, &flanked_constraint);
+    // Across 16 pieces * 4 rotations = 64 configurations:
+    // Exactly 1 out of 4 pairs (N=Hole, W=Tab) can match: 64 / 4 = 16 matches total across the pool.
+    // At least 75% of candidate configurations are pruned!
+    assert!(!pruned.is_empty());
+    for m in &pruned {
+        assert_eq!(m.world_polarities[0], EdgePolarity::Hole, "North edge must match constraint");
+        assert_eq!(m.world_polarities[3], EdgePolarity::Tab, "West edge must match constraint");
+    }
+
+    // 4. Test WASM Bridge Batch Query Method
+    let mut wasm_board = WasmBoardState::default_1008();
+    // Anchor corner (0, 0)
+    wasm_board
+        .place_piece(0, 0, 1, 0, 0, 1, 2, 0, 0.0, 4.8, 5.1, 0.0)
+        .expect("Place piece");
+
+    // Slot (0, 1) requires West: Hole, North: Flat
+    let candidates_json = serde_json::to_string(&vec![
+        border_piece.clone(),
+        corner_piece.clone(),
+        interior_piece.clone(),
+    ])
+    .expect("Serialize candidates");
+
+    let matches_json = wasm_board
+        .query_slot_polarity_candidates_json(0, 1, &candidates_json)
+        .expect("Query candidates");
+
+    let matches: Vec<PolarityMatch> = serde_json::from_str(&matches_json).expect("Deserialize matches");
+    // border_piece has 1 flat edge and can potentially match (0, 1) if rotated such that Flat is North and Hole is West
+    for m in &matches {
+        assert_eq!(m.world_polarities[0], EdgePolarity::Flat);
+        assert_eq!(m.world_polarities[3], EdgePolarity::Hole);
+    }
 }
 
