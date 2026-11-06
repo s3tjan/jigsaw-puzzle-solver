@@ -34,7 +34,7 @@ pub struct CandidatePieceInput {
 pub fn rotate_polarities(polarities: [EdgePolarity; 4], rotation: u8) -> [EdgePolarity; 4] {
     let r = (rotation % 4) as usize;
     [
-        polarities[(4 + 0 - r) % 4],
+        polarities[(4 - r) % 4],
         polarities[(4 + 1 - r) % 4],
         polarities[(4 + 2 - r) % 4],
         polarities[(4 + 3 - r) % 4],
@@ -46,7 +46,7 @@ pub fn rotate_polarities(polarities: [EdgePolarity; 4], rotation: u8) -> [EdgePo
 pub fn rotate_tab_widths(widths: [f32; 4], rotation: u8) -> [f32; 4] {
     let r = (rotation % 4) as usize;
     [
-        widths[(4 + 0 - r) % 4],
+        widths[(4 - r) % 4],
         widths[(4 + 1 - r) % 4],
         widths[(4 + 2 - r) % 4],
         widths[(4 + 3 - r) % 4],

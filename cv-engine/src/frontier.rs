@@ -55,12 +55,12 @@ impl EdgePolarity {
         if *self == EdgePolarity::Any || other == EdgePolarity::Any {
             return true;
         }
-        match (*self, other) {
-            (EdgePolarity::Flat, EdgePolarity::Flat) => true,
-            (EdgePolarity::Tab, EdgePolarity::Hole) => true,
-            (EdgePolarity::Hole, EdgePolarity::Tab) => true,
-            _ => false,
-        }
+        matches!(
+            (*self, other),
+            (EdgePolarity::Flat, EdgePolarity::Flat)
+                | (EdgePolarity::Tab, EdgePolarity::Hole)
+                | (EdgePolarity::Hole, EdgePolarity::Tab)
+        )
     }
 }
 
@@ -262,40 +262,36 @@ impl BoardState {
 
         // 2. Neighboring Placed Pieces Constraints
         // North Neighbor (r - 1, c) -> its South edge mates with this slot's North edge
-        if r > 0 {
-            if let Some(north_piece) = self.get_slot(r - 1, c) {
+        if r > 0
+            && let Some(north_piece) = self.get_slot(r - 1, c) {
                 constraint.north = north_piece.polarities[CardinalDirection::South as usize].complement();
                 expected_widths[CardinalDirection::North as usize] = north_piece.tab_widths_mm[CardinalDirection::South as usize];
                 placed_neighbor_count += 1;
             }
-        }
 
         // East Neighbor (r, c + 1) -> its West edge mates with this slot's East edge
-        if c + 1 < self.cols {
-            if let Some(east_piece) = self.get_slot(r, c + 1) {
+        if c + 1 < self.cols
+            && let Some(east_piece) = self.get_slot(r, c + 1) {
                 constraint.east = east_piece.polarities[CardinalDirection::West as usize].complement();
                 expected_widths[CardinalDirection::East as usize] = east_piece.tab_widths_mm[CardinalDirection::West as usize];
                 placed_neighbor_count += 1;
             }
-        }
 
         // South Neighbor (r + 1, c) -> its North edge mates with this slot's South edge
-        if r + 1 < self.rows {
-            if let Some(south_piece) = self.get_slot(r + 1, c) {
+        if r + 1 < self.rows
+            && let Some(south_piece) = self.get_slot(r + 1, c) {
                 constraint.south = south_piece.polarities[CardinalDirection::North as usize].complement();
                 expected_widths[CardinalDirection::South as usize] = south_piece.tab_widths_mm[CardinalDirection::North as usize];
                 placed_neighbor_count += 1;
             }
-        }
 
         // West Neighbor (r, c - 1) -> its East edge mates with this slot's West edge
-        if c > 0 {
-            if let Some(west_piece) = self.get_slot(r, c - 1) {
+        if c > 0
+            && let Some(west_piece) = self.get_slot(r, c - 1) {
                 constraint.west = west_piece.polarities[CardinalDirection::East as usize].complement();
                 expected_widths[CardinalDirection::West as usize] = west_piece.tab_widths_mm[CardinalDirection::East as usize];
                 placed_neighbor_count += 1;
             }
-        }
 
         (constraint, expected_widths, placed_neighbor_count)
     }
