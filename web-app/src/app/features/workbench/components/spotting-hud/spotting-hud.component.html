@@ -1,77 +1,86 @@
 <aside class="spotting-root border-l">
   <div class="inverted-header">
-    <span>INSPECTOR: TARGET SLOT</span>
+    <span>TARGET SLOT</span>
   </div>
 
   <div class="inspector-content">
     @if (boardStore.selectedSlot(); as slot) {
-      <!-- Key-Value Properties Table -->
+      <!-- Slot Info Table -->
       <table class="inspector-table border-b">
         <tbody>
           <tr>
-            <td class="prop-key">SLOT COORDINATES</td>
-            <td class="prop-val font-mono">R{{ slot.r }} C{{ slot.c }}</td>
+            <td class="prop-key">POSITION</td>
+            <td class="prop-val font-mono">Row {{ slot.r + 1 }}, Column {{ slot.c + 1 }}</td>
           </tr>
           <tr>
-            <td class="prop-key">REQUIRED POLARITY</td>
+            <td class="prop-key">REQUIRED EDGES</td>
             <td class="prop-val font-mono">
-              N:{{ slot.requiredPolarities?.north }} E:{{ slot.requiredPolarities?.east }} S:{{ slot.requiredPolarities?.south }} W:{{ slot.requiredPolarities?.west }}
+              Top: {{ slot.requiredPolarities?.north }} | Right: {{ slot.requiredPolarities?.east }} | Bottom: {{ slot.requiredPolarities?.south }} | Left: {{ slot.requiredPolarities?.west }}
             </td>
           </tr>
         </tbody>
       </table>
 
       <div class="inverted-header">
-        <span>CANDIDATE RETRIEVAL #1</span>
+        <span>MATCHING PIECE</span>
       </div>
 
       @if (boardStore.candidates()[0]; as topCandidate) {
         <table class="inspector-table border-b">
           <tbody>
             <tr>
-              <td class="prop-key">PIECE ID</td>
+              <td class="prop-key">PIECE</td>
               <td class="prop-val font-mono">#{{ topCandidate.id }}</td>
             </tr>
             <tr>
-              <td class="prop-key">PHYSICAL TRAY</td>
-              <td class="prop-val font-mono">TRAY-0{{ topCandidate.trayId }} [{{ topCandidate.trayName }}]</td>
+              <td class="prop-key">FIND IN TRAY</td>
+              <td class="prop-val font-mono font-bold">
+                Tray {{ topCandidate.trayId }}: {{ topCandidate.trayName }}
+              </td>
             </tr>
             <tr>
-              <td class="prop-key">MATCH SCORE</td>
-              <td class="prop-val font-mono text-right">{{ (topCandidate.confidence * 100).toFixed(1) }}%</td>
+              <td class="prop-key">ORIENTATION</td>
+              <td class="prop-val font-mono font-bold text-accent">
+                {{ topCandidate.rotationLabel }}
+              </td>
             </tr>
             <tr>
-              <td class="prop-key">CARDINAL ROTATION</td>
-              <td class="prop-val font-mono">{{ topCandidate.rotationLabel }}</td>
-            </tr>
-            <tr>
-              <td class="prop-key">TAB WIDTH (MM)</td>
-              <td class="prop-val font-mono text-right">{{ topCandidate.tabWidthMm.toFixed(2) }}</td>
+              <td class="prop-key">TAB WIDTH</td>
+              <td class="prop-val font-mono">{{ topCandidate.tabWidthMm.toFixed(2) }} mm</td>
             </tr>
           </tbody>
         </table>
 
-        <!-- 1:1 Scale Silhouette Specimen Frame -->
-        <div class="specimen-frame border-b font-mono">
-          <span class="specimen-tag">1:1 METRIC SILHOUETTE (25MM = 96PX)</span>
-          <div class="specimen-wireframe">
-            WIDTH: {{ topCandidate.tabWidthMm.toFixed(2) }}MM | ORIENTATION: {{ topCandidate.rotation }}°
-          </div>
+        <!-- Visual Piece Card -->
+        <div class="specimen-frame border-b">
+          @if (topCandidate.thumbnailDataUrl) {
+            <div class="photo-container">
+              <img [src]="topCandidate.thumbnailDataUrl" alt="Piece Photo" class="piece-photo" />
+            </div>
+          } @else {
+            <div class="specimen-wireframe font-mono">
+              Orientation: {{ topCandidate.rotation }}° | Tab Width: {{ topCandidate.tabWidthMm.toFixed(2) }} mm
+            </div>
+          }
+        </div>
+      } @else {
+        <div class="empty-candidate font-mono p-4 text-muted">
+          No matching pieces in scanned inventory.
         </div>
       }
 
       <!-- Action Controls -->
       <div class="action-footer border-t">
         <button type="button" class="btn-action active" (click)="boardStore.confirmPlacement()">
-          CONFIRM PLACEMENT [ENTER]
+          Place Piece [Enter]
         </button>
         <button type="button" class="btn-action" (click)="boardStore.rejectCandidate()">
-          REJECT CANDIDATE [DEL]
+          Next Match [Del]
         </button>
       </div>
     } @else {
       <div class="empty-state font-mono">
-        NO RECORDS
+        Select a slot on the board.
       </div>
     }
   </div>

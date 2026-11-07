@@ -164,6 +164,8 @@ export class BoardStore {
           rotation: rotDeg,
           rotationLabel: rotLabel,
           tabWidthMm: piece?.tabWidthMm || 4.8,
+          thumbnailDataUrl: piece?.thumbnailDataUrl,
+          archetypeBadge: trayObj?.shortLabel || `TRAY ${trayId}`,
         };
       });
 

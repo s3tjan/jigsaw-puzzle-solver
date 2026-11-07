@@ -1,6 +1,6 @@
 <aside class="frontier-root border-r">
   <div class="inverted-header">
-    <span>FRONTIER QUEUE ({{ boardStore.frontierCount() }})</span>
+    <span>OPEN SLOTS ({{ boardStore.frontierCount() }})</span>
     <span class="shortcut-tag font-mono">[Alt+B]</span>
   </div>
 
@@ -8,9 +8,9 @@
     <table class="data-table">
       <thead>
         <tr>
-          <th style="width: 50px;">SLOT</th>
-          <th style="width: 70px;">ENTROPY</th>
-          <th>POLARITIES (N-E-S-W)</th>
+          <th style="width: 70px;">SLOT</th>
+          <th style="width: 80px;">NEIGHBORS</th>
+          <th>REQUIRED EDGES</th>
         </tr>
       </thead>
       <tbody>
@@ -19,8 +19,8 @@
             [class.selected]="isSelected(slot)"
             (click)="boardStore.selectSlot(slot)"
           >
-            <td class="font-mono">R{{ slot.r }} C{{ slot.c }}</td>
-            <td class="font-mono text-right">{{ slot.entropy?.toFixed(2) }}</td>
+            <td class="font-mono">R{{ slot.r + 1 }} C{{ slot.c + 1 }}</td>
+            <td class="font-mono text-center">{{ slot.placedNeighborCount || 0 }} placed</td>
             <td class="font-mono">{{ formatPolarities(slot) }}</td>
           </tr>
         }

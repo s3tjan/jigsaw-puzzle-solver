@@ -61,6 +61,37 @@
   font-size: 11px;
 }
 
+.photo-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px;
+  background: var(--bg-surface);
+  border: var(--border-rule);
+}
+
+.piece-photo {
+  max-width: 140px;
+  max-height: 140px;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+.text-accent {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+.empty-candidate {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
 .action-footer {
   margin-top: auto;
   padding: 8px;

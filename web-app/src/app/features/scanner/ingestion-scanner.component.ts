@@ -15,9 +15,8 @@ import { AppModeStore } from '../../core/state/app-mode.store';
 import { CameraService } from '../../core/services/camera.service';
 import { StorageService, StoredPiece } from '../../core/services/storage.service';
 import { InventoryStore } from '../../core/state/inventory.store';
-import { PosterStore } from '../../core/state/poster.store';
 import { WasmEngineService, StagedPieceAnalysis, WasmEdgeAnalysis, WasmPieceAnalysis } from '../../core/services/wasm-engine.service';
-import { TrayId } from '../../core/models/poster.model';
+import { classifyPolarityArchetype } from '../../core/models/tray.model';
 
 export interface DiagnosticLogEntry {
   timestamp: string;
@@ -26,14 +25,6 @@ export interface DiagnosticLogEntry {
 }
 
 export type EdgeDetail = WasmEdgeAnalysis;
-
-export interface TrayDistanceRanking {
-  trayId: number;
-  trayName: string;
-  color: string;
-  distSq: number;
-  isAssigned: boolean;
-}
 
 export interface LivePieceState {
   pieceIdPreview: number;
@@ -59,7 +50,6 @@ export interface LivePieceState {
   assignedTrayName: string;
   assignedTrayColor: string;
   confidence: number;
-  trayRankings: TrayDistanceRanking[];
   binaryMask?: Uint8Array;
 }
 
@@ -75,7 +65,6 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   readonly cameraService = inject(CameraService);
   readonly storageService = inject(StorageService);
   readonly inventoryStore = inject(InventoryStore);
-  readonly posterStore = inject(PosterStore);
   readonly wasmEngine = inject(WasmEngineService);
 
   @ViewChild('videoRef') videoRef!: ElementRef<HTMLVideoElement>;
@@ -97,66 +86,6 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
 
   // Viewport B display mode ('DISSECT' = 4-Quadrant Dissected Edges, 'MASK' = Solid Binary Mask)
   readonly viewBMode = signal<'DISSECT' | 'MASK'>('DISSECT');
-
-  // Candidate tray centroid rankings for piece inspected from queue
-  readonly selectedPieceRankings = computed<TrayDistanceRanking[]>(() => {
-    const sel = this.selectedPiece();
-    if (!sel) return [];
-
-    const trays = this.posterStore.trays();
-    const centroids = this.posterStore.activeCentroids();
-    const rankings: TrayDistanceRanking[] = [];
-
-    const isBorderOrCorner = sel.trayId === 0 || sel.polarities.some(p => p === 'FLAT');
-
-    if (isBorderOrCorner) {
-      rankings.push({
-        trayId: 0,
-        trayName: '00 · BORDER & CORNERS',
-        color: '#111111',
-        distSq: 0.0,
-        isAssigned: sel.trayId === 0
-      });
-    }
-
-    const pLab = sel.meanLab || [50, 0, 0];
-    for (let i = 0; i < centroids.length; i++) {
-      const c = centroids[i];
-      const tId = i + 1;
-      const tInfo = trays.find(t => t.id === tId);
-
-      const dl = pLab[0] - c.lab[0];
-      const da = pLab[1] - c.lab[1];
-      const db = pLab[2] - c.lab[2];
-      const distSq = Math.round(((dl * dl + da * da + db * db) / 900.0) * 1000) / 1000;
-
-      rankings.push({
-        trayId: tId,
-        trayName: `0${tId} · ${tInfo?.name || `TRAY-0${tId}`}`,
-        color: tInfo?.color || '#525252',
-        distSq,
-        isAssigned: sel.trayId === tId
-      });
-    }
-
-    if (!isBorderOrCorner) {
-      rankings.push({
-        trayId: 0,
-        trayName: '00 · BORDER & CORNERS',
-        color: '#111111',
-        distSq: 1.0,
-        isAssigned: sel.trayId === 0
-      });
-    }
-
-    rankings.sort((a, b) => {
-      if (a.isAssigned) return -1;
-      if (b.isAssigned) return 1;
-      return a.distSq - b.distSq;
-    });
-
-    return rankings;
-  });
 
   // Real-time operator diagnostic log stream
   readonly diagnosticLogs = signal<DiagnosticLogEntry[]>([]);
@@ -237,11 +166,9 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   }
 
   async ngOnInit(): Promise<void> {
-    this.addLog('INFO', 'Ingestion workstation initializing...');
+    this.addLog('INFO', 'Scanner initializing...');
     this.loadCalibration();
     this.fetchGtCount();
-    // Sync tray capacities directly from poster clustering counts (e.g. Forest: 90 pcs, Border: 124 pcs)
-    this.inventoryStore.syncFromPoster(this.posterStore.trays(), this.posterStore.stats().borderPieces);
     await this.initInventoryAndQueue();
     await this.cameraService.refreshDevices();
     await this.cameraService.startStream(this.videoRef?.nativeElement);
@@ -249,9 +176,9 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
     if (this.cameraService.isStreaming()) {
       const res = this.cameraService.activeResolution();
       const currentDev = this.cameraService.availableDevices().find(d => d.deviceId === this.cameraService.selectedDeviceId());
-      this.addLog('CV', `Sensor online: ${currentDev?.label || 'Camera'} (${res.width}x${res.height})`);
+      this.addLog('CV', `Camera connected: ${currentDev?.label || 'Camera'} (${res.width}x${res.height})`);
     } else {
-      this.addLog('WARN', 'Camera stream waiting for sensor connection.');
+      this.addLog('WARN', 'Waiting for camera connection.');
     }
 
     this.startStageRenderingLoop();
@@ -265,13 +192,13 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
     if (!select || !select.value) return;
     const deviceId = select.value;
     const dev = this.cameraService.availableDevices().find(d => d.deviceId === deviceId);
-    this.addLog('INFO', `Switching sensor camera to: ${dev?.label || deviceId}`);
+    this.addLog('INFO', `Switching camera to: ${dev?.label || deviceId}`);
     await this.cameraService.switchDevice(deviceId, this.videoRef?.nativeElement);
     if (this.cameraService.isStreaming()) {
       const res = this.cameraService.activeResolution();
-      this.addLog('CV', `Sensor switched online: ${res.width}x${res.height}`);
+      this.addLog('CV', `Camera connected: ${res.width}x${res.height}`);
     } else {
-      this.addLog('ERR', 'Selected sensor failed to open.');
+      this.addLog('ERR', 'Camera failed to open.');
     }
   }
 
@@ -425,12 +352,10 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const centroids = this.posterStore.activeCentroids();
-    const centroidsJson = JSON.stringify(centroids);
-    const analysis = this.wasmEngine.analyzeStagedPiece(dewarped, 384, 384, this.sensitivity(), centroidsJson);
+    const analysis = this.wasmEngine.analyzeStagedPiece(dewarped, 384, 384, this.sensitivity(), '[]');
     if (!analysis || !analysis.piece) {
-      this.scanStatusMessage.set('STAGE CLEAR · PLACE PIECE ON SENSOR MAT');
-      this.addLog('WARN', 'Scan attempted: Stage empty or no piece detected.');
+      this.scanStatusMessage.set('STAGE READY · PLACE PIECE ON MAT');
+      this.addLog('WARN', 'No piece detected on stage.');
       this.livePieceDetected.set(false);
       this.livePieceState.set(null);
       this.drawStageOverlay();
@@ -443,27 +368,13 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
       this.selectedPiece.set(null);
     }
 
-    const trays = this.posterStore.trays();
-    const trayRankings: TrayDistanceRanking[] = (p.trayRankings || []).map(r => {
-      const tInfo = trays.find(t => t.id === r.trayId);
-      const trayName = r.trayId === 0
-        ? '00 · BORDER & CORNERS'
-        : `0${r.trayId} · ${tInfo?.name || `TRAY-0${r.trayId}`}`;
-      const color = r.trayId === 0 ? '#111111' : (tInfo?.color || '#525252');
-      return {
-        trayId: r.trayId,
-        trayName,
-        color,
-        distSq: r.distSq,
-        isAssigned: r.isAssigned
-      };
-    });
-
-    const assignedTrayInfo = trays.find(t => t.id === p.assignedTrayId);
-    const assignedTrayName = p.assignedTrayId === 0
-      ? '00 · BORDER & CORNERS'
-      : `0${p.assignedTrayId} · ${assignedTrayInfo?.name || `TRAY-0${p.assignedTrayId}`}`;
-    const assignedTrayColor = p.assignedTrayId === 0 ? '#111111' : (assignedTrayInfo?.color || '#15803d');
+    const polarities: [string, string, string, string] = [
+      p.edges[0]?.polarity || 'FLAT',
+      p.edges[1]?.polarity || 'FLAT',
+      p.edges[2]?.polarity || 'FLAT',
+      p.edges[3]?.polarity || 'FLAT'
+    ];
+    const assignedTray = classifyPolarityArchetype(polarities);
 
     const nextPieceId = this.inventoryStore.totalIngested() + 1;
 
@@ -487,11 +398,10 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
       edges: p.edges,
       corners: p.corners,
       contourPoints: p.contourPoints,
-      assignedTrayId: p.assignedTrayId,
-      assignedTrayName,
-      assignedTrayColor,
+      assignedTrayId: assignedTray.id,
+      assignedTrayName: assignedTray.name,
+      assignedTrayColor: assignedTray.color,
       confidence: p.confidence,
-      trayRankings,
       binaryMask: analysis.binaryMask
     };
 
@@ -499,12 +409,12 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
     this.livePieceDetected.set(true);
     this.scanStatusMessage.set(null);
 
-    this.addLog('DETECT', `Scanned Piece #${nextPieceId}: ${p.edges.map(e => e.polarity).join('/')} -> ${assignedTrayName} (${(p.confidence * 100).toFixed(0)}%)`);
+    this.addLog('DETECT', `Scanned Piece #${nextPieceId}: ${polarities.join('/')} -> Tray ${assignedTray.id}: ${assignedTray.name} (${(p.confidence * 100).toFixed(0)}%)`);
     for (const e of p.edges) {
       const sign = e.depthMm > 0 ? '+' : '';
       this.addLog('EDGE', `${e.name}: ${e.polarity} (chord ${e.chordLengthMm.toFixed(1)}mm, depth ${sign}${e.depthMm.toFixed(1)}mm)`);
     }
-    this.addLog('ROUTE', `Routing: ${assignedTrayName} (Conf: ${(p.confidence * 100).toFixed(0)}%)`);
+    this.addLog('ROUTE', `Tray ${assignedTray.id}: ${assignedTray.name} (${assignedTray.shortLabel})`);
 
     this.drawStageOverlay();
     this.drawDiagnosticsCanvas();
@@ -890,11 +800,14 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
       state.edges[3]?.polarity || 'FLAT'
     ];
 
+    // Deterministic Polarity Archetype Tray Assignment
+    const assignedTray = classifyPolarityArchetype(polarities);
+
     const normalizedProfiles: number[][] = state.edges.map(e => e.normalizedProfile || []);
 
     const piece: StoredPiece = {
       id: pieceId,
-      trayId: state.assignedTrayId,
+      trayId: assignedTray.id,
       timestamp: Date.now(),
       polarities,
       tabWidthMm: state.tabWidthMm,
@@ -914,10 +827,10 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
       // Increment inventory tray fill
       this.inventoryStore.incrementTray(piece.trayId);
 
-      this.addLog('COMMIT', `Captured piece #${pieceId} -> Committed to ${state.assignedTrayName} (Confidence: ${(state.confidence * 100).toFixed(0)}%)`);
+      this.addLog('COMMIT', `Saved piece #${pieceId} -> Tray ${assignedTray.id}: ${assignedTray.name} (${assignedTray.shortLabel})`);
 
-      // Temporary non-blocking confirmation badge in header
-      this.captureNotice.set(`CAPTURED #${pieceId} -> ${state.assignedTrayName}`);
+      // Clear confirmation banner
+      this.captureNotice.set(`Piece #${pieceId} -> Tray ${assignedTray.id} (${assignedTray.name})`);
       if (this.captureNoticeTimeout) clearTimeout(this.captureNoticeTimeout);
       this.captureNoticeTimeout = setTimeout(() => {
         this.captureNotice.set(null);
@@ -937,7 +850,7 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Action: DELETE & RETAKE PIECE
+   * Action: DELETE PIECE
    * Decrements tray fill count, deletes piece from IndexedDB, and updates queue.
    */
   async deleteCapturedPiece(pieceId: number, event?: Event): Promise<void> {
@@ -965,7 +878,7 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
         this.lastCapturedPiece.set(remaining.length > 0 ? remaining[0] : null);
       }
 
-      this.addLog('STORE', `Deleted piece #${pieceId} from inventory. Mat ready to retake.`);
+      this.addLog('STORE', `Deleted piece #${pieceId}. Stage ready.`);
     } catch (err: any) {
       this.addLog('ERR', `Failed to delete piece #${pieceId}: ${err?.message || err}`);
     }
@@ -973,13 +886,13 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
 
   selectPieceForInspection(piece: StoredPiece): void {
     this.selectedPiece.set(piece);
-    this.addLog('INFO', `Inspecting piece #${piece.id} from Tray T-0${piece.trayId}`);
+    this.addLog('INFO', `Inspecting piece #${piece.id} from Tray ${piece.trayId}`);
   }
 
   clearArtifacts(): void {
     if (this.isGtMode()) {
       this.exitGtMode();
-      this.addLog('INFO', 'Exited Ground Truth workbench [ESC]');
+      this.addLog('INFO', 'Exited Ground Truth editor [ESC]');
       return;
     }
     this.livePieceState.set(null);
@@ -1005,28 +918,6 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   setViewBMode(mode: 'DISSECT' | 'MASK'): void {
     this.viewBMode.set(mode);
     this.drawDiagnosticsCanvas();
-  }
-
-  async reassignPieceTray(pieceId: number, newTrayId: number): Promise<void> {
-    const sel = this.selectedPiece();
-    if (!sel || sel.id !== pieceId) return;
-    const oldTrayId = sel.trayId;
-    if (oldTrayId === newTrayId) return;
-
-    const updatedPiece: StoredPiece = { ...sel, trayId: newTrayId };
-    try {
-      await this.storageService.savePiece(updatedPiece);
-      this.inventoryStore.movePieceTray(oldTrayId, newTrayId);
-      this.selectedPiece.set(updatedPiece);
-      this.recentPieces.update(list =>
-        list.map(p => p.id === pieceId ? updatedPiece : p)
-      );
-      const oldName = oldTrayId === 0 ? 'BORDER & CORNERS' : (this.posterStore.getTray(oldTrayId)?.name || `T-0${oldTrayId}`);
-      const newName = newTrayId === 0 ? 'BORDER & CORNERS' : (this.posterStore.getTray(newTrayId)?.name || `T-0${newTrayId}`);
-      this.addLog('STORE', `Piece #${pieceId} moved: ${oldName} -> ${newName}`);
-    } catch (err: any) {
-      this.addLog('ERR', `Failed to move piece #${pieceId}: ${err?.message || err}`);
-    }
   }
 
   closeQueueInspection(): void {
@@ -1068,7 +959,7 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
   }
 
   // =========================================================================
-  // GROUND TRUTH BENCHMARK WORKBENCH (Truthful Reporting & Offline Benchmarking)
+  // GROUND TRUTH BENCHMARK (Truthful Reporting & Offline Benchmarking)
   // =========================================================================
 
   /**
@@ -1093,7 +984,7 @@ export class IngestionScannerComponent implements OnInit, OnDestroy {
     }));
     this.gtSaveStatus.set(null);
     this.fetchGtCount();
-    this.addLog('INFO', 'Entered Ground Truth Workbench: drag corner pins & toggle edge polarities');
+    this.addLog('INFO', 'Entered Ground Truth editor: drag corners & toggle polarities');
     this.drawStageOverlay();
   }
 

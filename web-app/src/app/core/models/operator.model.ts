@@ -26,4 +26,6 @@ export interface CandidatePiece {
   rotation: 0 | 90 | 180 | 270;
   rotationLabel: string;
   tabWidthMm: number;
+  thumbnailDataUrl?: string;
+  archetypeBadge?: string;
 }
